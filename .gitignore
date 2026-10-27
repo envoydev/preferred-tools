@@ -147,3 +147,9 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# macOS
+.DS_Store
+
+# serena's per-project data for this checkout (a local tool, not part of the plugin)
+.alfred/
