@@ -47,4 +47,7 @@ Requires Node 22 for the scripts (built-ins only, no dependencies) and the `clau
 npm test          # node:test, one file per script
 npm run lint      # catalog and manifest shape checks
 npm run validate  # claude plugin validate, allowing only the known CLAUDE.md warning
+npm run matrix    # real-CLI cases in a throwaway home and account (minutes; plugin cases need the network)
+npm run refresh-pins          # print which catalog pins have a newer release at least 7 days old
+npm run refresh-pins -- --write   # move catalog/tools.json; a moved pin is a release (see the output)
 ```

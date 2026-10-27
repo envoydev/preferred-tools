@@ -317,3 +317,20 @@ unpatched 2.1.0 does, and the patch edits a file in uv's cache.
 The row stays in `catalog/fixes.json` with `hold` and this evidence, and `fix.js` lists it as 'Held, not checked'. If a
 Windows run of an unpatched serena shows the failure, the row becomes a detector in `scripts/fixes/` and the three
 places follow; until then nothing here writes to uv's cache.
+
+## Step 12 - temp-project matrix (measured 2026-10-27, Claude Code 2.1.311, macOS arm64, isolated HOME and CLAUDE_CONFIG_DIR)
+
+`npm run matrix` (`tests/matrix/`), the real `claude` CLI against a throwaway home and account, each result read back
+from the file the CLI wrote.
+
+- **projectScope measurement - NOT RUN.** Every local row keeps `projectScope: false`, the only value the brief allows
+  without a measurement. Measuring a row means starting its server from the project root and from a subfolder and then
+  driving a tool call (the browser, desktop and memory servers create their data folders on first use, not at start), and
+  a tool call needs a signed-in session that the isolated account does not have. A relative `--user-data-dir` or
+  `SERENA_HOME` resolves against the server's working directory, which Claude Code sets to the directory it was started
+  in, so from a subfolder it splits the data. Left for the live check on the user's account.
+- **`uvx --python 3.13 --exclude-newer 2026-10-20T23:59:59Z --from serena-agent@2.1.0 serena --help`** - exit 0 on uvx
+  0.13.4 (scratch `UV_CACHE_DIR`), so the pin-plus-cut-off form the catalog writes is accepted.
+- **Windows rows** (windows-control, serena-windows-home, windows-npx-cmd, windows-arm-python): the plan and detectors
+  run with a simulated platform and the CLI rewrite is the real one; a real Windows machine is the user's live check.
+  windows-control itself is NOT RUN on macOS.
