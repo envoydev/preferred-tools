@@ -153,3 +153,6 @@ vite.config.ts.timestamp-*
 
 # serena's per-project data for this checkout (a local tool, not part of the plugin)
 .alfred/
+
+# superpowers specs, plans and run ledgers are local-only (.claude/rules/superpowers-location.md)
+**/docs/superpowers/
