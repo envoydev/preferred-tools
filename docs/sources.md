@@ -193,8 +193,10 @@ Docs: https://code.claude.com/docs/en/plugins/cli-reference.md and https://code.
 - `dist/config.js` `DEFAULT_CONFIG` at tag v0.13.1 (dist is committed) - CONFIRMED to hold every key the ported row
   sets: `lineLayout` ('expanded' by default), `showSeparators`, `display.{showConfigCounts, showSkills, showMcp,
   showAgents, showTools, showCost, showEffortLevel, showPromptCache}` (all false by default),
-  `gitStatus.{showAheadBehind, showFileStats}` (false by default). The row's `verified` line moves to 0.13.1 in step 8,
-  after the keys are re-read against an installed copy.
+  `gitStatus.{showAheadBehind, showFileStats}` (false by default). Step 8 re-read all 12 catalog keys against that file
+  and against the installed 0.12.1 `dist/config.js`: every one present in both, and `migrateLegacyLayout` is still there
+  (what `chosen_by` relies on). The row's `verified` line now names 0.13.1 (2026-10-27). The `why` strings were reworded
+  to stand without alfred-code's internals; keys and values are as ported.
 - README 'Auto-Refresh': a `refreshInterval` (seconds) on the `statusLine` entry keeps countdowns ticking while idle;
   setup does not write it. On Windows the README warns short intervals can make Git Bash fail (`add_item ... failed,
   errno 1`) and advises none or 30 seconds or more. NOTE for the port: the row's `refreshInterval: 5` is the
