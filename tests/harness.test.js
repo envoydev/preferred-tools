@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const cli = require('../scripts/claude-cli.js');
+const account = require('../scripts/account.js');
 const { Harness, isolationCheck } = require('./harness.js');
 
 const skip = cli.available() ? false : 'no claude CLI on PATH';
@@ -32,5 +33,30 @@ test('the real CLI treats an empty or {} .mcp.json as fresh and refuses a malfor
         if (ok) assert.ok(JSON.parse(fs.readFileSync(file, 'utf8')).mcpServers.probe, name);
         else assert.equal(fs.readFileSync(file, 'utf8'), content, 'a malformed file is left as it was');
     }
+    assert.ok(h.realUntouched().ok);
+});
+
+test('the fix engine against the REAL CLI: detect, apply as one replace, read back, a second run finds nothing, the real account untouched', { skip }, () =>
+{
+    const fix = require('../scripts/fix.js');
+    const h = new Harness({ root: root() });
+    const project = h.project('fix-real');
+    const theirs = { command: 'uvx', args: ['--from', 'serena-agent@2.0.0', 'serena', 'start-mcp-server', '--verbose'], env: { SERENA_HOME: path.join(h.home, 'serena-home') } };
+    const own = { command: 'node', args: ['mine.js'] };
+    for (const [name, entry] of [['serena', theirs], ['my-own-server', own]])
+        assert.strictEqual(h.claude(project, ['mcp', 'add-json', name, JSON.stringify(entry), '-s', 'user']).status, 0);
+    const machine = { exists: () => false, realpath: () => null, which: () => null, run: () => ({ status: 1 }), nodeVersion: process.versions.node };
+    const ctx = () => fix.makeCtx({ inv: h.inventory(project), env: h.env, machine });
+    const found = fix.detectAll(ctx()).found;
+    assert.deepStrictEqual(found.map((f) => f.id).sort(), ['serena-telemetry', 'uvx-python']);
+    const lines = [];
+    const res = fix.applyFixes(ctx(), ['all'], { tmp: path.join(h.root, 'tmp'), log: (...a) => lines.push(a.join(' ')) });
+    assert.strictEqual(res.failed, null, lines.join('\n'));
+    const now = account.readAccount(h.env, project).user;
+    assert.deepStrictEqual(now.serena.args.slice(0, 2), ['--python', '3.13']);
+    assert.ok(now.serena.args.includes('serena-agent@2.0.0') && now.serena.args.includes('--verbose'), 'the user\'s pin and arg survive the real CLI round trip');
+    assert.strictEqual(now.serena.env.SERENA_USAGE_REPORTING, 'false');
+    assert.deepStrictEqual(now['my-own-server'], own);
+    assert.deepStrictEqual(fix.detectAll(ctx()).found, []);
     assert.ok(h.realUntouched().ok);
 });
