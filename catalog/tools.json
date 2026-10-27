@@ -1,0 +1,912 @@
+{
+  "schema": 1,
+  "note": "The 17 rows of preferred-tools. Facts are checked against the vendor docs in docs/sources.md (read 2026-10-27). Placeholders: {root} location root, {name} registration name, {host}, {value}. No secret in this file: a token is only ever a ${VAR} reference.",
+  "rules": {
+    "ageGateDays": 7,
+    "cutoff": "2026-10-20T23:59:59Z",
+    "windowsArmPython": "cpython-{minor}-windows-x86_64-none",
+    "windowsNpxCmd": {
+      "documented": false,
+      "source": "docs/sources.md, \"Windows cmd /c for npx\""
+    },
+    "nameRe": "^[A-Za-z0-9_-]{1,64}$"
+  },
+  "groups": [
+    {
+      "id": "code",
+      "label": "Code"
+    },
+    {
+      "id": "docs",
+      "label": "Docs and forges"
+    },
+    {
+      "id": "browsers",
+      "label": "Browsers"
+    },
+    {
+      "id": "machine",
+      "label": "Machine and monitoring"
+    }
+  ],
+  "tools": [
+    {
+      "id": "serena",
+      "kind": "mcp",
+      "group": "code",
+      "label": "serena",
+      "summary": "code navigation: symbols, references, reference-aware rename and delete",
+      "name": "serena",
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "recommendedRoute": "local",
+      "routes": {
+        "local": {
+          "runtime": "uvx",
+          "python": "3.13",
+          "with": [],
+          "projectScope": false,
+          "package": {
+            "registry": "pypi",
+            "name": "serena-agent",
+            "version": "2.1.0",
+            "fromSpec": "serena-agent@{version}",
+            "cutoff": "2026-10-20T23:59:59Z"
+          },
+          "run": [
+            "serena",
+            "start-mcp-server",
+            "--context",
+            "claude-code",
+            "--enable-web-dashboard",
+            "false",
+            "--project-from-cwd",
+            "--agent-interface",
+            "tools"
+          ],
+          "env": {
+            "SERENA_USAGE_REPORTING": "false"
+          },
+          "fingerprints": [
+            {
+              "pkg": "serena-agent"
+            }
+          ],
+          "prereqs": [
+            "uvx"
+          ]
+        }
+      },
+      "locations": {
+        "defaultSide": "project",
+        "alfred": ".alfred/serena/home",
+        "windowsAbsolute": true,
+        "derived": [
+          {
+            "in": "env",
+            "key": "SERENA_HOME",
+            "sub": ""
+          }
+        ]
+      },
+      "dangerous": []
+    },
+    {
+      "id": "memory",
+      "kind": "mcp",
+      "group": "code",
+      "label": "memory",
+      "summary": "persistent memory (sqlite-vec) shared across projects",
+      "name": "memory",
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "recommendedRoute": "local",
+      "routes": {
+        "local": {
+          "runtime": "uvx",
+          "python": "3.13",
+          "with": [],
+          "projectScope": false,
+          "package": {
+            "registry": "pypi",
+            "name": "mcp-memory-service",
+            "version": "12.1.1",
+            "fromSpec": "mcp-memory-service[sqlite]=={version}",
+            "cutoff": "2026-10-20T23:59:59Z"
+          },
+          "run": [
+            "memory",
+            "server"
+          ],
+          "env": {
+            "MCP_MEMORY_STORAGE_BACKEND": "sqlite_vec",
+            "MCP_MEMORY_SQLITE_PRAGMAS": "busy_timeout=15000"
+          },
+          "fingerprints": [
+            {
+              "pkg": "mcp-memory-service"
+            }
+          ],
+          "prereqs": [
+            "uvx"
+          ]
+        }
+      },
+      "locations": {
+        "defaultSide": "account",
+        "alfred": "~/.alfred-memory",
+        "derived": [
+          {
+            "in": "env",
+            "key": "MCP_MEMORY_SQLITE_PATH",
+            "sub": "memory.db"
+          }
+        ]
+      },
+      "dangerous": []
+    },
+    {
+      "id": "typescript-lsp",
+      "kind": "plugin",
+      "group": "code",
+      "label": "typescript-lsp",
+      "summary": "TypeScript / JavaScript code intelligence (language server)",
+      "plugin": "typescript-lsp",
+      "marketplace": {
+        "name": "claude-plugins-official",
+        "source": "anthropics/claude-plugins-official"
+      },
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "recommendedScope": "project",
+      "prereqs": [
+        "node-lsp",
+        "ts-lsp"
+      ],
+      "alsoManagedByAlfred": true
+    },
+    {
+      "id": "csharp-lsp",
+      "kind": "plugin",
+      "group": "code",
+      "label": "csharp-lsp",
+      "summary": "C# code intelligence (language server)",
+      "plugin": "csharp-lsp",
+      "marketplace": {
+        "name": "claude-plugins-official",
+        "source": "anthropics/claude-plugins-official"
+      },
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "recommendedScope": "project",
+      "prereqs": [
+        "csharp-ls"
+      ],
+      "alsoManagedByAlfred": true
+    },
+    {
+      "id": "context7",
+      "kind": "mcp",
+      "group": "docs",
+      "label": "context7",
+      "summary": "current library documentation (hosted); the API key is optional",
+      "name": "context7",
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "recommendedRoute": "remote",
+      "routes": {
+        "remote": {
+          "projectScope": true,
+          "type": "http",
+          "url": "https://mcp.context7.com/mcp",
+          "auth": "optional-token",
+          "tokenVar": "CONTEXT7_API_KEY",
+          "headers": {
+            "Authorization": "Bearer ${CONTEXT7_API_KEY}"
+          },
+          "fingerprints": [
+            {
+              "host": "mcp.context7.com",
+              "pathPrefix": "/mcp"
+            }
+          ],
+          "prereqs": []
+        },
+        "local": {
+          "projectScope": false,
+          "runtime": "npx",
+          "auth": "optional-token",
+          "tokenVar": "CONTEXT7_API_KEY",
+          "package": {
+            "registry": "npm",
+            "name": "@upstash/context7-mcp",
+            "version": "4.4.4",
+            "cutoff": "2026-10-20T23:59:59Z"
+          },
+          "run": [],
+          "optionalArgs": {
+            "token": [
+              "--api-key",
+              "${CONTEXT7_API_KEY}"
+            ]
+          },
+          "env": {},
+          "fingerprints": [
+            {
+              "pkg": "@upstash/context7-mcp"
+            }
+          ],
+          "prereqs": [
+            "npx"
+          ]
+        }
+      },
+      "dangerous": []
+    },
+    {
+      "id": "github",
+      "kind": "mcp",
+      "group": "docs",
+      "label": "github",
+      "summary": "GitHub repositories, issues, pull requests (hosted, or the vendor Docker image)",
+      "name": "github",
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "recommendedRoute": "remote",
+      "routes": {
+        "remote": {
+          "projectScope": true,
+          "type": "http",
+          "url": "https://api.githubcopilot.com/mcp/",
+          "auth": "token",
+          "tokenVar": "GITHUB_PERSONAL_ACCESS_TOKEN",
+          "headers": {
+            "Authorization": "Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN}"
+          },
+          "fingerprints": [
+            {
+              "host": "api.githubcopilot.com",
+              "pathPrefix": "/mcp"
+            }
+          ],
+          "prereqs": []
+        },
+        "local": {
+          "projectScope": false,
+          "runtime": "docker",
+          "auth": "token",
+          "tokenVar": "GITHUB_PERSONAL_ACCESS_TOKEN",
+          "image": {
+            "name": "ghcr.io/github/github-mcp-server",
+            "tag": "v2.0.2"
+          },
+          "run": [
+            "stdio"
+          ],
+          "env": {
+            "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
+          },
+          "fallback": {
+            "runtime": "binary",
+            "command": "github-mcp-server",
+            "args": [
+              "stdio"
+            ],
+            "when": "no-docker"
+          },
+          "fingerprints": [
+            {
+              "pkg": "ghcr.io/github/github-mcp-server"
+            },
+            {
+              "command": "github-mcp-server"
+            }
+          ],
+          "prereqs": [
+            "docker-or-github-binary"
+          ]
+        }
+      },
+      "dangerous": []
+    },
+    {
+      "id": "gitlab",
+      "kind": "mcp",
+      "group": "docs",
+      "label": "gitlab",
+      "summary": "GitLab's own hosted MCP server (gitlab.com or a self-managed host), OAuth",
+      "name": "gitlab",
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "recommendedRoute": "remote",
+      "params": [
+        {
+          "id": "host",
+          "label": "GitLab host",
+          "default": "gitlab.com"
+        }
+      ],
+      "routes": {
+        "remote": {
+          "projectScope": true,
+          "type": "http",
+          "url": "https://{host}/api/v4/mcp",
+          "auth": "oauth",
+          "fingerprints": [
+            {
+              "pathPrefix": "/api/v4/mcp"
+            }
+          ],
+          "prereqs": []
+        }
+      },
+      "dangerous": []
+    },
+    {
+      "id": "atlassian",
+      "kind": "mcp",
+      "group": "docs",
+      "label": "atlassian",
+      "summary": "Atlassian's hosted Rovo MCP server (Jira, Confluence), OAuth",
+      "name": "atlassian",
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "recommendedRoute": "remote",
+      "routes": {
+        "remote": {
+          "projectScope": true,
+          "type": "http",
+          "url": "https://mcp.atlassian.com/v2/mcp",
+          "auth": "oauth",
+          "fingerprints": [
+            {
+              "host": "mcp.atlassian.com",
+              "pathPrefix": "/v"
+            }
+          ],
+          "prereqs": []
+        }
+      },
+      "dangerous": []
+    },
+    {
+      "id": "playwright-chrome",
+      "kind": "mcp",
+      "group": "browsers",
+      "label": "playwright-chrome",
+      "summary": "browser control, Chrome (Playwright MCP, persistent profile)",
+      "name": "playwright-chrome",
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "recommendedRoute": "local",
+      "routes": {
+        "local": {
+          "projectScope": false,
+          "runtime": "npx",
+          "package": {
+            "registry": "npm",
+            "name": "@playwright/mcp",
+            "version": "0.0.83",
+            "cutoff": "2026-10-20T23:59:59Z"
+          },
+          "run": [
+            "--browser",
+            "chrome",
+            "--no-webmcp"
+          ],
+          "env": {},
+          "fingerprints": [
+            {
+              "pkg": "@playwright/mcp",
+              "flag": "--browser",
+              "value": "chrome"
+            }
+          ],
+          "prereqs": [
+            "npx",
+            "browser-chrome"
+          ],
+          "optionalArgs": {
+            "executablePath": [
+              "--executable-path",
+              "{value}"
+            ]
+          }
+        }
+      },
+      "locations": {
+        "defaultSide": "project",
+        "alfred": ".alfred/chrome-control",
+        "derived": [
+          {
+            "in": "arg",
+            "key": "--user-data-dir",
+            "sub": ""
+          },
+          {
+            "in": "arg",
+            "key": "--output-dir",
+            "sub": "output"
+          }
+        ]
+      },
+      "dangerous": [
+        {
+          "tool": "browser_run_code_unsafe",
+          "why": "runs arbitrary JavaScript in the page and the browser context"
+        }
+      ]
+    },
+    {
+      "id": "playwright-msedge",
+      "kind": "mcp",
+      "group": "browsers",
+      "label": "playwright-msedge",
+      "summary": "browser control, Edge (Playwright MCP, persistent profile)",
+      "name": "playwright-msedge",
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "recommendedRoute": "local",
+      "routes": {
+        "local": {
+          "projectScope": false,
+          "runtime": "npx",
+          "package": {
+            "registry": "npm",
+            "name": "@playwright/mcp",
+            "version": "0.0.83",
+            "cutoff": "2026-10-20T23:59:59Z"
+          },
+          "run": [
+            "--browser",
+            "msedge",
+            "--no-webmcp"
+          ],
+          "env": {},
+          "fingerprints": [
+            {
+              "pkg": "@playwright/mcp",
+              "flag": "--browser",
+              "value": "msedge"
+            }
+          ],
+          "prereqs": [
+            "npx",
+            "browser-msedge"
+          ],
+          "optionalArgs": {
+            "executablePath": [
+              "--executable-path",
+              "{value}"
+            ]
+          }
+        }
+      },
+      "locations": {
+        "defaultSide": "project",
+        "alfred": ".alfred/msedge-control",
+        "derived": [
+          {
+            "in": "arg",
+            "key": "--user-data-dir",
+            "sub": ""
+          },
+          {
+            "in": "arg",
+            "key": "--output-dir",
+            "sub": "output"
+          }
+        ]
+      },
+      "dangerous": [
+        {
+          "tool": "browser_run_code_unsafe",
+          "why": "runs arbitrary JavaScript in the page and the browser context"
+        }
+      ]
+    },
+    {
+      "id": "playwright-firefox",
+      "kind": "mcp",
+      "group": "browsers",
+      "label": "playwright-firefox",
+      "summary": "browser control, Firefox (Playwright MCP, persistent profile)",
+      "name": "playwright-firefox",
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "recommendedRoute": "local",
+      "routes": {
+        "local": {
+          "projectScope": false,
+          "runtime": "npx",
+          "package": {
+            "registry": "npm",
+            "name": "@playwright/mcp",
+            "version": "0.0.83",
+            "cutoff": "2026-10-20T23:59:59Z"
+          },
+          "run": [
+            "--browser",
+            "firefox",
+            "--no-webmcp"
+          ],
+          "env": {},
+          "fingerprints": [
+            {
+              "pkg": "@playwright/mcp",
+              "flag": "--browser",
+              "value": "firefox"
+            }
+          ],
+          "prereqs": [
+            "npx"
+          ],
+          "optionalArgs": {
+            "executablePath": [
+              "--executable-path",
+              "{value}"
+            ]
+          }
+        }
+      },
+      "locations": {
+        "defaultSide": "project",
+        "alfred": ".alfred/firefox-control",
+        "derived": [
+          {
+            "in": "arg",
+            "key": "--user-data-dir",
+            "sub": ""
+          },
+          {
+            "in": "arg",
+            "key": "--output-dir",
+            "sub": "output"
+          }
+        ]
+      },
+      "dangerous": [
+        {
+          "tool": "browser_run_code_unsafe",
+          "why": "runs arbitrary JavaScript in the page and the browser context"
+        }
+      ]
+    },
+    {
+      "id": "playwright-webkit",
+      "kind": "mcp",
+      "group": "browsers",
+      "label": "playwright-webkit",
+      "summary": "browser control, WebKit (Playwright MCP, persistent profile)",
+      "name": "playwright-webkit",
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "recommendedRoute": "local",
+      "routes": {
+        "local": {
+          "projectScope": false,
+          "runtime": "npx",
+          "package": {
+            "registry": "npm",
+            "name": "@playwright/mcp",
+            "version": "0.0.83",
+            "cutoff": "2026-10-20T23:59:59Z"
+          },
+          "run": [
+            "--browser",
+            "webkit",
+            "--no-webmcp"
+          ],
+          "env": {},
+          "fingerprints": [
+            {
+              "pkg": "@playwright/mcp",
+              "flag": "--browser",
+              "value": "webkit"
+            }
+          ],
+          "prereqs": [
+            "npx"
+          ],
+          "optionalArgs": {
+            "executablePath": [
+              "--executable-path",
+              "{value}"
+            ]
+          }
+        }
+      },
+      "locations": {
+        "defaultSide": "project",
+        "alfred": ".alfred/webkit-control",
+        "derived": [
+          {
+            "in": "arg",
+            "key": "--user-data-dir",
+            "sub": ""
+          },
+          {
+            "in": "arg",
+            "key": "--output-dir",
+            "sub": "output"
+          }
+        ]
+      },
+      "dangerous": [
+        {
+          "tool": "browser_run_code_unsafe",
+          "why": "runs arbitrary JavaScript in the page and the browser context"
+        }
+      ]
+    },
+    {
+      "id": "appium",
+      "kind": "mcp",
+      "group": "machine",
+      "label": "appium",
+      "summary": "Android / iOS control through Appium (emulator, simulator or device)",
+      "name": "appium-mcp",
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "recommendedRoute": "local",
+      "routes": {
+        "local": {
+          "projectScope": false,
+          "runtime": "npx",
+          "package": {
+            "registry": "npm",
+            "name": "appium-mcp",
+            "version": "1.97.1",
+            "cutoff": "2026-10-20T23:59:59Z"
+          },
+          "run": [],
+          "env": {
+            "NO_UI": "true",
+            "ALLOW_REMOTE_APP_URLS": "false",
+            "REMOTE_SERVER_URL_ALLOW_REGEX": "^https?://(localhost|127\\.0\\.0\\.1|\\[::1\\])(:[0-9]+)?(/[^?#]*)?$"
+          },
+          "fingerprints": [
+            {
+              "pkg": "appium-mcp"
+            }
+          ],
+          "prereqs": [
+            "npx",
+            "android-sdk",
+            "jdk"
+          ],
+          "audit": true
+        }
+      },
+      "locations": {
+        "defaultSide": "project",
+        "alfred": ".alfred/mobile-control",
+        "derived": [
+          {
+            "in": "env",
+            "key": "SCREENSHOTS_DIR",
+            "sub": "screenshots"
+          },
+          {
+            "in": "env",
+            "key": "PAGE_SOURCES_DIR",
+            "sub": "page-sources"
+          }
+        ]
+      },
+      "dangerous": []
+    },
+    {
+      "id": "macos-control",
+      "kind": "mcp",
+      "group": "machine",
+      "label": "macos-control",
+      "summary": "macOS desktop control",
+      "name": "macos-desktop",
+      "os": [
+        "darwin"
+      ],
+      "recommendedRoute": "local",
+      "routes": {
+        "local": {
+          "runtime": "uvx",
+          "python": "3.13",
+          "with": [],
+          "projectScope": false,
+          "package": {
+            "registry": "pypi",
+            "name": "macos-mcp",
+            "version": "0.4.6",
+            "fromSpec": "macos-mcp=={version}",
+            "cutoff": "2026-10-20T23:59:59Z"
+          },
+          "run": [
+            "macos-mcp",
+            "serve"
+          ],
+          "env": {
+            "ANONYMIZED_TELEMETRY": "false"
+          },
+          "fingerprints": [
+            {
+              "pkg": "macos-mcp"
+            }
+          ],
+          "prereqs": [
+            "uvx"
+          ]
+        }
+      },
+      "dangerous": [
+        {
+          "tool": "Shell",
+          "why": "runs shell commands and AppleScript"
+        }
+      ]
+    },
+    {
+      "id": "windows-control",
+      "kind": "mcp",
+      "group": "machine",
+      "label": "windows-control",
+      "summary": "Windows desktop control (PowerShell, Registry, Process, FileSystem tools off)",
+      "name": "windows-desktop",
+      "os": [
+        "win32"
+      ],
+      "recommendedRoute": "local",
+      "routes": {
+        "local": {
+          "runtime": "uvx",
+          "python": "3.14",
+          "with": [],
+          "projectScope": false,
+          "package": {
+            "registry": "pypi",
+            "name": "windows-mcp",
+            "version": "0.8.8",
+            "fromSpec": "windows-mcp=={version}",
+            "cutoff": "2026-10-20T23:59:59Z"
+          },
+          "run": [
+            "windows-mcp",
+            "serve",
+            "--exclude-tools",
+            "PowerShell,Registry,Process,FileSystem"
+          ],
+          "env": {
+            "ANONYMIZED_TELEMETRY": "false"
+          },
+          "fingerprints": [
+            {
+              "pkg": "windows-mcp"
+            }
+          ],
+          "prereqs": [
+            "uvx"
+          ]
+        }
+      },
+      "dangerous": [
+        {
+          "tool": "App",
+          "why": "its launch_executable mode starts any program with the arguments given"
+        }
+      ]
+    },
+    {
+      "id": "sentry",
+      "kind": "mcp",
+      "group": "machine",
+      "label": "sentry",
+      "summary": "Sentry issues and events (hosted, OAuth; or the npm server with a token)",
+      "name": "sentry",
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "recommendedRoute": "remote",
+      "routes": {
+        "remote": {
+          "projectScope": true,
+          "type": "http",
+          "url": "https://mcp.sentry.dev/mcp",
+          "auth": "oauth",
+          "fingerprints": [
+            {
+              "host": "mcp.sentry.dev",
+              "pathPrefix": "/mcp"
+            }
+          ],
+          "prereqs": []
+        },
+        "local": {
+          "projectScope": false,
+          "runtime": "npx",
+          "auth": "token",
+          "tokenVar": "SENTRY_ACCESS_TOKEN",
+          "package": {
+            "registry": "npm",
+            "name": "@sentry/mcp-server",
+            "version": "0.42.0",
+            "cutoff": "2026-10-20T23:59:59Z"
+          },
+          "run": [],
+          "env": {
+            "SENTRY_ACCESS_TOKEN": "${SENTRY_ACCESS_TOKEN}"
+          },
+          "fingerprints": [
+            {
+              "pkg": "@sentry/mcp-server"
+            }
+          ],
+          "prereqs": [
+            "npx"
+          ]
+        }
+      },
+      "dangerous": []
+    },
+    {
+      "id": "claude-hud",
+      "kind": "plugin",
+      "group": "machine",
+      "label": "claude-hud",
+      "summary": "status line (also writes its statusLine and recommended config)",
+      "plugin": "claude-hud",
+      "marketplace": {
+        "name": "claude-hud",
+        "source": "jarrodwatts/claude-hud"
+      },
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "recommendedScope": "user",
+      "prereqs": [],
+      "settingsRow": "claude-hud",
+      "alsoManagedByAlfred": true
+    }
+  ]
+}

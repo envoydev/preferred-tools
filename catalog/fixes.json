@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "note": "Known problems and their recorded fixes. `detect` and `fix` name functions in scripts/fixes/. `verifiedOn` says where the fix was proved; a row not proved on this build says so. A new problem the user meets later becomes a new row.",
+  "fixes": [
+    {
+      "id": "serena-windows-home", "tool": ["serena"], "os": ["win32"], "kind": "registration",
+      "symptom": "serena's TypeScript language server fails to start on Windows ('.serena' is not recognized as an internal or external command): serena runs it through a shell, which hands SERENA_HOME over unquoted, so a '/' or a space in it cuts the path",
+      "detect": "serenaWindowsHomeDetect", "fix": "serenaWindowsHomeFix",
+      "verifiedOn": "alfred-code record, serena-agent 1.7.0 to 2.1.0, Windows; the 2.1.0 code path (shell=True) read on 2026-10-27; NOT re-proved on a Windows VM by this build",
+      "source": "alfred-code stack/mcp/serena-launch.js header (f779a349); docs/sources.md 'serena'"
+    },
+    {
+      "id": "serena-windows-ts-shim", "tool": ["serena"], "os": ["win32"], "kind": "file",
+      "hold": "open decision: serena#311 was closed as an incorrect analysis and 2.1.0 launches through a shell; see docs/sources.md 'Open decision'",
+      "symptom": "every serena symbol and reference tool fails for the session on Windows: solidlsp spawns npm's extensionless POSIX shim .bin/typescript-language-server (upstream oraios/serena#311)",
+      "detect": "serenaTsShimDetect", "fix": "serenaTsShimFix",
+      "verifiedOn": "NOT proved: alfred-code script fix-serena-ts-windows.ps1, no Windows run of an unpatched 2.1.0",
+      "source": "alfred-code scripts/fix-serena-ts-windows.ps1"
+    },
+    {
+      "id": "uvx-python", "tool": ["serena", "memory", "macos-control", "windows-control"], "os": ["darwin", "linux", "win32"], "kind": "registration",
+      "symptom": "a uvx server dies at start with CONNECTION_CLOSED (pyyaml 6.0.2 has no CPython 3.14 wheel, so uvx on the newest Python compiles it)",
+      "detect": "uvxPythonDetect", "fix": "uvxPythonFix",
+      "verifiedOn": "alfred-code record (uv-python.js); detection verified on this build against registered entries",
+      "source": "alfred-code stack/mcp/uv-python.js header (f779a349)"
+    },
+    {
+      "id": "windows-arm-python", "tool": ["serena", "memory", "windows-control"], "os": ["win32"], "kind": "registration",
+      "symptom": "a uvx server fails to build wheels on Windows ARM64 (cryptography, psutil, tiktoken and pyyaml ship no ARM64 wheel)",
+      "detect": "windowsArmPythonDetect", "fix": "windowsArmPythonFix",
+      "verifiedOn": "alfred-code docs/uv-python-pin-evidence.md (Windows 11 ARM); NOT re-proved by this build",
+      "source": "alfred-code docs/uv-python-pin-evidence.md"
+    },
+    {
+      "id": "windows-npx-cmd", "tool": ["playwright-chrome", "playwright-msedge", "playwright-firefox", "playwright-webkit", "appium", "context7", "sentry"], "os": ["win32"], "kind": "registration",
+      "symptom": "an npx server never connects on native Windows",
+      "detect": "windowsNpxCmdDetect", "fix": "windowsNpxCmdFix", "documented": false,
+      "verifiedOn": "NOT documented by Claude Code any more (changelog 2.1.119 dropped the warning); the wrapper is a precaution, NOT proved on a Windows VM",
+      "source": "docs/sources.md 'Windows cmd /c for npx'"
+    },
+    {
+      "id": "playwright-webmcp", "tool": ["playwright-chrome", "playwright-msedge", "playwright-firefox", "playwright-webkit"], "os": ["darwin", "linux", "win32"], "kind": "registration",
+      "symptom": "page-registered WebMCP tools appear beside Playwright's own tools",
+      "detect": "playwrightWebmcpDetect", "fix": "playwrightWebmcpFix",
+      "verifiedOn": "@playwright/mcp 0.0.83 README documents --no-webmcp (2026-10-27)",
+      "source": "alfred-code stack/mcp/browser-launch.js header; docs/sources.md 'Playwright MCP'"
+    },
+    {
+      "id": "appium-sdk-env", "tool": ["appium"], "os": ["darwin", "linux", "win32"], "kind": "registration",
+      "symptom": "appium cannot find the Android SDK or a JDK (Claude Code started from the dock or an IDE has neither ANDROID_HOME nor JAVA_HOME)",
+      "detect": "appiumSdkEnvDetect", "fix": "appiumSdkEnvFix",
+      "verifiedOn": "alfred-code record (mobile-launch.js); ANDROID_HOME documented by appium-mcp, JAVA_HOME is Appium's own, not appium-mcp's docs",
+      "source": "alfred-code stack/mcp/mobile-launch.js header (f779a349)"
+    },
+    {
+      "id": "serena-telemetry", "tool": ["serena"], "os": ["darwin", "linux", "win32"], "kind": "registration",
+      "symptom": "serena sends a usage ping at every start",
+      "detect": "serenaTelemetryDetect", "fix": "serenaTelemetryFix",
+      "verifiedOn": "serena-agent 2.1.0 serena/agent.py returns early on SERENA_USAGE_REPORTING=false (read 2026-10-27)",
+      "source": "alfred-code stack/mcp/serena-launch.js; docs/sources.md 'serena'"
+    },
+    {
+      "id": "typescript-lsp-ts7", "tool": ["typescript-lsp"], "os": ["darwin", "linux", "win32"], "kind": "machine",
+      "symptom": "typescript-lsp shows no diagnostics: TypeScript 7 ships no tsserver.js, and the plugin README's install line fetches it",
+      "detect": "typescriptLspTs7Detect", "fix": "typescriptLspTs7Fix",
+      "verifiedOn": "typescript@7.0.2 package contents read 2026-10-27; typescript-language-server 6.0.2 README says typescript@6",
+      "source": "docs/sources.md 'LSP plugins'"
+    }
+  ]
+}

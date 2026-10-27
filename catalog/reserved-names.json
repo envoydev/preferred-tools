@@ -1,0 +1,22 @@
+{
+  "note": "Names alfred-code once registered and may retire. Built by scripts/refresh-reserved.js; do not hand-edit.",
+  "names": [
+    "alfred-documentation",
+    "alfred-memory",
+    "alfred-navigation",
+    "browser",
+    "browser-chrome",
+    "browser-firefox",
+    "browser-msedge",
+    "browser-webkit",
+    "chrome-control",
+    "documentation",
+    "firefox-control",
+    "macos-control",
+    "mobile-control",
+    "msedge-control",
+    "navigation",
+    "webkit-control",
+    "windows-control"
+  ]
+}

@@ -6,7 +6,7 @@
   "license": "MIT",
   "engines": { "node": ">=22" },
   "scripts": {
-    "test": "node --test tests/",
+    "test": "node --test tests/*.test.js",
     "lint": "node tests/lint.js",
     "validate": "node tests/validate-plugin.js",
     "refresh-pins": "node scripts/refresh-pins.js"
