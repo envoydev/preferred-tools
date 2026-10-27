@@ -1,0 +1,14 @@
+{
+  "name": "preferred-tools",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Build and test scripts for the preferred-tools Claude Code plugin. The plugin has no runtime dependencies.",
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test tests/",
+    "lint": "node tests/lint.js",
+    "validate": "node tests/validate-plugin.js",
+    "refresh-pins": "node scripts/refresh-pins.js"
+  }
+}
