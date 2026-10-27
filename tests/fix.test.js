@@ -319,7 +319,7 @@ test('--only narrows by fix id, tool or registration name; the table names the h
     const text = fix.render(detect(ctx));
     assert.match(text, /Known problems found \(3\):/);
     assert.match(text, /uvx-python +serena \(local\) +no --python/);
-    assert.match(fix.render(detect(ctxFor({ platform: 'win32' }))), /^No known problem found\.\n\nHeld, not checked: serena-windows-ts-shim - open decision/);
+    assert.match(fix.render(detect(ctxFor({ platform: 'win32' }))), /^No known problem found\.\n\nHeld, not checked: serena-windows-ts-shim - left out by the user's ruling/);
 });
 
 test('the asks stay inside the AskUserQuestion limits: one Recommended, first; four options a question; four questions a call', () =>

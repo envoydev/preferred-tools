@@ -214,7 +214,7 @@ Docs: https://code.claude.com/docs/en/plugins/cli-reference.md and https://code.
   langserver. The tests on windows run through in CI'. The closing fix was commit `c5fe377693d` (an install check made
   on a directory instead of the executable). The reporter's symptom was a 'typescript-language-server executable not
   found' assertion; the `WinError 193` theory was the reporter's own. So the build brief's premise - that #311 records a
-  cmd.exe failure on the extensionless shim - is NOT what the issue says. See 'Open decision' below.
+  cmd.exe failure on the extensionless shim - is NOT what the issue says. See 'Decision - serena-windows-ts-shim' below.
 - Code at the pin - MEASURED by reading the serena-agent 2.1.0 wheel (downloaded to an empty scratch folder, never run):
   `solidlsp/language_servers/typescript_language_server.py` `_create_launch_command` still reads
   `return [core_path, "--stdio"]`, `core_path` being `<tsserver dir>/node_modules/.bin/typescript-language-server`. The
@@ -299,13 +299,17 @@ Docs: https://code.claude.com/docs/en/plugins/cli-reference.md and https://code.
 | memory | `--with numpy` | dropped (core dependency) | PyPI metadata |
 | appium | 1.97.1 | 1.97.1 (age gate holds it; latest is 1.99.1) | npm |
 | windows-npx-cmd | 'Claude Code's MCP docs ask for' `cmd /c` | kept as an unproved precaution, `documented: false`, Windows VM NOT RUN | changelog 2.1.119 |
-| serena-windows-ts-shim | 'upstream #311' | see 'Open decision' | issue, wheel |
+| serena-windows-ts-shim | 'upstream #311' | left out - see 'Decision - serena-windows-ts-shim' | issue, wheel |
 
-## Open decision - serena-windows-ts-shim
+## Decision - serena-windows-ts-shim
 
-The brief puts the shim patch in three places: the install plan on Windows (pre-warm, then patch), the serena bump in the
-update skill, and `/preferred-tools:fix`. Its stated reason is serena #311. Verified: #311 is closed as an incorrect
-analysis, there is no upstream fix to wait for, and the 2.1.0 launch runs through `shell=True`/cmd.exe, which may resolve
-the extensionless shim itself. Nothing here proves the patch is needed or that it is not: only a Windows run of an
-unpatched 2.1.0 does. The patch edits a file in uv's cache. Steps 2 to 8 do not depend on it; the build holds the shim
-parts (step 9's detector and fix, the Windows install plan item, the serena bump patch) for the user's call.
+The brief put the shim patch in three places: the install plan on Windows (pre-warm, then patch), the serena bump in the
+update skill, and `/preferred-tools:fix`. Its stated reason was serena #311. Verified in step 1: #311 is closed as an
+incorrect analysis, there is no upstream fix to wait for, and the 2.1.0 launch runs through `shell=True`/cmd.exe, which may
+resolve the extensionless shim itself. Nothing proves the patch is needed or that it is not: only a Windows run of an
+unpatched 2.1.0 does, and the patch edits a file in uv's cache.
+
+**Ruled by the user, 2026-10-27: leave it out.** Not in the install plan, not in the update skill, not in the fix command.
+The row stays in `catalog/fixes.json` with `hold` and this evidence, and `fix.js` lists it as 'Held, not checked'. If a
+Windows run of an unpatched serena shows the failure, the row becomes a detector in `scripts/fixes/` and the three
+places follow; until then nothing here writes to uv's cache.
