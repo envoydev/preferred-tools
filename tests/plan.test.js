@@ -187,15 +187,21 @@ test('remote routes may sit at project scope', () => {
     assert.match(plan(inv(MAC), pickOne('sentry', { route: 'local', scope: 'project' }), opts('/h')).errors[0], /cannot be registered at project scope/);
 });
 
-test('locations: alfred-code data on disk first, then the project default; memory defaults to the account folder', () => {
+test('locations: the plugin\'s own folder by default, even with alfred-code data on disk; memory defaults to the account folder', () => {
     const has = (p) => p === '/work/shop/.alfred/chrome-control' || p === '/Users/me/.alfred-memory' || p === '/work/shop/.alfred/serena/home';
     const o = opts('/Users/me', { exists: has });
     const chrome = addStep(plan(inv(MAC), pickOne('playwright-chrome'), o)).entry;
-    assert.strictEqual(chrome.args[chrome.args.indexOf('--user-data-dir') + 1], '/work/shop/.alfred/chrome-control');
+    assert.strictEqual(chrome.args[chrome.args.indexOf('--user-data-dir') + 1], '/work/shop/.preferred-tools/playwright-chrome');
     const mem = addStep(plan(inv(MAC), pickOne('memory'), o)).entry;
-    assert.strictEqual(mem.env.MCP_MEMORY_SQLITE_PATH, '/Users/me/.alfred-memory/memory.db');
+    assert.strictEqual(mem.env.MCP_MEMORY_SQLITE_PATH, '/Users/me/.preferred-tools/memory/memory.db');
     const serena = addStep(plan(inv(MAC), pickOne('serena'), o)).entry;
-    assert.strictEqual(serena.env.SERENA_HOME, '/work/shop/.alfred/serena/home');
+    assert.strictEqual(serena.env.SERENA_HOME, '/work/shop/.preferred-tools/serena');
+    // alfred-code's folder only on the user's pick, and only when it is on disk
+    const reuse = addStep(plan(inv(MAC), pickOne('playwright-chrome', { location: { side: 'alfred' } }), o)).entry;
+    assert.strictEqual(reuse.args[reuse.args.indexOf('--user-data-dir') + 1], '/work/shop/.alfred/chrome-control');
+    const reuseMem = addStep(plan(inv(MAC), pickOne('memory', { location: { side: 'alfred' } }), o)).entry;
+    assert.strictEqual(reuseMem.env.MCP_MEMORY_SQLITE_PATH, '/Users/me/.alfred-memory/memory.db');
+    assert.match(plan(inv(MAC), pickOne('playwright-firefox', { location: { side: 'alfred' } }), o).errors[0], /no alfred-code data folder/);
     const firefox = addStep(plan(inv(MAC), pickOne('playwright-firefox'), o)).entry;
     assert.strictEqual(firefox.args[firefox.args.indexOf('--user-data-dir') + 1], '/work/shop/.preferred-tools/playwright-firefox');
     // the other place is always offered
@@ -210,7 +216,8 @@ test('a data folder the plugin creates gets a .gitignore step; one that exists d
     assert.deepStrictEqual(p.steps.map((s) => s.op), ['ensure-dir', 'mcp-add', 'fetch']);
     assert.strictEqual(p.steps[0].path, '/work/shop/.preferred-tools/playwright-chrome');
     assert.match(render(p), /\.gitignore {2}\(contents: \*\)/);
-    const old = plan(inv(MAC), pickOne('playwright-chrome'), opts('/Users/me', { exists: () => true }));
+    // alfred-code's folder, picked, is the user's data as it is: no step creates or marks it
+    const old = plan(inv(MAC), pickOne('playwright-chrome', { location: { side: 'alfred' } }), opts('/Users/me', { exists: () => true }));
     assert.deepStrictEqual(old.steps.map((s) => s.op), ['mcp-add', 'fetch']);
 });
 
@@ -386,9 +393,12 @@ test('plugins at another scope are moved: install first, then uninstall the old 
 test('plugins also managed by alfred-code are marked while it is enabled', () => {
     const known = [{ name: 'claude-plugins-official', source: '' }];
     const p = plan(inv(MAC, { marketplaces: known, alfredCodeEnabled: true }), pickOne('typescript-lsp'), opts('/h'));
-    assert.match(p.notes.join(' '), /also managed by alfred-code/);
+    assert.match(p.notes.join(' '), /alfred-code installs it too/);
     const rem = plan(inv(MAC, { alfredCodeEnabled: true, plugins: [{ rowId: 'typescript-lsp', id: 'typescript-lsp@claude-plugins-official', scope: 'project', enabled: true, alfredRetired: false }] }), { remove: [{ kind: 'plugin', id: 'typescript-lsp@claude-plugins-official', scope: 'project' }] }, opts('/h'));
-    assert.match(rem.notes.join(' '), /holds only once alfred-code's hand-off has shipped/);
+    assert.match(rem.notes.join(' '), /alfred-code installs it too - its next update may add it back/);
+    // with alfred-code absent, nothing names it
+    const absent = plan(inv(MAC, { plugins: [{ rowId: 'typescript-lsp', id: 'typescript-lsp@claude-plugins-official', scope: 'project', enabled: true, alfredRetired: false }] }), { remove: [{ kind: 'plugin', id: 'typescript-lsp@claude-plugins-official', scope: 'project' }] }, opts('/h'));
+    assert.doesNotMatch(absent.notes.join(' '), /alfred-code/);
 });
 
 test('code-running tools are named in the plan', () => {
@@ -674,4 +684,15 @@ test('the remove asks carry what to remove in their descriptions, in a form the 
     assert.strictEqual(options.length, 3);
     for (const o of options) assert.match(o.description, /^claude (mcp remove \S+ -s (local|project|user)|plugin uninstall \S+ --scope (local|project|user))$/);
     assert.deepStrictEqual(options.map((o) => o.description), ['claude mcp remove proj-serena -s local', 'claude mcp remove context7 -s project', 'claude plugin uninstall claude-hud@claude-hud --scope user']);
+});
+
+test('location: alfred-code data on disk is a second answer, not the recommended one, and absent without the folder', () => {
+    const ctx = (exists) => ({ project: '/work/shop', platform: 'darwin', arch: 'arm64', home: '/Users/me', env: {}, exists });
+    const loc = (exists) => asks.toolQuestions(catalog.byId.get('playwright-chrome'), inv(MAC), { route: 'local', ctx: ctx(exists), catalog }).find((q) => q.id === 'location-playwright-chrome');
+    const withData = loc((p) => p === '/work/shop/.alfred/chrome-control');
+    checkQuestion(withData);
+    assert.match(withData.options[0].label, /^Keep `\.preferred-tools\/playwright-chrome` \(Recommended\)$/);
+    assert.strictEqual(withData.options[1].label, "Use alfred-code's `.alfred/chrome-control`");
+    assert.match(withData.options[1].description, /deleting it erases this tool's data/);
+    assert.ok(!loc(() => false).options.some((o) => /alfred/.test(o.label)), 'no alfred-code folder, no answer for it');
 });

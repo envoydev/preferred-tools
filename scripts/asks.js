@@ -177,7 +177,8 @@ function toolQuestions(row, inv, { route, current = null, ctx = null, catalog, c
         else
         {
             const keep = current && current.rootStr ? current.rootStr : show(d.root);
-            opts.push({ label: `Keep \`${keep}\`${REC}`, description: current && current.rootStr ? 'the folder it uses now' : d.existing ? 'your existing alfred-code data' : 'the default data folder' });
+            opts.push({ label: `Keep \`${keep}\`${REC}`, description: current && current.rootStr ? 'the folder it uses now' : 'the default data folder' });
+            if (!current && d.alfred && !winAbs) opts.push({ label: `Use alfred-code's \`${show(d.alfred)}\``, description: "carries over the data alfred-code's server left there - the folder is alfred-code's, so deleting it erases this tool's data" });
             if (winAbs) opts.push({ label: 'Another space-free folder', description: 'type an absolute path without spaces under Other' });
             else opts.push({ label: `Use \`${show(other)}\``, description: other.kind === 'home' ? 'the account folder, shared across projects' : 'the project folder' });
         }

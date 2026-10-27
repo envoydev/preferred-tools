@@ -33,6 +33,9 @@ private project names, no absolute local paths, no tokens, nothing from a user's
 
 ## Invariants
 
+- **Standalone plugin** (the user's ruling, 2026-10-27). It shares the `envoydev` marketplace with alfred-code like
+  any two plugins in a store: neither depends on, requires, installs or removes the other, and it works the same with
+  alfred-code absent. Reading what alfred-code left (its reserved names, its data folders) is fine; needing it is not.
 - **The `claude` CLI is the only writer** of `.mcp.json` and the account `.claude.json`: `claude mcp add-json`,
   `remove` and `get`, and `claude plugin install`, `update`, `uninstall` and `list --json`. Scripts read those files,
   never write them.
@@ -108,5 +111,5 @@ those dates.
   servers it shipped until 2.10.1: `stack/mcp/original-mcps.json`, `stack/mcp/shipped-mcps.json` and
   `stack/mcp/README.md`. Its claude-hud settings step is `scripts/plugin-settings.js`, `scripts/hud-statusline.js` and
   `meta/plugin-settings.json`. A change there follows its own CLAUDE.md, never an edit from this repo.
-- claude-hud, typescript-lsp and csharp-lsp move from alfred-code to this plugin. Until alfred-code's hand-off ships,
-  both install them (`docs/build-prompt.md`, Risks).
+- claude-hud, typescript-lsp and csharp-lsp are installed by both plugins, each on its own; there is no hand-over
+  (`docs/build-prompt.md`, Risks and Hand-off).

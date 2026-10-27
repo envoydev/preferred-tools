@@ -77,17 +77,27 @@ function validWindowsSerenaHome(rootStr)
     return path.win32.isAbsolute(rootStr) && !/\s/.test(rootStr) && !rootStr.includes('/') && /^[A-Za-z]:\\/.test(rootStr);
 }
 
-// The default root for a row (before the user's answer), as a logical root. Order: the alfred-code data already on disk,
-// then the project folder (memory: the account folder). serena on Windows overrides both.
+// The default root for a row (before the user's answer), as a logical root: the project folder (memory: the account
+// folder), never alfred-code's - the plugin stands alone. alfred-code data already on disk comes back as `alfred`, an
+// answer of its own. serena on Windows overrides both.
 function defaultRoot(row, name, ctx)
 {
     const loc = row.locations;
     if (loc.windowsAbsolute && ctx.platform === 'win32') return serenaWindowsHome(ctx);
+    const out = { root: otherPlace(row, name, loc.defaultSide) };
+    const old = alfredRoot(row, ctx);
+    if (old) out.alfred = old;
+    return out;
+}
+
+// The row's alfred-code data folder when it is on disk (its old root from original-mcps.json), else null.
+function alfredRoot(row, ctx)
+{
+    if (!row.locations || !row.locations.alfred) return null;
     const exists = ctx.exists || ((p) => fs.existsSync(p));
-    const old = parseRoot(loc.alfred, ctx);
-    const oldAbs = old.kind === 'home' ? pathFor(ctx.platform).join(ctx.home, ...old.rel.split('/')) : pathFor(ctx.platform).resolve(ctx.project, ...old.rel.split('/'));
-    if (exists(oldAbs)) return { root: old, existing: true };
-    return { root: otherPlace(row, name, loc.defaultSide) };
+    const old = parseRoot(row.locations.alfred, ctx);
+    const abs = old.kind === 'home' ? pathFor(ctx.platform).join(ctx.home, ...old.rel.split('/')) : pathFor(ctx.platform).resolve(ctx.project, ...old.rel.split('/'));
+    return exists(abs) ? old : null;
 }
 
 function otherPlace(row, name, side)
@@ -261,5 +271,5 @@ function fetchOf(name, entry, rowId)
 
 module.exports = {
     pathFor, slashes, isWindowsArm, pythonRequest, parseRoot, formatRoot, withSub, homeVar, serenaWindowsHome, validWindowsSerenaHome,
-    defaultRoot, otherSide, otherPlace, rootOfEntry, applyRoot, buildEntry, nameProblem, subst, fetchStep,
+    defaultRoot, alfredRoot, otherSide, otherPlace, rootOfEntry, applyRoot, buildEntry, nameProblem, subst, fetchStep,
 };

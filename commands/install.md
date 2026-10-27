@@ -92,6 +92,7 @@ project is never offered, so this adds only: nothing installed is changed.
 | name 'Keep ...' | `"name": "keep"` |
 | name 'Use `x`' or Other | `"name": "x"` |
 | location 'Keep ...' | `{"side": "default"}` |
+| location 'Use alfred-code's `x`' | `{"side": "alfred"}` |
 | location 'Use `x`' | `{"side": "project"}` or `{"side": "account"}`, as its description says |
 | location Other, or 'Another folder' | `{"side": "path", "path": "<typed>"}` |
 | browser 'A browser binary I name' | `"executablePath": "<typed>"` |

@@ -96,6 +96,13 @@ function wantedRoot(row, pick, cur, name, scope, ctx, copy = false)
     else if (loc.side === 'project') root = E.otherPlace(row, name, 'project');
     else if (loc.side === 'account') root = E.otherPlace(row, name, 'account');
     else if (loc.side === 'path') root = E.parseRoot(loc.path, ctx);
+    else if (loc.side === 'alfred')
+    {
+        // only on the user's pick: the folder is alfred-code's, so deleting it erases this tool's data
+        root = E.alfredRoot(row, ctx);
+        if (!root) return { error: "no alfred-code data folder for it on disk" };
+        existing = true;
+    }
     else
     {
         const d = E.defaultRoot(row, name, ctx);
@@ -243,7 +250,7 @@ function planPlugin(row, pick, inv, ctx, catalog, out)
     if (!SCOPES.includes(scope)) return out.errors.push(`${row.id}: unknown scope '${scope}'`);
     for (const p of have)
         if (p.scope !== scope && !moveFrom.includes(p.scope) && !ctx.changing.has(keyOf('plugin', p.id, p.scope))) out.notes.push(`${row.id}: also installed at ${p.scope} scope - left as it is`);
-    if (row.alsoManagedByAlfred && inv.alfredCodeEnabled) out.notes.push(`${row.id}: also managed by alfred-code - a Remove holds only once alfred-code's hand-off has shipped`);
+    if (row.alsoManagedByAlfred && inv.alfredCodeEnabled) out.notes.push(`${row.id}: alfred-code installs it too - its update may add it back after a Remove`);
     out.expect.push({ kind: 'plugin', row: row.id, id, scope });
 
     const known = inv.marketplaces.some((m) => m.name === row.marketplace.name);
@@ -294,7 +301,7 @@ function plan(inv, answers, opts = {})
         else planPlugin(row, pick || {}, inv, ctx, catalog, out);
     }
     for (const [key, pick] of Object.entries(answers.change || {})) planChange(key, pick || {}, inv, ctx, catalog, out);
-    for (const r of answers.remove || []) planRemove(r, inv, out);
+    for (const r of answers.remove || []) planRemove(r, inv, catalog, out);
     if (out.hud && answers.hud) out.hud = answers.hud;
     // 'defer': a claude-hud that is not installed yet cannot be checked, so its settings ask follows the install
     if (out.hud === 'defer') { out.hud = null; out.hudAfter = true; out.notes.push('claude-hud: its statusLine and recommended settings are asked after the install'); }
@@ -303,7 +310,7 @@ function plan(inv, answers, opts = {})
     return out;
 }
 
-function planRemove(r, inv, out)
+function planRemove(r, inv, catalog, out)
 {
     if (r.kind === 'plugin')
     {
@@ -312,7 +319,7 @@ function planRemove(r, inv, out)
         if (!p.rowId) return out.errors.push(`remove: ${r.id} is not a catalog plugin - left alone`);
         if (p.alfredRetired) return out.errors.push(`remove: ${r.id} belongs to alfred-code - left alone`);
         out.steps.push({ op: 'plugin-uninstall', id: r.id, scope: r.scope, row: p.rowId, why: `remove ${r.id} at ${r.scope} scope` });
-        if (inv.alfredCodeEnabled) out.notes.push(`${p.rowId}: alfred-code is enabled and still installs it on its next update - the Remove holds only once alfred-code's hand-off has shipped`);
+        if (inv.alfredCodeEnabled && catalog.byId.get(p.rowId).alsoManagedByAlfred) out.notes.push(`${p.rowId}: alfred-code installs it too - its next update may add it back`);
         return undefined;
     }
     const reg = inv.registrations.find((x) => x.name === r.name && x.scope === r.scope);
