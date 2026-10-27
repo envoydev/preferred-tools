@@ -39,6 +39,9 @@ private project names, no absolute local paths, no tokens, nothing from a user's
 - **No secret in any file.** Remote routes prefer OAuth; token routes register `${VAR}`.
 - **Paths by scope.** `project` scope (the committed `.mcp.json`) gets relative paths and `${VAR}` only. `local` and
   `user` scope get absolute paths, with `~` expanded by the script.
+- **`allowed-tools` pre-approves read-only calls only.** `apply.js`, `fix.js --apply` and the `hud-statusline.js`
+  writes are never listed, so Claude Code's own prompt guards a change beside the command's written ask. `tests/lint.js`
+  enforces it.
 - **Script paths go through the plugin root.** A command's shell runs in the user's project, so every call is
   `node "${CLAUDE_PLUGIN_ROOT}/scripts/<file>"`.
 - **Asks stay within the AskUserQuestion limits** (1-4 questions per call, 2-4 options each). Exactly one option is

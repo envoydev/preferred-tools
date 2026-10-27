@@ -10,7 +10,8 @@
 // what the answer names. So an updated pin is never downgraded, and the same answers twice plan nothing.
 //
 // Answers: { picks: { <row id>: { route, scope, name, location, executablePath, token, params, moveFrom } },
-//            remove: [{ kind: 'mcp', name, scope } | { kind: 'plugin', id, scope }], hud: 'recommended' | 'replace' | 'skip' }
+//            remove: [{ kind: 'mcp', name, scope } | { kind: 'plugin', id, scope }], hud: 'recommended' | 'replace' | 'skip' | 'defer',
+//            machine: { docker } (from prereq.js --json) }
 //   name: 'keep' | 'prefixed' | any literal name       location: { side: 'keep' | 'default' | 'project' | 'account' | 'path', path }
 const fs = require('node:fs');
 const path = require('node:path');
@@ -241,7 +242,8 @@ function planPlugin(row, pick, inv, ctx, catalog, out)
 function plan(inv, answers, opts = {})
 {
     const catalog = opts.catalog || catalogLib.load();
-    const ctx = makeCtx(inv, opts);
+    // answers.machine: what prereq.js found (docker: false picks github's binary fallback); an explicit option wins
+    const ctx = makeCtx(inv, { ...opts, machine: opts.machine || answers.machine });
     const out = { version: 1, project: inv.project, os: inv.os, steps: [], notes: [], errors: [], unchanged: [], tokens: [], oauth: [], dangerous: [], expect: [], hud: null };
 
     for (const [rowId, pick] of Object.entries(answers.picks || {}))
@@ -253,6 +255,8 @@ function plan(inv, answers, opts = {})
     }
     for (const r of answers.remove || []) planRemove(r, inv, out);
     if (out.hud && answers.hud) out.hud = answers.hud;
+    // 'defer': a claude-hud that is not installed yet cannot be checked, so its settings ask follows the install
+    if (out.hud === 'defer') { out.hud = null; out.hudAfter = true; out.notes.push('claude-hud: its statusLine and recommended settings are asked after the install'); }
     if (out.hud) out.steps.push({ op: 'hud', mode: out.hud, why: `claude-hud: ${out.hud === 'skip' ? 'statusLine only' : out.hud === 'replace' ? 'statusLine plus recommended settings, replacing differing keys' : 'statusLine plus recommended settings, add-only'}` });
     out.noop = out.steps.length === 0 && out.errors.length === 0;
     return out;

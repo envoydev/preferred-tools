@@ -487,3 +487,48 @@ test('the CLI form prints a plan and writes it for apply.js', () => {
     }
     finally { fs.rmSync(d, { recursive: true, force: true }); }
 });
+
+test('answers.machine from prereq.js reaches the plan: no docker picks the github binary, docker keeps the image; an explicit option wins', () => {
+    const entryOf = (answers, machine) => addStep(plan(inv(MAC), answers, opts('/Users/me', { machine }))).entry;
+    const github = { picks: { github: { route: 'local' } } };
+    assert.strictEqual(entryOf({ ...github, machine: { docker: true } }).command, 'docker');
+    const bin = entryOf({ ...github, machine: { docker: false } });
+    assert.deepStrictEqual([bin.command, bin.args], ['github-mcp-server', ['stdio']]);
+    assert.strictEqual(entryOf(github).command, 'docker', 'unsaid means the image');
+    assert.strictEqual(entryOf({ ...github, machine: { docker: false } }, { docker: true }).command, 'docker', 'the option wins over the answers');
+});
+
+test("hud: 'defer' plans the install and leaves the settings ask for after it; an installed claude-hud keeps its step", () => {
+    const fresh = plan(inv(MAC), { picks: { 'claude-hud': {} }, hud: 'defer' }, opts('/h'));
+    assert.deepStrictEqual(fresh.steps.map((s) => s.op), ['plugin-marketplace-add', 'plugin-install']);
+    assert.strictEqual(fresh.hudAfter, true);
+    assert.strictEqual(fresh.hud, null);
+    assert.ok(fresh.notes.some((n) => /asked after the install/.test(n)));
+    const known = [{ name: 'claude-hud', source: '' }];
+    const enabled = { rowId: 'claude-hud', id: 'claude-hud@claude-hud', scope: 'user', enabled: true, alfredRetired: false };
+    const kept = plan(inv(MAC, { marketplaces: known, plugins: [enabled] }), { picks: { 'claude-hud': {} }, hud: 'replace' }, opts('/h'));
+    assert.deepStrictEqual(kept.steps.map((s) => [s.op, s.mode]), [['hud', 'replace']]);
+    assert.ok(!kept.hudAfter);
+});
+
+test('--questions takes the route answered so far: a remote context7 may sit in the committed file, a local one may not', () => {
+    const i = inv(MAC);
+    const scopes = (route) => asks.all(i, { rows: ['context7'], routes: { context7: route } }, catalog).tools.context7.questions.find((q) => q.id === 'scope-context7').options.map((o) => o.label.replace(/ \(Recommended\)$/, ''));
+    assert.deepStrictEqual(scopes('remote'), ['project', 'local', 'user']);
+    assert.deepStrictEqual(scopes('local'), ['local', 'user']);
+    assert.strictEqual(asks.all(i, { rows: ['serena'] }, catalog).tools.serena.route, null, 'a one-route row has no route ask');
+});
+
+test('the remove asks carry what to remove in their descriptions, in a form the walk can read back', () => {
+    const i = inv(MAC, {
+        registrations: [
+            { name: 'proj-serena', scope: 'local', entry: { command: 'uvx' }, rowId: 'serena', route: 'local', own: false, alfredRetired: false },
+            { name: 'context7', scope: 'project', entry: { type: 'http' }, rowId: 'context7', route: 'remote', own: false, alfredRetired: false },
+        ],
+        plugins: [{ id: 'claude-hud@claude-hud', plugin: 'claude-hud', scope: 'user', version: '0.13.1', enabled: true, errors: [], rowId: 'claude-hud', alfredRetired: false }],
+    });
+    const options = asks.removeQuestions(i, catalog).flat().flatMap((q) => q.options);
+    assert.strictEqual(options.length, 3);
+    for (const o of options) assert.match(o.description, /^claude (mcp remove \S+ -s (local|project|user)|plugin uninstall \S+ --scope (local|project|user))$/);
+    assert.deepStrictEqual(options.map((o) => o.description), ['claude mcp remove proj-serena -s local', 'claude mcp remove context7 -s project', 'claude plugin uninstall claude-hud@claude-hud --scope user']);
+});

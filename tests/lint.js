@@ -46,6 +46,21 @@ for (const file of textFiles)
     });
 }
 
+// allowed-tools is a pre-approval, so it never covers a call that changes an install: the CLI's own prompt is the guard
+// beside the command's written ask. A script that writes is listed only with a read-only flag.
+const WRITES = /scripts\/(apply|update)\.js|scripts\/fix\.js"\s+(?:\*|--apply)|scripts\/hud-statusline\.js"\s+(?:\*|--replace|--statusline-only|\))|scripts\/hud-statusline\.js"\s*\)/;
+for (const file of textFiles)
+{
+    const m = /^allowed-tools:\s*(.+)$/m.exec(fs.readFileSync(file, 'utf8'));
+    if (m && WRITES.test(m[1])) problems.push(`${path.relative(root, file)}: allowed-tools pre-approves a script that writes (list only --detect, --questions, --check)`);
+}
+
+// Ask blocks: 2 to 4 options, one '(Recommended)' and it first, labels equal to asks.STATIC (tests/ask-blocks.js).
+const { parseAskBlocks, problemsOf } = require('./ask-blocks.js');
+for (const file of textFiles)
+    for (const block of parseAskBlocks(fs.readFileSync(file, 'utf8')))
+        for (const p of problemsOf(block)) problems.push(`${path.relative(root, file)}: ${p}`);
+
 // Public repo: no absolute local path and no home directory in anything shipped.
 const scan = (rel) => {
     const p = path.join(root, rel);

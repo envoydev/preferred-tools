@@ -75,7 +75,8 @@ function realMachine({ env = process.env, platform = process.platform } = {})
         realpath: (p) => { try { return fs.realpathSync(p); } catch { return null; } },
         which: (name) => onPath(name, env, platform),
         // npm and npx are .cmd shims on Windows; a shell is what runs them
-        run: (cmd, args) => spawnSync(cmd, args, { encoding: 'utf8', env, shell: platform === 'win32' && /^(npm|npx)$/.test(cmd) }),
+        // `opts.cwd` and `opts.env` (merged over the machine's) are for the audit, which runs in a temp folder
+        run: (cmd, args, opts = {}) => spawnSync(cmd, args, { encoding: 'utf8', env: { ...env, ...(opts.env || {}) }, cwd: opts.cwd, shell: platform === 'win32' && /^(npm|npx)$/.test(cmd) }),
         nodeVersion: process.versions.node,
     };
 }

@@ -161,13 +161,17 @@ const STATIC = {
         { label: `Pick which${REC}`, description: 'choose the registrations and plugins to remove' },
         { label: 'Cancel', description: 'nothing is removed' } ] },
     fixOffer: { id: 'fix-offer', header: 'Fix', multiSelect: false, question: 'Apply the fixes found?', options: [
-        { label: `All of them${REC}`, description: 'apply every fix listed' },
+        { label: `Apply all found${REC}`, description: 'apply every fix listed that can be applied' },
         { label: 'Pick which', description: 'choose among them' },
         { label: 'Skip', description: 'nothing changes' } ] },
     updateOffer: { id: 'update-offer', header: 'Update', multiSelect: false, question: 'Update what is behind?', options: [
         { label: `All of them${REC}`, description: 'update everything offered' },
         { label: 'Pick which', description: 'choose among them' },
         { label: 'Skip', description: 'nothing changes' } ] },
+    prereqMissing: (tool, need) => ({ id: `prereq-${tool}`, header: 'Missing', multiSelect: false, question: `${tool} needs ${need}, which is missing. What now?`, options: [
+        { label: `Skip this tool${REC}`, description: 'leave it out of the plan' },
+        { label: 'Install it now', description: 'run the install line shown, or install it yourself and re-check' },
+        { label: 'Register anyway', description: 'register it; it will not start until the prerequisite is there' } ] }),
     hud: (n, m, k) => ({ id: 'hud', header: 'claude-hud', multiSelect: false, question: `Apply the recommended claude-hud settings? ${n} missing, ${m} differing, ${k} matching.`, options: [
         { label: `Apply recommended${REC}`, description: 'adds only the missing keys; every value already chosen is kept' },
         { label: 'Apply and replace differing', description: 'adds the missing keys and overwrites the differing ones' },
@@ -176,14 +180,14 @@ const STATIC = {
 
 function all(inv, picks, catalog)
 {
-    const out = { static: { ...STATIC, hud: STATIC.hud(0, 0, 0) }, pick: pickQuestions(inv, catalog), remove: removeQuestions(inv, catalog), tools: {} };
+    const out = { static: { ...STATIC, hud: STATIC.hud(0, 0, 0), prereqMissing: STATIC.prereqMissing('<tool>', '<prerequisite>') }, pick: pickQuestions(inv, catalog), remove: removeQuestions(inv, catalog), tools: {} };
     for (const id of (picks && picks.rows) || [])
     {
         const row = catalog.byId.get(id);
         if (!row) continue;
         const have = installedOf(inv, id)[0];
         const ctx = { project: inv.project, platform: inv.os, arch: inv.arch, home: require('./account.js').homeDir(process.env), env: process.env };
-        out.tools[id] = { route: row.kind === 'mcp' ? routeQuestion(row) : null, questions: toolQuestions(row, inv, { current: have && have.kind === 'mcp' ? { ...have, rootStr: null } : null, ctx, catalog }) };
+        out.tools[id] = { route: row.kind === 'mcp' ? routeQuestion(row) : null, questions: toolQuestions(row, inv, { route: picks.routes && picks.routes[id], current: have && have.kind === 'mcp' ? { ...have, rootStr: null } : null, ctx, catalog }) };
     }
     return out;
 }

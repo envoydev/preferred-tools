@@ -2,7 +2,7 @@
 description: "Detect known problems in the installed tools and apply the recorded fix for each"
 argument-hint: "[tool, registration name or fix id]"
 disable-model-invocation: true
-allowed-tools: Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/fix.js" *)
+allowed-tools: Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/fix.js" --detect), Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/fix.js" --detect *), Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/fix.js" --questions), Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/fix.js" --questions *)
 ---
 
 Find the known problems in what is installed and apply the recorded fix for each one the user picks. Every fix row is
@@ -45,7 +45,7 @@ user types their own through 'Other'. Pass the answer as `--input serenaHome=<fo
 node "${CLAUDE_PLUGIN_ROOT}/scripts/fix.js" --apply <id,id | all> [--only "$ARGUMENTS"] [--input key=value]
 ```
 
-It rewrites each registration through the `claude` CLI (remove, then add with the same name and scope) from the entry as
+Claude Code asks permission for this call itself - `--apply` is deliberately not in `allowed-tools`. It rewrites each registration through the `claude` CLI (remove, then add with the same name and scope) from the entry as
 it is now, so the user's pin, cut-off and added args stay. Several fixes on one registration are one rewrite. A machine
 fix (a global npm install) runs after. Each fix is read back by running its detector again.
 

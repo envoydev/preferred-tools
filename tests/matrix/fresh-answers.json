@@ -1,0 +1,26 @@
+{
+  "note": "One fresh-install case per catalog row and route: the answers.json the install walk writes, and what must read back. os lists where the row is offered; a case on another OS is NOT RUN, never passed.",
+  "machine": { "docker": true },
+  "cases": [
+    { "name": "serena", "row": "serena", "os": ["darwin", "linux", "win32"], "answers": { "picks": { "serena": { "scope": "local" } } }, "expect": { "kind": "mcp", "scope": "local", "route": "local", "files": ".preferred-tools/serena" } },
+    { "name": "memory", "row": "memory", "os": ["darwin", "linux", "win32"], "answers": { "picks": { "memory": {} } }, "expect": { "kind": "mcp", "scope": "local", "route": "local" } },
+    { "name": "typescript-lsp", "row": "typescript-lsp", "os": ["darwin", "linux", "win32"], "answers": { "picks": { "typescript-lsp": { "scope": "project" } } }, "expect": { "kind": "plugin", "scope": "project" }, "network": true },
+    { "name": "csharp-lsp", "row": "csharp-lsp", "os": ["darwin", "linux", "win32"], "answers": { "picks": { "csharp-lsp": { "scope": "project" } } }, "expect": { "kind": "plugin", "scope": "project" }, "network": true },
+    { "name": "context7 remote", "row": "context7", "os": ["darwin", "linux", "win32"], "answers": { "picks": { "context7": { "route": "remote", "scope": "project" } } }, "expect": { "kind": "mcp", "scope": "project", "route": "remote" } },
+    { "name": "context7 local", "row": "context7", "os": ["darwin", "linux", "win32"], "answers": { "picks": { "context7": { "route": "local", "scope": "local", "token": true } } }, "expect": { "kind": "mcp", "scope": "local", "route": "local" } },
+    { "name": "github remote", "row": "github", "os": ["darwin", "linux", "win32"], "answers": { "picks": { "github": { "route": "remote", "scope": "project" } } }, "expect": { "kind": "mcp", "scope": "project", "route": "remote" } },
+    { "name": "github local", "row": "github", "os": ["darwin", "linux", "win32"], "answers": { "picks": { "github": { "route": "local", "scope": "user" } } }, "expect": { "kind": "mcp", "scope": "user", "route": "local" } },
+    { "name": "gitlab", "row": "gitlab", "os": ["darwin", "linux", "win32"], "answers": { "picks": { "gitlab": { "scope": "project" } } }, "expect": { "kind": "mcp", "scope": "project", "route": "remote" } },
+    { "name": "atlassian", "row": "atlassian", "os": ["darwin", "linux", "win32"], "answers": { "picks": { "atlassian": { "scope": "project" } } }, "expect": { "kind": "mcp", "scope": "project", "route": "remote" } },
+    { "name": "playwright-chrome", "row": "playwright-chrome", "os": ["darwin", "linux", "win32"], "answers": { "picks": { "playwright-chrome": {} } }, "expect": { "kind": "mcp", "scope": "local", "route": "local", "files": ".preferred-tools/playwright-chrome" } },
+    { "name": "playwright-msedge", "row": "playwright-msedge", "os": ["darwin", "linux", "win32"], "answers": { "picks": { "playwright-msedge": {} } }, "expect": { "kind": "mcp", "scope": "local", "route": "local", "files": ".preferred-tools/playwright-msedge" } },
+    { "name": "playwright-firefox", "row": "playwright-firefox", "os": ["darwin", "linux", "win32"], "answers": { "picks": { "playwright-firefox": {} } }, "expect": { "kind": "mcp", "scope": "local", "route": "local", "files": ".preferred-tools/playwright-firefox" } },
+    { "name": "playwright-webkit", "row": "playwright-webkit", "os": ["darwin", "linux", "win32"], "answers": { "picks": { "playwright-webkit": {} } }, "expect": { "kind": "mcp", "scope": "local", "route": "local", "files": ".preferred-tools/playwright-webkit" } },
+    { "name": "appium", "row": "appium", "os": ["darwin", "linux", "win32"], "answers": { "picks": { "appium": {} } }, "expect": { "kind": "mcp", "scope": "local", "route": "local", "files": ".preferred-tools/appium-mcp" } },
+    { "name": "macos-control", "row": "macos-control", "os": ["darwin"], "answers": { "picks": { "macos-control": {} } }, "expect": { "kind": "mcp", "scope": "local", "route": "local" } },
+    { "name": "windows-control", "row": "windows-control", "os": ["win32"], "answers": { "picks": { "windows-control": {} } }, "expect": { "kind": "mcp", "scope": "local", "route": "local" } },
+    { "name": "sentry remote", "row": "sentry", "os": ["darwin", "linux", "win32"], "answers": { "picks": { "sentry": { "route": "remote", "scope": "project" } } }, "expect": { "kind": "mcp", "scope": "project", "route": "remote" } },
+    { "name": "sentry local", "row": "sentry", "os": ["darwin", "linux", "win32"], "answers": { "picks": { "sentry": { "route": "local", "scope": "user" } } }, "expect": { "kind": "mcp", "scope": "user", "route": "local" } },
+    { "name": "claude-hud", "row": "claude-hud", "os": ["darwin", "linux", "win32"], "answers": { "picks": { "claude-hud": { "scope": "user" } }, "hud": "defer" }, "expect": { "kind": "plugin", "scope": "user", "hudAfter": "skip" }, "network": true }
+  ]
+}
