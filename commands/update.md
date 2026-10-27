@@ -1,6 +1,6 @@
 ---
-name: update-tools
-description: "Use when updating the preferred tools - installed MCP servers and plugins - or when one is behind its release; offers only releases 7+ days old."
+description: "Update what is behind - installed plugins, pinned MCP servers and language servers - to releases at least 7 days old, after one confirmation"
+disable-model-invocation: true
 allowed-tools: Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/update.js" --check), Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/update.js" --check *), Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/update.js" --questions), Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/update.js" --questions *)
 ---
 
@@ -16,7 +16,8 @@ language servers on PATH. The script finds what is behind and does the work; you
   The rewrite keeps the registration's name, scope, args and env; only the pin and the cut-off beside it move.
 - **A registration that matches no catalog row is the user's.** The script never looks at it.
 - **Every ask is data.** Ask exactly the options printed, in the order printed; `AskUserQuestion` adds 'Other' itself.
-- This skill never changes `catalog/tools.json`. Its pins move only through the repo script `npm run refresh-pins`.
+- This command never changes `catalog/tools.json`. Its pins move only through the repo script `npm run refresh-pins`.
+- A rename, a move or a route change is not an update; that is `/preferred-tools:configure`.
 
 ## 1. What is behind
 
@@ -50,7 +51,7 @@ Update what is behind?
 ```
 
 When only unchecked plugins remain, the printed `offer` leaves 'All of them' out and recommends 'Pick which'; ask what is
-printed. 'Skip' ends the skill. 'Pick which': ask each call in `pick` as printed (up to four multi-select questions of at
+printed. 'Skip' ends the command. 'Pick which': ask each call in `pick` as printed (up to four multi-select questions of at
 most four options) and collect the options picked. Each option's description is the offer id to pass on.
 
 ## 3. Apply
@@ -62,11 +63,28 @@ again, so the server is briefly unregistered. Then run, with the ids picked (com
 node "${CLAUDE_PLUGIN_ROOT}/scripts/update.js" --apply <id,id | all>
 ```
 
-`all` is every offer with a known newer version; an unchecked plugin runs only when its own id is given. Each update is
-read back: a plugin from the plugin list, an MCP pin from the file the CLI wrote, a language server from `--version`. A
-failed MCP rewrite puts the old registration back and prints the line that does it by hand if that fails too (`RESTORE BY
-HAND`): give it to the user as written. Paste the output verbatim, then report each result as read back and end with the
-restart line (new servers load on the next session start; `/reload-plugins` for plugins).
+Run it with the Bash tool's `timeout: 600000` (10 minutes, the most it allows by default): a plugin update clones its marketplace and
+a language server installs through npm, and the new MCP pins are downloaded after it, not inside it. `all` is every
+offer with a known newer version; an unchecked plugin runs only when its own id is given. Each update is read back: a
+plugin from the plugin list, an MCP pin from the file the CLI wrote, a language server from `--version`. A failed MCP
+rewrite puts the old registration back and prints the line that does it by hand if that fails too (`RESTORE BY HAND`):
+give it to the user as written. Paste the output verbatim, then report each result as read back.
+
+A new pin is not in the runtime's cache yet, so an MCP update prints `Fetch next, in the background (...): <file>`. Run,
+with the Bash tool's `run_in_background`:
+
+```
+node "${CLAUDE_PLUGIN_ROOT}/scripts/fetch.js" "<file>"
+```
+
+One server at a time, it downloads each new pin and starts the server once with no 30-second limit, then prints each
+server's status (`claude mcp get`): without it the first session start does that download, and any first-run work of
+the new version, inside Claude Code's 30-second limit, and a first download can take minutes. Claude Code asks
+permission for it - it downloads and runs a package's install and starts the server. Tell the user to restart only once
+it reports, so a session start does not download the same package beside it; paste its output when it finishes. A
+`warn` line changes nothing: the registration is updated, and its first start downloads the pin and may time out once. When background runs
+are turned off, run it in the foreground with `timeout: 600000`, and again if the limit stops it. End with the restart line (new
+servers load on the next session start; `/reload-plugins` for plugins).
 
 After claude-hud moves, the script re-runs its settings check and names any recommended key the new version's
 `dist/config.js` no longer mentions. It removes nothing from the user's config; pass the names on.

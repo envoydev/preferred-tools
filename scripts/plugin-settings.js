@@ -19,7 +19,7 @@
 //      write of a run (claude-hud 0.8.0 setup.md:487-505) - never when nothing is written to it. A copy
 //      that fails writes nothing at all, exit 1.
 //
-// /preferred-tools:install applies the claude-hud row through hud-statusline.js, after writing the
+// /preferred-tools:install and /preferred-tools:configure apply the claude-hud row through hud-statusline.js, after writing the
 // statusLine block it gates.
 //
 // Paths resolve against the ACCOUNT config dir (--config-dir, else CLAUDE_CONFIG_DIR, else ~/.claude), which is where a plugin's config lives whichever scope the plugin was installed at.

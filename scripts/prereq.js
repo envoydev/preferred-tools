@@ -2,7 +2,8 @@
 'use strict';
 // PREREQUISITES - what each picked tool needs on this machine, checked read-only.
 //
-//   node prereq.js <answers.json> [--json] [--audit]   the tools in answers.picks, each on its picked route
+//   node prereq.js <answers.json> [--json] [--audit]   the tools in answers.picks, each on its picked route, and each
+//                                                      answers.change entry that names a new route
 //   node prereq.js --rows serena,github [--json]  rows on their recommended route
 //
 // A check looks at the machine and installs nothing. A missing one prints how to get it: a command only where the
@@ -173,7 +174,9 @@ function picksFrom(argv, catalog)
     const file = argv.find((a) => !a.startsWith('--'));
     if (!file) return null;
     const answers = JSON.parse(fs.readFileSync(file, 'utf8'));
-    return Object.entries(answers.picks || {}).map(([id, p]) => ({ row: id, route: (p && p.route) || (catalog.byId.get(id) || {}).recommendedRoute }));
+    // a configure change needs a check only when it moves to another route; the route it keeps is already running
+    const changed = Object.values(answers.change || {}).filter((c) => c && c.row && c.route).map((c) => ({ row: c.row, route: c.route }));
+    return Object.entries(answers.picks || {}).map(([id, p]) => ({ row: id, route: (p && p.route) || (catalog.byId.get(id) || {}).recommendedRoute })).concat(changed);
 }
 
 function main(argv, { env = process.env, machine, platform = process.platform, out = (s) => process.stdout.write(`${s}\n`) } = {})

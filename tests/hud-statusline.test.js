@@ -1,5 +1,5 @@
 'use strict';
-// hud-statusline.js (ported from alfred-code with its tests) - /preferred-tools:install's claude-hud item: the ACCOUNT statusLine claude-hud 0.8.0's
+// hud-statusline.js (ported from alfred-code with its tests) - the claude-hud item of install and configure: the ACCOUNT statusLine claude-hud 0.8.0's
 // own setup writes for a Node runtime, plus the claude-hud row of catalog/plugin-settings.json (the
 // Compact layout among it), add-only. Every case runs against a throwaway account dir.
 const test = require('node:test');
@@ -569,7 +569,7 @@ test('PL7 claude-hud 0.11\'s own launcher lines read as current on darwin, linux
     assert.strictEqual(read(acct, 'settings.json').statusLine.refreshInterval, 5, 'the row still lands on claude-hud\'s own block');
 });
 
-// PL7: the claude-hud row of catalog/plugin-settings.json names the version its keys were read from, and the update skill
+// PL7: the claude-hud row of catalog/plugin-settings.json names the version its keys were read from, and /preferred-tools:update
 // is what moves claude-hud. A cached claude-hud newer than that version goes red here: re-read its dist/config.js and
 // scripts/setup.mjs, re-stamp `verified`, and teach classify() any new launcher line. Reads this machine's account cache;
 // with none (CI), nothing to compare.

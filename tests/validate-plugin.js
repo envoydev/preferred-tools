@@ -1,30 +1,34 @@
 #!/usr/bin/env node
 'use strict';
-// `claude plugin validate . --strict`, minus the one warning this repo keeps on purpose: CLAUDE.md at the plugin root
-// (the repo's own working rules; Claude Code never loads it, and the plugin does not depend on it). Anything else the
-// validator reports - an error, or any other warning - fails here.
-const { spawnSync } = require('node:child_process');
+// `claude plugin validate` on what an install receives: a scratch copy of the files git would ship (tracked,
+// plus untracked ones not ignored), never the folder on disk. The validator reads the folder as it is, so a file git
+// ignores - a Finder .DS_Store - would be reported although it never reaches an install. `--profile directory --strict`:
+// any error or warning fails, the checks Anthropic's plugin directory makes (an icon, no OS metadata files) included.
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
-const KNOWN = /^CLAUDE\.md at the plugin root is not loaded as project context/;
 const root = path.resolve(__dirname, '..');
-const r = spawnSync('claude', ['plugin', 'validate', root, '--json'], { encoding: 'utf8' });
-if (r.error) { console.error(`validate: cannot run claude (${r.error.message})`); process.exit(2); }
-let doc;
-try { doc = JSON.parse(r.stdout); } catch { console.error(`validate: not JSON:\n${r.stdout}${r.stderr}`); process.exit(2); }
+const ls = spawnSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8' });
+if (ls.error || ls.status !== 0) { console.error(`validate: cannot list the repo's files (${ls.error ? ls.error.message : ls.stderr.trim()})`); process.exit(2); }
 
-const problems = [];
-for (const part of [doc.manifest, ...(doc.contents || [])])
+const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'preferred-tools-validate-'));
+const copy = path.join(scratch, 'preferred-tools');
+let code = 0;
+try
 {
-    if (!part) continue;
-    for (const e of part.errors || []) problems.push(`error   ${part.file}: ${e.path || ''} ${e.message}`);
-    for (const w of part.warnings || [])
-        if (!KNOWN.test(w.message)) problems.push(`warning ${part.file}: ${w.path || ''} ${w.message}`);
+    // a file deleted in the working tree but still in the index is not shipped either
+    const files = ls.stdout.split('\0').filter(Boolean).filter((f) => fs.existsSync(path.join(root, f)));
+    for (const f of files)
+    {
+        fs.mkdirSync(path.dirname(path.join(copy, f)), { recursive: true });
+        fs.copyFileSync(path.join(root, f), path.join(copy, f));
+    }
+    const r = spawnSync('claude', ['plugin', 'validate', copy, '--profile', 'directory', '--strict'], { encoding: 'utf8' });
+    if (r.error) { console.error(`validate: cannot run claude (${r.error.message})`); code = 2; }
+    else if (r.status !== 0) { console.error(`${r.stdout}${r.stderr}`.trim()); code = 1; }
+    else console.log(`validate: passed (--profile directory --strict, nothing to report) on the ${files.length} files git would ship`);
 }
-if (!doc.success) problems.push('validator reported success: false');
-if (problems.length)
-{
-    console.error(problems.join('\n'));
-    process.exit(1);
-}
-console.log('validate: passed (the CLAUDE.md warning is the repo\'s own, allowed)');
+finally { fs.rmSync(scratch, { recursive: true, force: true }); }
+process.exit(code);

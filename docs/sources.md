@@ -121,6 +121,30 @@ Sources: `https://pypi.org/pypi/<package>/json` and `npm view <package> time --j
   no-op where npx would have run anyway) but is NOT proved: it needs the Windows VM (NOT RUN here), and the catalog marks
   it `documented: false`.
 
+## Claude Code - time limits behind the fetch step (read 2026-10-27)
+
+- `MCP_TIMEOUT` - 'Timeout in milliseconds for MCP server startup (default: 30000, or 30 seconds)' - CONFIRMED
+  (https://code.claude.com/docs/en/env-vars.md). MEASURED on 2.1.311: `claude mcp get` on appium's registration before
+  any npx install printed 'Failed to connect ... timed out after 30000ms'; memory's first uvx start answered after about
+  180 s (`tests/matrix/starts.test.js`). So the first start of an unfetched package route times out.
+- memory's first start - MEASURED on macOS arm64, 2026-10-27, throwaway home: the package fetch (`uvx ... --help`) took
+  6 s, then start 1 answered `initialize` after 110.0 s, start 2 after 2.1 s, start 3 after 2.3 s. Start 1 fills
+  `~/.cache/mcp_memory/onnx_models/all-MiniLM-L6-v2` from `https://chroma-onnx-models.s3.amazonaws.com/all-MiniLM-L6-v2/onnx.tar.gz`
+  (`mcp_memory_service/embeddings/onnx_embeddings.py` in the 12.1.1 wheel). With only the package fetch, `claude mcp
+  get` still printed '✘ Failed to connect' and the next start took 72.8 s. Hence `fetch.js` starts each server once
+  after its fetch: after that first start the macOS matrix's starts answered in 0.7 s (serena) to 2.6 s (playwright).
+- After the fetch alone (no first start yet), `claude mcp get` printed '✔ Connected' for serena, context7, playwright-chrome,
+  appium and macos-control on macOS (matrix, 2026-10-27); appium, flaky before (1 start in 3), answered in 2.2 s.
+- Bash tool limits - CONFIRMED (https://code.claude.com/docs/en/tools-reference.md, 'Timeout and output limits'):
+  `BASH_DEFAULT_TIMEOUT_MS` two minutes and the ceiling ten minutes out of the box; a foreground command that reaches
+  its timeout is moved to the background, not stopped, unless `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` or bare mode;
+  a background command has no time limit in an interactive local session and 30 minutes (2 hours at most) in an
+  unattended one (v2.1.285+). Hence `apply.js` stays short and `fetch.js` starts in the background.
+- MEASURED on npm 11.6.1: an npx first install killed partway (as the 30 s health check kills it) heals on the next run;
+  two first installs of the same package running at once left `_npx/<hash>` without its `package.json` and the start
+  failed with `ENOENT` (a local repro, not shipped). Hence `fetch.js` runs one fetch at a time and the commands ask
+  for the restart only after it reports.
+
 ## Claude Code - plugin CLI
 
 Docs: https://code.claude.com/docs/en/plugins/cli-reference.md and https://code.claude.com/docs/en/plugins/marketplace-reference.md.
@@ -154,8 +178,26 @@ Docs: https://code.claude.com/docs/en/plugins/cli-reference.md and https://code.
   session only', repeatable; it overrides an installed plugin of the same name; the plugin lists as `<name>@inline`,
   scope `session`, and `claude plugin list` shows it only when the flag precedes the subcommand.
 - `claude plugin validate <path> [--strict] [--json]` - exit 0 pass, 1 fail (or warning with `--strict`), 2 validator
-  error. It warns on a `CLAUDE.md` at the plugin root (manifest reference). This repo keeps one by design, so
-  `--strict` is expected to fail on that one warning: step 2 measures it.
+  error. It warns on a `CLAUDE.md` at the plugin root (manifest reference). MEASURED on 2.1.311 (2026-10-27): with the
+  file at `.claude/CLAUDE.md` instead, `--strict` passes with nothing to report, and the memory docs list
+  `./.claude/CLAUDE.md` as a project-instructions location equal to `./CLAUDE.md`
+  (https://code.claude.com/docs/en/memory.md), so the repo keeps its rules there. The same run's plugin-directory
+  checks want a square PNG icon (512-2048 px, under 2 MB, at `.claude-plugin/icon.png` or named by `icon` in
+  plugin.json) and no `.DS_Store`; Claude Code ignores the icon, Anthropic's directory reads it
+  (https://code.claude.com/docs/en/plugins-reference.md, 'Directory listing fields').
+- Those directory checks only report under plain `--strict`: MEASURED on 2.1.311, a folder holding a `.DS_Store`
+  printed the finding and still exited 0. `--profile directory` makes them count, and with `--strict` their warnings
+  fail (`claude plugin validate --help`); the validator itself advises running it 'on a fresh checkout', since it reads
+  the folder on disk while a submission holds only what is committed. MEASURED: on the folder with a `.DS_Store` it
+  exits 1; on a copy of `git ls-files --cached --others --exclude-standard` it exits 0; on that copy without the icon
+  it exits 1 with ICON_MISSING. `npm run validate` (`tests/validate-plugin.js`) is that copy, at that profile.
+- The icon - Material Symbols `home_repair_service`, rounded, filled
+  (`symbols/web/home_repair_service/materialsymbolsrounded/home_repair_service_fill1_48px.svg`) from
+  https://github.com/google/material-design-icons at commit 10ecc14790612ca8fd164e3f4ffe9c16fc50d5b7 (2026-10-23),
+  read 2026-10-27. License: Apache 2.0 (the repo's LICENSE); its README: 'Feel free to remix and re-share these icons
+  ... We'd love attribution in your app's about screen, but it's not required.' Credited in the README. Drawn white
+  (#f4f7f6) at 0.8 scale, centred, with a soft shadow, on a #14857c to #0b3b38 diagonal gradient; rendered to 1024 px
+  with headless Chrome.
 - `claude plugin details <name>`: name, version, source, component inventory, projected token cost - CONFIRMED.
 - Official marketplace - MEASURED: `claude plugin marketplace add anthropics/claude-plugins-official` registers it
   under the name `claude-plugins-official` (a built-in `anthropic-plugin-directory` is listed beside it and is a
@@ -183,7 +225,7 @@ Docs: https://code.claude.com/docs/en/plugins/cli-reference.md and https://code.
   The plugin README says '.NET SDK 6.0 or later'; the brief's '.NET 10 SDK' is alfred-code's own pin and is checked by
   the prerequisite script against `dotnet --version` (see the catalog `prereqs.note`).
 - `csharp-ls` update: `dotnet tool update -g <id>` (alias `--global`) updates a global tool to the latest stable version -
-  CONFIRMED, read 2026-10-27: https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-tool-update . The update skill
+  CONFIRMED, read 2026-10-27: https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-tool-update . The update command
   prints `dotnet tool update --global csharp-ls` and runs nothing; a copy installed with Homebrew is updated with brew,
   which is not verified here.
 
@@ -313,7 +355,7 @@ incorrect analysis, there is no upstream fix to wait for, and the 2.1.0 launch r
 resolve the extensionless shim itself. Nothing proves the patch is needed or that it is not: only a Windows run of an
 unpatched 2.1.0 does, and the patch edits a file in uv's cache.
 
-**Ruled by the user, 2026-10-27: leave it out.** Not in the install plan, not in the update skill, not in the fix command.
+**Ruled by the user, 2026-10-27: leave it out.** Not in the install plan, not in the update command, not in the fix command.
 The row stays in `catalog/fixes.json` with `hold` and this evidence, and `fix.js` lists it as 'Held, not checked'. If a
 Windows run of an unpatched serena shows the failure, the row becomes a detector in `scripts/fixes/` and the three
 places follow; until then nothing here writes to uv's cache.
@@ -334,3 +376,12 @@ from the file the CLI wrote.
 - **Windows rows** (windows-control, serena-windows-home, windows-npx-cmd, windows-arm-python): the plan and detectors
   run with a simulated platform and the CLI rewrite is the real one; a real Windows machine is the user's live check.
   windows-control itself is NOT RUN on macOS.
+- **Start check after fetch.js** (`tests/matrix/starts.test.js`, 2026-10-27, Claude Code 2.1.311): each local row
+  installed, fetched and started once by `fetch.js`, `claude mcp get` read, then started again and timed against the
+  30-second limit. macOS arm64: serena 0.6 s, memory 1.9 s (its first start inside `fetch.js` took 138 s), context7
+  0.6 s, playwright-chrome 0.7 s, appium 1.5 s, macos-control 1.3 s, each '✔ Connected'; matrix 53 pass, 0 fail, 4 NOT
+  RUN (windows-control: not darwin; sentry and github local: no token). Linux aarch64 (Docker `node:22` with uv 0.13.4
+  and the same CLI): serena 0.6 s, memory 1.1 s, context7 0.9 s, playwright-chrome 0.7 s, appium 1.6 s,
+  typescript-language-server answered; unit tests 218 pass, matrix 50 pass, 0 fail, 7 NOT RUN (macos-control and
+  windows-control: not linux; sentry local: no token; github local: no docker in the container; csharp-ls: not
+  installed there). Windows: NOT RUN - the user's VM.

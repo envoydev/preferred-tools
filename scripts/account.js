@@ -53,4 +53,16 @@ function readAccount(env, project)
     return { ...s, user: doc.mcpServers || {}, local: mine.mcpServers || {}, projectKey: key };
 }
 
-module.exports = { homeDir, configDir, accountFile, projectKey, expandHome, readState, readAccount };
+// What the CLI wrote for one server at one scope, read from the file it wrote it to.
+function readRegistration(name, scope, project, env)
+{
+    if (scope === 'project')
+    {
+        const s = readState(path.join(project, '.mcp.json'));
+        return s.doc && s.doc.mcpServers ? s.doc.mcpServers[name] : undefined;
+    }
+    const a = readAccount(env, project);
+    return (scope === 'user' ? a.user : a.local)[name];
+}
+
+module.exports = { homeDir, configDir, accountFile, projectKey, expandHome, readState, readAccount, readRegistration };

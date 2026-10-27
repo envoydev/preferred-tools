@@ -231,7 +231,10 @@ test('the CLI form writes the JSON file and prints one line; a missing claude st
         assert.strictEqual(r.status, 0, r.stderr);
         assert.match(r.stdout, /inventory: 2 registrations \(1 match a catalog row, 1 are your own\), 0 plugins/);
         assert.strictEqual(JSON.parse(fs.readFileSync(out, 'utf8')).registrations.length, 2);
-        const bare = { ...w.env, PATH: path.dirname(process.execPath) };
+        // an empty PATH, not node's own folder: on Linux a global npm install puts claude beside node
+        const empty = path.join(w.dir, 'empty-bin');
+        fs.mkdirSync(empty);
+        const bare = { ...w.env, PATH: empty };
         const r2 = spawnSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'inventory.js'), '--project', w.project], { encoding: 'utf8', env: bare });
         assert.strictEqual(r2.status, 3);
         assert.match(r2.stderr, /the claude CLI is not on PATH/);

@@ -49,8 +49,17 @@ Claude Code asks permission for this call itself - `--apply` is deliberately not
 it is now, so the user's pin, cut-off and added args stay. Several fixes on one registration are one rewrite. A machine
 fix (a global npm install) runs after. Each fix is read back by running its detector again.
 
+Run it with the Bash tool's `timeout: 600000` (10 minutes, the most it allows by default); a global npm install is the slow part.
 Paste the output verbatim. Report each fix as 'fixed' or 'STILL FOUND', each skipped one with its reason, and a failure
 with the line it printed - a failed rewrite prints a `RESTORE BY HAND` line, give it to the user as written.
+
+A fix that changes what a server launches (a python request, a cut-off) prints `Fetch next, in the background (...):
+<file>`. Run, with the Bash tool's `run_in_background`, `node "${CLAUDE_PLUGIN_ROOT}/scripts/fetch.js" "<file>"`: it
+downloads the new launch into the runtime's cache and starts the server once with no 30-second limit, one at a time, so
+the next session's start answers inside Claude Code's 30 seconds, then prints each repaired server's status (`claude mcp
+get`). Claude Code asks permission for it. Tell the user
+to restart only once it reports, and paste its output when it finishes; a `warn` line changes nothing. When background
+runs are turned off, run it in the foreground with `timeout: 600000`, and again if the limit stops it.
 
 End with the restart line the script prints: the repaired registrations load on the next session start.
 

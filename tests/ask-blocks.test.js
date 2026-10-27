@@ -6,16 +6,16 @@ const path = require('node:path');
 const { parseAskBlocks, problemsOf } = require('./ask-blocks.js');
 
 const block = (body, id = 'menu') => parseAskBlocks(`\`\`\`ask${id ? ` ${id}` : ''}\n${body}\n\`\`\``)[0];
-const GOOD = "What do you want to do?\n- 'Add or change tools (Recommended)' - a\n- 'Remove tools' - b\n- 'Done' - c";
+const GOOD = "What do you want to change?\n- 'Change tools (Recommended)' - a\n- 'Remove tools' - b\n- 'claude-hud settings' - c\n- 'Done' - d";
 
 test('a sound block parses and has no problems; a block may omit an option the walk omits, never reorder one', () =>
 {
     const b = block(GOOD);
-    assert.strictEqual(b.options.length, 3);
-    assert.strictEqual(b.question, 'What do you want to do?');
+    assert.strictEqual(b.options.length, 4);
+    assert.strictEqual(b.question, 'What do you want to change?');
     assert.deepStrictEqual(problemsOf(b), []);
-    assert.deepStrictEqual(problemsOf(block("What do you want to do?\n- 'Add or change tools (Recommended)' - a\n- 'Done' - c")), [], 'Remove tools left out when nothing is installed');
-    assert.match(problemsOf(block("What do you want to do?\n- 'Add or change tools (Recommended)' - a\n- 'Done' - c\n- 'Remove tools' - b")).join(), /do not match asks\.STATIC\.menu/);
+    assert.deepStrictEqual(problemsOf(block("What do you want to change?\n- 'Change tools (Recommended)' - a\n- 'Remove tools' - b\n- 'Done' - d")), [], 'claude-hud settings left out when claude-hud is not installed');
+    assert.match(problemsOf(block("What do you want to change?\n- 'Change tools (Recommended)' - a\n- 'Done' - d\n- 'Remove tools' - b")).join(), /do not match asks\.STATIC\.menu/);
 });
 
 test('every way a block can break the limits is named', () =>
@@ -33,7 +33,7 @@ test('every way a block can break the limits is named', () =>
     assert.match(problemsOf(parseAskBlocks('```ask menu\nQ?\n- \'A (Recommended)\' - a')[0]).join(), /never closed/);
 });
 
-test('the commands and the skill hold every ask block to the limits', () =>
+test('the commands hold every ask block to the limits', () =>
 {
     const root = path.join(__dirname, '..');
     let seen = 0;
@@ -50,5 +50,5 @@ test('the commands and the skill hold every ask block to the limits', () =>
     });
     walk(path.join(root, 'commands'));
     walk(path.join(root, 'skills'));
-    assert.ok(seen >= 6, `${seen} ask blocks found; install.md alone has six`);
+    assert.ok(seen >= 10, `${seen} ask blocks found; install.md has four, configure.md five, update.md one`);
 });

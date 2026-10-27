@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
-// hud-statusline.js - claude-hud arrives CONFIGURED: /preferred-tools:install's claude-hud item, made
-// deterministic instead of a model walk through claude-hud's own /claude-hud:setup.
+// hud-statusline.js - claude-hud arrives CONFIGURED: the claude-hud item of /preferred-tools:install and
+// /preferred-tools:configure, made deterministic instead of a model walk through claude-hud's own /claude-hud:setup.
 // Ported from alfred-code scripts/hud-statusline.js (its install/stamp.js accountDir is account.js configDir here, its
 // install/json-file.js is json-file.js, MOUNT_RE is copied below), with three flags added: --check, --replace and
 // --statusline-only.
@@ -37,7 +37,7 @@
 // kept byte for byte so a line /claude-hud:setup wrote reads as current here, and ours there. claude-hud 0.11
 // (0.11.2's scripts/setup.mjs `buildCommand`) writes a launcher line instead - the runtime and a copy of its
 // statusline.mjs at <account>/plugins/claude-hud/ (POSIX), a statusline.cmd shim there (Git Bash), or the same cmd.exe
-// line as 0.8.0 (PowerShell) - and those read as current too, so /preferred-tools:install never rewrites a line claude-hud's
+// line as 0.8.0 (PowerShell) - and those read as current too, so neither command ever rewrites a line claude-hud's
 // own setup just wrote (audit 2026-10-14, PL7: two writers of one key, each undoing the other). Re-read on 0.12.0 (audit
 // 2026-10-20b): scripts/setup.mjs and scripts/statusline.mjs are unchanged since 0.11.2, and dist/index.js still exports
 // the `main` the launcher below calls; 0.12.1 leaves both scripts byte for byte.
@@ -373,7 +373,7 @@ function planHud({ configDir, project, platform = process.platform, env = proces
     if (settings.bad)
     {
         plan.error = `${settingsFile} is not valid JSON`;
-        return { ...plan, item: { state: 'blocked', detail: `${plan.error} - fix it, then run /preferred-tools:install again` } };
+        return { ...plan, item: { state: 'blocked', detail: `${plan.error} - fix it, then run /preferred-tools:configure hud` } };
     }
     const bash = platform === 'win32' && gitBash(env, exists, cwd);
     const want = expected({ platform, configDir, runtime, env, exists, bash });

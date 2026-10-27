@@ -22,6 +22,8 @@ const catalogLib = require('./catalog.js');
 const inventory = require('./inventory.js');
 const cli = require('./claude-cli.js');
 const registryLib = require('./registry.js');
+const E = require('./entries.js');
+const fetchLib = require('./fetch.js');
 const { apply } = require('./apply.js');
 const { blockingStdio } = require('./json-file.js');
 const { realMachine, clone, compareVersions, pinnedVersion } = require('./fixes/common.js');
@@ -117,7 +119,7 @@ async function mcpOffers(ctx, out)
         const def = row.routes[r.route];
         const at = `${r.name} (${r.scope})`;
         if (r.route === 'remote') { out.skipped.push(`${at}: a hosted URL has no pin`); continue; }
-        if (def.runtime === 'docker') { out.skipped.push(`${at}: the Docker image tag is not checked - change it with /preferred-tools:install`); continue; }
+        if (def.runtime === 'docker') { out.skipped.push(`${at}: the Docker image tag is not checked - change it with /preferred-tools:configure`); continue; }
         if (!def.package) continue;
         const pkg = def.package;
         const from = pinnedVersion(r.entry, pkg.name);
@@ -129,7 +131,7 @@ async function mcpOffers(ctx, out)
         if (pick.held.length) out.held.push(`${at}: ${registryLib.heldLine(pkg.name, pick.held)}`);
         if (!pick.offer) continue;
         const entry = bumpEntry(r.entry, pkg.name, pick.offer.version, registryLib.cutoffOf(ctx.now));
-        if (!entry) { out.errors.push(`${at}: could not move the pin of ${pkg.name} in the registration as it is written - change it with /preferred-tools:install`); continue; }
+        if (!entry) { out.errors.push(`${at}: could not move the pin of ${pkg.name} in the registration as it is written - change it with /preferred-tools:configure`); continue; }
         out.offers.push({ kind: 'mcp', id: `mcp:${r.name}~${r.scope}`, name: r.name, scope: r.scope, row: r.rowId, route: r.route, package: pkg.name, from, to: pick.offer.version, ageDays: pick.offer.ageDays, cutoff: registryLib.cutoffOf(ctx.now), old: r.entry, entry, group: 'mcp', label: `${r.name} (${r.scope})` });
     }
 }
@@ -265,7 +267,7 @@ function hudAfterUpdate(ctx, offer, log)
     const list = JSON.parse(ctx.runCli(['plugin', 'list', '--json'], { cwd: ctx.project, env: ctx.env }).stdout || '[]');
     const row = list.find((p) => p.id === offer.plugin && p.scope === offer.scope);
     const file = row && row.installPath ? path.join(row.installPath, 'dist', 'config.js') : null;
-    if (!file || !fs.existsSync(file)) { log('claude-hud: dist/config.js was not found in the new version - check the recommended keys with /preferred-tools:install hud'); return; }
+    if (!file || !fs.existsSync(file)) { log('claude-hud: dist/config.js was not found in the new version - check the recommended keys with /preferred-tools:configure hud'); return; }
     const text = fs.readFileSync(file, 'utf8');
     const settings = JSON.parse(fs.readFileSync(catalogFile, 'utf8')).plugins['claude-hud'];
     const keys = (settings.targets || []).filter((t) => /config\.json$/.test(t.file)).flatMap((t) => require('./plugin-settings.js').leaves(t.settings).map(([k]) => k));
@@ -277,8 +279,11 @@ function hudAfterUpdate(ctx, offer, log)
 
 function updateMcp(ctx, offer, tmp, log)
 {
-    const plan = { project: ctx.project, steps: [{ op: 'mcp-replace', name: offer.name, scope: offer.scope, old: offer.old, entry: offer.entry, why: `${offer.package} ${offer.from} -> ${offer.to}` }], expect: [{ kind: 'mcp', name: offer.name, scope: offer.scope, route: offer.route }] };
-    const report = apply(plan, { env: ctx.env, tmp, runCli: ctx.runCli, log: (...a) => log(a.join(' ')) });
+    // the new pin is not in the cache yet: fetch it right after the rewrite (entries.js fetchStep)
+    const fetch = E.fetchStep(offer.name, offer.entry, offer.row, offer.old);
+    const plan = { project: ctx.project, steps: [{ op: 'mcp-replace', name: offer.name, scope: offer.scope, old: offer.old, entry: offer.entry, why: `${offer.package} ${offer.from} -> ${offer.to}` }, ...(fetch ? [fetch] : [])], expect: [{ kind: 'mcp', name: offer.name, scope: offer.scope, route: offer.route }] };
+    const report = apply(plan, { env: ctx.env, tmp, runCli: ctx.runCli, fetchFile: false, log: (...a) => log(a.join(' ')) });
+    if (report.fetch && report.fetch.fetch.length) ctx.fetches.push(report.fetch);
     if (report.failed) return false;
     const got = inventory.buildInventory({ project: ctx.project, env: ctx.env, run: ctx.runCli }).registrations.find((r) => r.name === offer.name && r.scope === offer.scope);
     const pin = got ? pinnedVersion(got.entry, offer.package) : null;
@@ -286,19 +291,28 @@ function updateMcp(ctx, offer, tmp, log)
     return pin === offer.to;
 }
 
-// -> { applied: [id], failed: [id], unknown: [id] }
+// -> { applied: [id], failed: [id], unknown: [id], fetchFile }
 function applyUpdates(ctx, ids, out, { tmp, log = console.log } = {})
 {
-    const res = { applied: [], failed: [], unknown: [] };
+    const res = { applied: [], failed: [], unknown: [], fetchFile: null };
     const known = [...out.offers, ...out.unchecked];
     const chosen = ids.includes('all') ? [...out.offers, ...ids.filter((i) => i !== 'all').map((i) => known.find((o) => o.id === i)).filter(Boolean)] : ids.map((i) => known.find((o) => o.id === i) || i);
+    const dir = tmp || fs.mkdtempSync(path.join(os.tmpdir(), 'preferred-tools-'));
+    ctx.fetches = [];
     for (const c of chosen)
     {
         if (typeof c === 'string') { res.unknown.push(c); log(`NOT OFFERED ${c}: nothing is behind under that id`); continue; }
-        const ok = c.kind === 'plugin' ? updatePlugin(ctx, c, log) : c.kind === 'lsp' ? updateLsp(ctx, c, log) : updateMcp(ctx, c, tmp || fs.mkdtempSync(path.join(os.tmpdir(), 'preferred-tools-')), log);
+        const ok = c.kind === 'plugin' ? updatePlugin(ctx, c, log) : c.kind === 'lsp' ? updateLsp(ctx, c, log) : updateMcp(ctx, c, dir, log);
         (ok ? res.applied : res.failed).push(c.id);
     }
-    if (res.applied.length) log('', 'Restart Claude Code (or run /reload-plugins for plugins) so the updated servers and plugins load.');
+    // every rewritten server in one fetch file, for fetch.js in the background (apply.js says why)
+    const job = fetchLib.job(ctx.project, ctx.fetches.flatMap((f) => f.fetch), ctx.fetches.flatMap((f) => f.check));
+    if (job.fetch.length)
+    {
+        res.fetchFile = fetchLib.writeJob(path.join(dir, 'fetch.json'), job);
+        log('', ...fetchLib.nextLines(res.fetchFile, job));
+    }
+    if (res.applied.length) log('', `Restart Claude Code (or run /reload-plugins for plugins) so the updated servers and plugins load${res.fetchFile ? ' - after the fetch reports' : ''}.`);
     return res;
 }
 
@@ -334,7 +348,7 @@ async function main(argv, { env = process.env, out = (s) => process.stdout.write
     const found = await check(ctx);
     if (args.apply)
     {
-        const res = applyUpdates(ctx, args.apply.split(',').filter(Boolean), found, { tmp: args.tmp, log: (...a) => out(a.join(' ')) });
+        const res = applyUpdates(ctx, args.apply.split(',').filter(Boolean), found, { tmp: args.tmp, log: (...a) => out(a.join('\n')) });
         return res.failed.length || res.unknown.length ? 1 : 0;
     }
     if (args.questions) out(JSON.stringify(questions(found), null, 2));

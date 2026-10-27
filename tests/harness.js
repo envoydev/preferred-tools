@@ -18,6 +18,7 @@ const { spawnSync } = require('node:child_process');
 const inventory = require('../scripts/inventory.js');
 const { plan, render } = require('../scripts/plan.js');
 const { apply } = require('../scripts/apply.js');
+const fetchLib = require('../scripts/fetch.js');
 const account = require('../scripts/account.js');
 const cli = require('../scripts/claude-cli.js');
 
@@ -71,8 +72,17 @@ class Harness
         this.projects = path.join(this.root, 'projects');
         for (const d of [this.home, this.account, this.projects]) fs.mkdirSync(d, { recursive: true });
         this.env = { ...process.env, HOME: this.home, USERPROFILE: this.home, CLAUDE_CONFIG_DIR: this.account };
-        for (const k of Object.keys(this.env)) if (k.startsWith('FAKE_CLAUDE')) delete this.env[k];
+        for (const k of Object.keys(this.env)) if (k.startsWith('FAKE_CLAUDE') || k.startsWith('FAKE_RUNTIME')) delete this.env[k];
         this.before = snapshot();
+    }
+
+    // fetch.js on the file an apply wrote, with the real runtimes and the real CLI in the throwaway world. The
+    // registration cases leave it out (they prove what is written); tests/matrix/starts.test.js runs it before each start.
+    async fetch(file)
+    {
+        const lines = [];
+        const res = await fetchLib.run(JSON.parse(fs.readFileSync(file, 'utf8')), { env: this.env, log: (...a) => lines.push(a.join(' ')) });
+        return { ...res, text: lines.join('\n') };
     }
 
     // a throwaway project (git init, as a real project would be)

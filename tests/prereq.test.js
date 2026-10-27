@@ -148,6 +148,11 @@ test('main: an answers file, --rows, --json; a bad argument exits 2 and checks n
         prereq.main(['--rows', 'serena,context7', '--json'], { env: {}, machine: m, platform: 'darwin', out });
         const json = JSON.parse(text);
         assert.deepStrictEqual(json.tools.map((t) => [t.row, t.route]), [['serena', 'local'], ['context7', 'remote']]);
+        // configure: only a change to another route is checked
+        fs.writeFileSync(file, JSON.stringify({ change: { 'mcp:c7~project': { row: 'context7', route: 'local' }, 'mcp:serena~user': { row: 'serena', name: 'nav' } } }));
+        text = '';
+        prereq.main([file, '--json'], { env: {}, machine: m, platform: 'darwin', out });
+        assert.deepStrictEqual(JSON.parse(text).tools.map((t) => [t.row, t.route]), [['context7', 'local']]);
         for (const bad of [[], ['--rows', 'no-such-tool'], [path.join(dir, 'missing.json')]])
         {
             text = '';

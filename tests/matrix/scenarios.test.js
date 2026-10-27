@@ -72,7 +72,7 @@ test('a custom name, then a rename: the new name is added first, read back, the 
     h.claude(p, ['mcp', 'remove', 'code-nav', '-s', 'local']);
     add(p, 'code-nav', newer, 'local');
 
-    const moved = h.run(p, { picks: { serena: { name: 'nav2' } } });
+    const moved = h.run(p, { change: { 'mcp:code-nav~local': { name: 'nav2' } } });
     assert.deepStrictEqual(moved.plan.errors, []);
     assert.strictEqual(moved.report.failed, null, moved.text);
     assert.ok(moved.plan.steps.some((s) => s.op === 'mcp-move'));
@@ -82,6 +82,42 @@ test('a custom name, then a rename: the new name is added first, read back, the 
     assert.ok(now.entry.args.includes('--my-flag'), 'the user\'s arg is kept');
     const g = h.claude(p, ['mcp', 'get', 'nav2']);
     assert.strictEqual(g.status, 0, g.stdout + g.stderr);
+});
+
+test('configure: one of two registrations of a row is renamed by its key; the other stays byte-identical', T, () =>
+{
+    const p = h.project('configure');
+    assert.strictEqual(h.run(p, { picks: { memory: { scope: 'local', name: 'cfg-memory' } } }).report.failed, null);
+    const local = reg(p, 'cfg-memory', 'local');
+    add(p, 'cfg-memory-user', { ...local.entry }, 'user');
+    const keep = JSON.stringify(reg(p, 'cfg-memory', 'local').entry);
+
+    const r = h.run(p, { change: { 'mcp:cfg-memory-user~user': { row: 'memory', name: 'cfg-memory-2' } } });
+    assert.deepStrictEqual(r.plan.errors, []);
+    assert.strictEqual(r.report.failed, null, r.text);
+    assert.deepStrictEqual(r.plan.steps.map((s) => s.op), ['mcp-move']);
+    assert.strictEqual(reg(p, 'cfg-memory-user', 'user'), undefined, 'the old name is gone');
+    assert.deepStrictEqual(reg(p, 'cfg-memory-2', 'user').entry, local.entry, 'built from the entry as read');
+    assert.strictEqual(JSON.stringify(reg(p, 'cfg-memory', 'local').entry), keep, 'the registration not picked is left as it is');
+    assert.strictEqual(h.run(p, { change: { 'mcp:cfg-memory-2~user': { row: 'memory' } } }).report.noop, true, 'every answer kept: no claude call');
+    h.claude(p, ['mcp', 'remove', 'cfg-memory-2', '-s', 'user']);
+});
+
+test('install beside a copy for every project: this project gets its own registration and data; the user-scope one stays byte-identical', T, () =>
+{
+    const p = h.project('own-copy');
+    assert.strictEqual(h.run(p, { picks: { memory: { scope: 'user', name: 'copy-mem' } } }).report.failed, null);
+    const before = JSON.stringify(reg(p, 'copy-mem', 'user').entry);
+
+    const r = h.run(p, { picks: { memory: { name: 'copy-mem' } } });
+    assert.deepStrictEqual(r.plan.errors, []);
+    assert.strictEqual(r.report.failed, null, r.text);
+    assert.ok(!r.plan.steps.some((s) => /remove|move|replace/.test(s.op)), 'nothing is removed or moved');
+    const mine = reg(p, 'copy-mem', 'local');
+    assert.ok(mine, 'this project\'s copy, at local scope');
+    assert.strictEqual(path.resolve(mine.entry.env.MCP_MEMORY_SQLITE_PATH), path.join(p, '.preferred-tools', 'copy-mem', 'memory.db'), 'its own data');
+    assert.strictEqual(JSON.stringify(reg(p, 'copy-mem', 'user').entry), before, 'the copy for every project is untouched');
+    for (const scope of ['local', 'user']) h.claude(p, ['mcp', 'remove', 'copy-mem', '-s', scope]);
 });
 
 function bumped(entry, pkg, version)
@@ -182,13 +218,16 @@ test('each scope the row allows: local, project and user, read back from the fil
 test('a remove: the registration is gone from its file, the data folder stays, and the other registration is untouched', T, () =>
 {
     const p = h.project('remove');
+    // an earlier case may leave a serena at user scope in this shared account: the install adds beside it, never moves it
+    const global = reg(p, 'serena', 'user');
     assert.strictEqual(h.run(p, { picks: { serena: { scope: 'local' }, context7: { route: 'remote', scope: 'project' } } }).report.failed, null);
     const data = path.join(p, '.preferred-tools', 'serena');
     assert.ok(fs.existsSync(data));
     const r = h.run(p, { picks: {}, remove: [{ kind: 'mcp', name: 'serena', scope: 'local' }] });
     assert.deepStrictEqual(r.plan.errors, []);
     assert.strictEqual(r.report.failed, null, r.text);
-    assert.strictEqual(reg(p, 'serena'), undefined);
+    assert.strictEqual(reg(p, 'serena', 'local'), undefined);
+    if (global) assert.deepStrictEqual(reg(p, 'serena', 'user').entry, global.entry, 'the user-scope serena is untouched by the add and the remove');
     assert.ok(fs.existsSync(data), 'data folders stay where they are');
     assert.ok(reg(p, 'context7', 'project'));
     const own = h.run(p, { picks: {}, remove: [{ kind: 'mcp', name: 'my-own', scope: 'user' }] });
@@ -284,6 +323,16 @@ test('claude-hud: recommended keeps the user\'s value; \'Apply and replace diffe
     const baks = fs.readdirSync(h.account).filter((n) => /^settings\.json\.bak\./.test(n));
     assert.ok(baks.some((n) => (JSON.parse(fs.readFileSync(path.join(h.account, n), 'utf8')).statusLine || {}).refreshInterval === 30), `no backup holds the user's file as it was: ${baks.join(', ')}\n${rep.stdout}`);
     assert.ok(psLib.leaves, 'plugin-settings is the same module the install walk uses');
+
+    // the plugin runs: the statusLine command as written, fed a session's JSON on stdin as Claude Code feeds it. On
+    // Windows the shell Claude Code runs it in is not verified here, so that half is the Windows VM's.
+    if (process.platform === 'win32') return t.diagnostic('NOT RUN: running the statusLine on Windows is the Windows VM\'s check');
+    const line = JSON.parse(fs.readFileSync(settingsFile, 'utf8')).statusLine.command;
+    const input = JSON.stringify({ session_id: 'matrix', transcript_path: '', cwd: p, model: { id: 'claude-opus-5-5', display_name: 'Opus' }, workspace: { current_dir: p, project_dir: p }, version: '' });
+    const shown = spawnSync(line, { shell: true, cwd: p, env: h.env, input, encoding: 'utf8', timeout: 30000 });
+    assert.strictEqual(shown.status, 0, `${line}\n${shown.stdout}${shown.stderr}`);
+    assert.ok(shown.stdout.trim(), `claude-hud printed nothing for the status line: ${shown.stderr}`);
+    t.diagnostic(`claude-hud status line on ${process.platform}: ${shown.stdout.trim().split('\n')[0].slice(0, 120)}`);
 });
 
 // ---- the real account ----------------------------------------------------------------------------------------------

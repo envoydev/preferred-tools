@@ -8,17 +8,25 @@ is listed in the `envoydev` marketplace, which lives in the alfred-code repo
 (`https://github.com/envoydev/alfred-code`, `.claude-plugin/marketplace.json`); users install it as
 `preferred-tools@envoydev`.
 
-- `/preferred-tools:install` - manual (`disable-model-invocation: true`), configure-style walk: pick tools, then
-  route, scope, name and location per tool.
+- `/preferred-tools:install` - manual (`disable-model-invocation: true`); adds only tools not installed in this
+  project: pick tools, then route, scope, name and location per tool. A tool installed for every project is offered as
+  this project's own copy beside it; install never changes, moves or removes a registration.
+- `/preferred-tools:configure` - manual; changes or removes what is installed, one registration or plugin at a time
+  (keyed `mcp:<name>~<scope>` / `plugin:<id>~<scope>`), every question recommending what it has now. The user's
+  ruling (2026-10-27): install is install, configure is configure.
 - `/preferred-tools:fix` - manual; detects known problems and applies the recorded fix.
-- `update-tools` skill - updates installed plugins and registered catalog servers that are behind.
+- `/preferred-tools:update` - manual; updates installed plugins, pinned catalog servers and language servers that are
+  behind, to releases at least 7 days old. It was the model-invocable `update-tools` skill until the user's ruling
+  (2026-10-27) made it a command; manual like the other three, so the plugin puts no description in every session.
 
 The build brief, with every design decision, its reason and the user's rulings, is `docs/build-prompt.md`. Read it
 before changing the design.
 
 **This file is not loaded by installs.** The repo root is the plugin root, so this file ships in every install's cache
-but Claude Code never loads a plugin's `CLAUDE.md`. It is for working IN this repo only. Anything the plugin needs at
-runtime goes in a command, the skill or a script.
+but Claude Code never loads a plugin's `CLAUDE.md`. It is for working IN this repo only, and it lives in `.claude/`
+because `claude plugin validate --strict` fails on a `CLAUDE.md` at the plugin root; a session in this repo loads
+`.claude/CLAUDE.md` the same way (https://code.claude.com/docs/en/memory.md). Anything the plugin needs at runtime goes
+in a command or a script.
 
 **Public repo.** Everything here ships to every machine that installs the plugin (the cache is the whole repo). No
 private project names, no absolute local paths, no tokens, nothing from a user's machine.
@@ -39,8 +47,8 @@ private project names, no absolute local paths, no tokens, nothing from a user's
 - **No secret in any file.** Remote routes prefer OAuth; token routes register `${VAR}`.
 - **Paths by scope.** `project` scope (the committed `.mcp.json`) gets relative paths and `${VAR}` only. `local` and
   `user` scope get absolute paths, with `~` expanded by the script.
-- **`allowed-tools` pre-approves read-only calls only.** `apply.js`, `fix.js --apply` and the `hud-statusline.js`
-  writes are never listed, so Claude Code's own prompt guards a change beside the command's written ask. `tests/lint.js`
+- **`allowed-tools` pre-approves read-only calls only.** `apply.js`, `fetch.js`, `fix.js --apply`, `update.js --apply` and the
+  `hud-statusline.js` writes are never listed, so Claude Code's own prompt guards a change beside the command's written ask. `tests/lint.js`
   enforces it.
 - **Script paths go through the plugin root.** A command's shell runs in the user's project, so every call is
   `node "${CLAUDE_PLUGIN_ROOT}/scripts/<file>"`.
@@ -82,8 +90,9 @@ those dates.
 - **Read the result, not the exit code.** Open the written `.mcp.json`, account file and settings after each case.
   A case not run is reported as NOT RUN, never implied as passing. Windows-only behaviour is proved on the user's
   Windows VM or reported NOT RUN.
-- **Check order before a publish:** `claude plugin validate . --strict`, a `claude --plugin-dir .` session in a
-  scratch project, then `claude plugin details`. The skill has the full list.
+- **Check order before a publish:** `npm run validate` (`claude plugin validate --profile directory --strict` on a
+  scratch copy of the files git would ship, so a Finder `.DS_Store` never fails it), a `claude --plugin-dir .` session
+  in a scratch project, then `claude plugin details`. The skill has the full list.
 - **Outside facts are verified, not recalled.** A package, version, endpoint, CLI flag or marketplace shape is checked
   against the vendor's own docs and recorded with its URL and date in `docs/sources.md`.
 - **Branches.** `main` is the default branch. Work lands on a branch; commit or push only on the user's word.

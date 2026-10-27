@@ -9,17 +9,37 @@ Graded 2026-10-27 by independent reviewers: 79 -> 79 -> 88 -> 95; six findings f
 
 You are building `preferred-tools`, a Claude Code plugin in this repository. The repo collects the tools its owner has
 tested and likes - MCP servers and Claude Code plugins - with their install, update, rename, relocation and fix
-procedures. The plugin installs nothing by itself: the user drives it through two manual commands and one skill.
+procedures. The plugin installs nothing by itself: the user drives it through four manual commands.
 
 ## Goal
 
-1. `/preferred-tools:install` - a guided, configure-style walk: pick tools, then per tool the route (remote or local,
-   only where the tool has both), the scope, the registration NAME and the data LOCATION; then apply, read back and
-   report. It also changes or removes what an earlier run installed.
-2. `/preferred-tools:fix` - detects known problems in the installed tools (the first one: serena's TypeScript language
+1. `/preferred-tools:install` - a guided walk over the tools NOT installed yet: pick tools, then per tool the route
+   (remote or local, only where the tool has both), the scope, the registration NAME and the data LOCATION; then apply,
+   read back and report.
+2. `/preferred-tools:configure` - the same walk over what IS installed: pick a registration or a plugin (one option
+   each; a tool at two scopes is two), then change its route, scope, name or location, a plugin's scope, or
+   claude-hud's settings, or remove it. Every question recommends what the pick has now.
+3. `/preferred-tools:fix` - detects known problems in the installed tools (the first one: serena's TypeScript language
    server failing on Windows) and applies the recorded fix.
-3. The `update-tools` skill - brings every installed plugin and every registered catalog server up to date when it is
-   behind, and says so in one line when nothing is.
+4. `/preferred-tools:update` - brings every installed plugin and every registered catalog server up to date when it is
+   behind, and says so in one line when nothing is. It was built as the model-invocable `update-tools` skill; the
+   user's ruling of 2026-10-27 made it a command (see 'The update command').
+
+**The user's ruling, 2026-10-27: install is install, configure is configure.** The first build had one install walk
+that also changed and removed. It is split: install offers only the rows not installed here, and configure owns the
+change, the remove and the claude-hud settings ask for an installed claude-hud. A configure pick is keyed
+`mcp:<name>~<scope>` or `plugin:<id>~<scope>` (the update command's offer ids), so one of two registrations of a row is
+changed and the other is left. The plan (`answers.change`) builds the change from the registration as read, exactly as
+before.
+
+**And the same day: a project may have its own copy.** A tool installed for every project (user scope) is still offered
+by install, labelled `(installed for every project ...)`. Picking it ADDS this project's registration beside the
+account-wide one, which is never changed or removed; install never renames, moves or rewrites anything (an install pick
+already there under its name and scope is reported unchanged), and a rename or move is configure's alone. The copy's
+questions leave out the scope already taken. A row whose data defaults to the account folder (memory) defaults to the
+project folder for a copy, so the copy starts empty and, under the same name, hides the account-wide data in this
+project; 'Keep' at the location question shares it. A row installed in this project, or at its recommended scope (so
+claude-hud at user scope), is configure's.
 
 Done means every acceptance criterion in 'Acceptance criteria' holds and its proof is in your report.
 
@@ -163,6 +183,13 @@ re-applied after install, inside every serena update, and by `/preferred-tools:f
 a script renders every table, every question is an ask with one option marked `(Recommended)` and listed first, and
 nothing is applied before one confirmation.
 
+**Since the 2026-10-27 split** (see 'Goal'), the steps below are shared by two commands. `commands/install.md` runs
+1, 2, 4 to 8 over the rows not installed, with no step 3 menu and no `(installed as ...)` labels.
+`commands/configure.md` runs 1, 2, then its menu - 'Change tools (Recommended)', 'Remove tools', 'claude-hud settings'
+(only when claude-hud is installed), 'Done' - then a pick of one option per installed registration or plugin, step 5's
+per-tool questions with what each has now first, 6 (only for a route change), 7, 8 and 9. A multi-select question never
+has a single option: a lone item joins a neighbour, and a single item in all gets 'None of these' beside it.
+
 Two rules hold for every command and the skill:
 
 - **Script paths.** A command's shell runs in the user's project, so every script call is spelled
@@ -211,6 +238,22 @@ Two rules hold for every command and the skill:
    applied before it in place, named. Then re-run step 1 and print the read-back: each picked tool's name, scope and
    route as the CLI now reports them. Then `claude mcp get <name>` per new server for its status, and the restart
    line (project-scope servers also need the trust prompt on the next session start).
+   **Fetch and first start (added 2026-10-27, from a measurement).** Claude Code gives a server 30 s to answer
+   (`MCP_TIMEOUT`), and a package route's first start does more than that: on 2.1.311, `claude mcp get` reported
+   appium's first npx install as 'Failed to connect ... timed out after 30000ms'; memory's package came down in about
+   6 s, but its first start then took 110 s, downloading its ONNX embedding model, and its second and third starts took
+   2.1 s and 2.3 s. So the plan follows each written registration that launches a new package with a fetch step -
+   exactly its pin, cut-off, python and env, into the runtime's cache (`npm exec --yes --package <spec> -- node -e 0`,
+   `uvx <options> <tool> --help`, `docker pull <image>`) - and `fetch.js` then starts the server once as the CLI wrote
+   it, sends `initialize`, waits up to 10 minutes and stops it (with what it started) once it answers. `apply.js` runs
+   neither: they outlast the Bash tool's 2-minute default (10 at most), and a call past its limit is moved to the
+   background (stopped, where background runs are off), so its report would not come back in the turn that asked for
+   it. `apply.js` writes the written servers' fetch steps, each with its scope, to `<tmp>/fetch.json`, and the command
+   runs `fetch.js` on it in the background, one server at a time (two first npx installs at once is the one case
+   measured to break a start), ending with `claude mcp get` for each status. A server whose registration needs an
+   unset `${VAR}` is fetched, not started. A failed fetch or start is a warning: the registration stays and its first
+   session start tries again. With nothing to fetch (a hosted route, a rename, a move) apply asks for the status
+   itself. `fetch.js` runs package installs and starts servers, so like `apply.js` it is never in `allowed-tools`.
 9. Remove: 'Pick which (Recommended)' or 'Cancel', then the installed rows in the grouped multi-select shape, one
    option per registration (a row at two scopes is two options), then `claude mcp remove` / `claude plugin uninstall` at the scope shown. Data folders stay; the
    report names them.
@@ -290,9 +333,10 @@ answer. The answer is applied after the plugin install:
 - 'Skip' runs `hud-statusline.js --statusline-only`, so claude-hud still shows on screen.
 
 No catalog row for a picked plugin means
-no ask. `/preferred-tools:install hud` jumps straight to this ask for an installed claude-hud.
+no ask. `/preferred-tools:configure hud` jumps straight to this ask for an installed claude-hud (the 2026-10-27 split;
+it was `/preferred-tools:install hud`).
 
-**After an update.** When the update skill moves claude-hud to a newer version, it re-runs `--check`, and it names
+**After an update.** When `/preferred-tools:update` moves claude-hud to a newer version, it re-runs `--check`, and it names
 any catalog key the new `DEFAULT_CONFIG` no longer holds. It never removes such a key.
 
 The same catalog takes a row for another plugin later. Each row's keys are read from that plugin's own source,
@@ -314,7 +358,7 @@ rows - each `source` line is the alfred-code file to read for the detail:
 | id | Symptom | Fix | Source |
 |---|---|---|---|
 | serena-windows-home | serena's TypeScript language server fails to start on Windows (`'.serena' is not recognized as an internal or external command`): serena runs it through npm's `.bin` shim, which hands `SERENA_HOME` to cmd.exe unquoted, so a `/` or a space in it cuts the path | `SERENA_HOME` absolute, in backslashes, with no space (default `C:\Users\<name>\.serena` when the profile path has none, else a space-free folder the user picks). Absolute, so a session started in a subfolder finds the same home and does not download serena's ~327MB of language servers again. Re-verify on the current serena pin - the record says 1.7.0 to 2.1.0 | `serena-launch.js` header (f779a349) |
-| serena-windows-ts-shim | every serena symbol and reference tool fails for the session on Windows: serena's solidlsp spawns npm's extensionless POSIX shim `.bin/typescript-language-server`, which cmd.exe cannot run, so the TypeScript server dies at init (upstream oraios/serena#311) | Port of `../alfred-code/scripts/fix-serena-ts-windows.ps1` to Node (`scripts/fixes/serena-ts-shim.js`). Detect: every `solidlsp/language_servers/typescript_language_server.py` under `%LOCALAPPDATA%\uv` whose `_create_launch_command` body is still `return [core_path, "--stdio"]` and has no `serena-win-fix` marker. Fix: on Windows, run `node <typescript-language-server>/lib/cli.mjs --stdio`, falling back to `<core_path>.cmd`, with a `.bak` beside it. A method whose body differs is skipped and named ('patch manually'), never forced. TRANSIENT: a uvx upgrade re-extracts the package and wipes the patch, so the update skill re-runs this detector after every serena bump. Step 1 checks whether serena#311 is fixed on the current pin, and the row is retired when it is | `scripts/fix-serena-ts-windows.ps1` |
+| serena-windows-ts-shim | every serena symbol and reference tool fails for the session on Windows: serena's solidlsp spawns npm's extensionless POSIX shim `.bin/typescript-language-server`, which cmd.exe cannot run, so the TypeScript server dies at init (upstream oraios/serena#311) | Port of `../alfred-code/scripts/fix-serena-ts-windows.ps1` to Node (`scripts/fixes/serena-ts-shim.js`). Detect: every `solidlsp/language_servers/typescript_language_server.py` under `%LOCALAPPDATA%\uv` whose `_create_launch_command` body is still `return [core_path, "--stdio"]` and has no `serena-win-fix` marker. Fix: on Windows, run `node <typescript-language-server>/lib/cli.mjs --stdio`, falling back to `<core_path>.cmd`, with a `.bak` beside it. A method whose body differs is skipped and named ('patch manually'), never forced. TRANSIENT: a uvx upgrade re-extracts the package and wipes the patch, so the update command re-runs this detector after every serena bump. Step 1 checks whether serena#311 is fixed on the current pin, and the row is retired when it is | `scripts/fix-serena-ts-windows.ps1` |
 | uvx-python | a uvx server dies at start with `CONNECTION_CLOSED` (pyyaml 6.0.2 has no CPython 3.14 wheel) | add the row's `--python` | `uv-python.js` header |
 | windows-arm-python | a uvx server fails to build wheels on Windows ARM64 | the x64 CPython build for the row's minor | `docs/uv-python-pin-evidence.md` |
 | windows-npx-cmd | an npx server never connects on native Windows | wrap the command in `cmd /c` | Claude Code MCP docs (verify) |
@@ -325,10 +369,12 @@ rows - each `source` line is the alfred-code file to read for the detail:
 
 A new problem the user meets later becomes a new row, with its `verifiedOn`.
 
-## The update skill - `skills/update-tools/SKILL.md`
+## The update command - `commands/update.md`
 
-Model-invocable, description under 160 chars, starting 'Use when' (for example: 'Use when updating the preferred
-tools - installed MCP servers and plugins - or when one is behind its release.'). It runs `node scripts/update.js`:
+`disable-model-invocation: true`, like the other three commands. **The user's ruling, 2026-10-27:** the update is a
+command, `/preferred-tools:update`, not a skill. It was first built as the model-invocable `skills/update-tools/SKILL.md`
+(description under 160 chars, starting 'Use when'); the body, the asks and `scripts/update.js` are unchanged by the move,
+and the plugin now puts no skill description in every session. It runs `node scripts/update.js`:
 
 - Plugins: every plugin installed on this machine, catalog or not. Refresh each marketplace they come from
   (`claude plugin marketplace update <name>`), then, at every scope `claude plugin list --json` reports a plugin at,
@@ -351,16 +397,18 @@ tools - installed MCP servers and plugins - or when one is behind its release.')
 
 ```text
 .claude-plugin/plugin.json    name preferred-tools, version 0.1.0, description, author envoydev
+.claude-plugin/icon.png       1024 px square toolbox (Material Symbols, Apache 2.0; docs/sources.md), for Anthropic's directory listing only - Claude Code ignores it, and the first submission may fix it for good
 commands/install.md
+commands/configure.md
+commands/update.md
 commands/fix.md
-skills/update-tools/SKILL.md
 catalog/tools.json            the 17 rows: kind, original name, routes, fingerprint, args/url, env, locations, pins, os, prereqs, dangerous tools
 catalog/fixes.json
 catalog/plugin-settings.json  the recommended plugin settings, ported from alfred-code (the claude-hud row)
-scripts/                      inventory.js, table.js, prereq.js, plan.js, apply.js, fix.js, fixes/, update.js, plugin-settings.js, hud-statusline.js, json-file.js, account.js, refresh-pins.js - Node 22, no dependencies
+scripts/                      inventory.js, table.js, prereq.js, plan.js, apply.js, fetch.js, fix.js, fixes/, update.js, plugin-settings.js, hud-statusline.js, json-file.js, account.js, refresh-pins.js - Node 22, no dependencies
 tests/                        node:test, one file per script
 docs/sources.md               every external fact with its URL and the date read
-CLAUDE.md                     EXISTS - this repo's invariants and the plugin facts it relies on; keep it current, never replace it
+.claude/CLAUDE.md             EXISTS - this repo's invariants and the plugin facts it relies on; keep it current, never replace it
 .claude/skills/plugin-authoring/  EXISTS - the plugin authoring skill, copied from alfred-code; load it before writing any plugin file
 docs/plugin-cli-evidence.md   EXISTS - measured plugin CLI behaviour (install over installed, the list flag, renames)
 README.md
@@ -378,7 +426,7 @@ Each step ends with its check; the next step starts only when it passes.
    oraios/serena#311 is fixed on the current serena pin. Write `docs/sources.md`.
    Check: every catalog row and every (verify) item has a source line; anything that changed is changed in the
    catalog, not left in the prompt.
-2. **Scaffold** the layout and `plugin.json`. Read `CLAUDE.md` and `docs/plugin-cli-evidence.md`, and load the
+2. **Scaffold** the layout and `plugin.json`. Read `.claude/CLAUDE.md` and `docs/plugin-cli-evidence.md`, and load the
    `plugin-authoring` skill first. Check: `claude plugin validate . --strict` passes.
 3. **Catalog** - `catalog/tools.json` and `catalog/fixes.json`, plus a test that every row has the fields its kind needs
    and every fingerprint is unique. Check: `npm test` green.
@@ -430,12 +478,13 @@ Each step ends with its check; the next step starts only when it passes.
     - create a scratch project (the exact `mkdir` line);
     - start `claude --plugin-dir <this repo>` there (verify the flag in step 1);
     - run `/preferred-tools:install` once, picking serena, memory, context7, one browser and the LSP pair;
-    - run `claude mcp get <name>` per server, then `/preferred-tools:fix` and the update skill once each;
+    - run `claude mcp get <name>` per server, then `/preferred-tools:fix` and `/preferred-tools:update` once each;
     - paste the read-back into this session.
 
     The build session reads the pasted output and records PASS or the failure. With no go, the step is NOT RUN.
     Cleanup is on the same checklist, and its read-back is pasted too:
-    - run the Remove round at every scope used, and uninstall the plugins installed for the scratch project;
+    - run `/preferred-tools:configure`'s Remove round at every scope used, and uninstall the plugins installed for
+      the scratch project;
     - delete the scratch folder;
     - read `claude plugin list --json` and the `mcpServers` of `~/.claude.json` to confirm no scratch registration
       or plugin record remains. The `projects` entry Claude Code keeps for any folder a session ran in is its own;
@@ -459,10 +508,13 @@ Each step ends with its check; the next step starts only when it passes.
   `typescript_language_server.py` (fixtures here; live on Windows or NOT RUN).
 - Every script call in a command or skill body is spelled under `${CLAUDE_PLUGIN_ROOT}`, and the user's live check ran
   the commands from a project that is not this repo - or the report says NOT RUN.
-- The update skill offers a newer pin, rewrites the registration under the same name and scope, and says
+- `/preferred-tools:update` offers a newer pin, rewrites the registration under the same name and scope, and says
   `everything current` when nothing is behind.
 - Picking claude-hud ends with the recommended-settings ask; each of its three answers writes exactly what
-  `hud-statusline.js --check` reported for it (the statusLine alone for 'Skip'), and `/preferred-tools:install hud` reaches the same ask on an installed claude-hud.
+  `hud-statusline.js --check` reported for it (the statusLine alone for 'Skip'), and `/preferred-tools:configure hud` reaches the same ask on an installed claude-hud.
+- Install offers only what is not installed. Configure offers each installed registration and plugin once per scope,
+  recommends what it has now in every question, changes the one picked and leaves a second registration of the same
+  row as it is.
 - Nothing is applied before the plan's confirmation; a failure mid-apply leaves the earlier steps in place, named.
 
 ## Risks
@@ -470,7 +522,7 @@ Each step ends with its check; the next step starts only when it passes.
 - A registration rewrite (fix, update, rename) loses the server for a moment, and fails between remove and add: apply
   adds first under a temporary name where the name changes; for a same-name rewrite, it saves the old JSON to
   `<tmp>/rollback.json` and re-adds it when the add fails, and the report prints the line that restores it by hand.
-- A vendor endpoint or package moves after step 1: the update skill re-reads the registry; a remote route that stops
+- A vendor endpoint or package moves after step 1: `/preferred-tools:update` re-reads the registry; a remote route that stops
   answering shows as failed in `claude mcp get`, and the fix is a catalog change plus a re-run of install.
 - Supply chain: pins plus the cut-off; the 7-day age gate on updates; appium-mcp 1.97.1 had 20 critical and 21 high
   npm advisories on 2026-10-21 (alfred-code's `shipped-mcps.json` pins) - the walk shows the current count from

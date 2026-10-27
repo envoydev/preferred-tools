@@ -10,12 +10,16 @@
 // A rewrite that could lose a server (same-name replace) saves the old JSON to <tmp>/rollback.json first and re-adds it
 // when the add fails; a rename or a scope move adds the new registration FIRST, reads it back, and only then removes the
 // old one, so a failed add leaves the old one running.
+//
+// A plan's fetch steps are not run here. They go to <tmp>/fetch.json with the names of the servers written, for fetch.js:
+// a first download takes minutes, and a command cut off by its time limit must never leave half a plan applied.
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const cli = require('./claude-cli.js');
 const account = require('./account.js');
 const inventory = require('./inventory.js');
+const fetchLib = require('./fetch.js');
 const { argvOf, deepEqual } = require('./plan.js');
 const { blockingStdio } = require('./json-file.js');
 
@@ -23,17 +27,7 @@ const SCRIPTS = __dirname;
 const quote = (s) => (/^[A-Za-z0-9_\-./:=@,+]+$/.test(s) ? s : `'${s.replace(/'/g, "'\\''")}'`);
 const restoreLine = (name, scope, entry) => `claude mcp add-json ${quote(name)} ${quote(JSON.stringify(entry))} -s ${scope}`;
 
-// What the CLI wrote, read from the file it wrote it to.
-function readRegistration(name, scope, project, env)
-{
-    if (scope === 'project')
-    {
-        const s = account.readState(path.join(project, '.mcp.json'));
-        return s.doc && s.doc.mcpServers ? s.doc.mcpServers[name] : undefined;
-    }
-    const a = account.readAccount(env, project);
-    return (scope === 'user' ? a.user : a.local)[name];
-}
+const readRegistration = account.readRegistration;
 
 function makeRunner({ project, env, runCli })
 {
@@ -128,10 +122,14 @@ function runStep(step, ctx)
     }
 }
 
-function apply(plan, { env = process.env, tmp, runCli = cli.run, log = console.log } = {})
+// apply.js does the fast half - the CLI writes and their read-back, seconds - so the command that runs it is never cut off
+// halfway. The slow half - the fetch steps and the `claude mcp get` status, minutes on a first install - goes to
+// <tmp>/fetch.json (or `fetchFile`; false writes none, for a caller that collects several applies) for fetch.js, which
+// the command runs in the background.
+function apply(plan, { env = process.env, tmp, runCli = cli.run, log = console.log, fetchFile } = {})
 {
     const project = plan.project;
-    const report = { applied: [], failed: null, notRun: [], readback: [], noop: false };
+    const report = { applied: [], failed: null, notRun: [], readback: [], noop: false, toFetch: [], fetch: null, fetchFile: null };
     if (!plan.steps.length)
     {
         report.noop = true;
@@ -143,6 +141,7 @@ function apply(plan, { env = process.env, tmp, runCli = cli.run, log = console.l
     for (let i = 0; i < plan.steps.length; i++)
     {
         const step = plan.steps[i];
+        if (step.op === 'fetch') { report.toFetch.push(step); log(`${i + 1}. later  ${step.why} (fetch.js, after the read-back)`); continue; }
         const r = runStep(step, ctx);
         if (r.ok) { report.applied.push({ i: i + 1, op: step.op, detail: r.detail }); log(`${i + 1}. ok     ${r.detail}`); continue; }
         report.failed = { i: i + 1, op: step.op, detail: r.detail };
@@ -173,13 +172,20 @@ function apply(plan, { env = process.env, tmp, runCli = cli.run, log = console.l
     log('', 'Read back:');
     for (const r of report.readback)
         log(r.kind === 'mcp' ? `  ${r.found ? 'ok ' : 'MISSING'} ${r.name} - ${r.scope} scope, ${r.route || '?'} route${r.row ? ` (${r.row})` : ''}` : `  ${r.found && r.enabled ? 'ok ' : 'MISSING'} ${r.id} - ${r.scope} scope${r.version ? `, ${r.version}` : ''}`);
-    const fresh = (plan.steps || []).filter((s) => s.op === 'mcp-add' || s.op === 'mcp-replace' || s.op === 'mcp-move').map((s) => (s.to ? s.to : { name: s.name, scope: s.scope }));
-    for (const f of fresh)
+    // what was written and read back: with a package to fetch, fetch.js fetches it and then asks the CLI for the status;
+    // with none (a hosted URL, a rename, a move), the status is asked here
+    const done = new Set(report.applied.map((a) => a.i));
+    const written = plan.steps.filter((s, i) => done.has(i + 1) && ['mcp-add', 'mcp-replace', 'mcp-move'].includes(s.op)).map((s) => s.to || { name: s.name, scope: s.scope });
+    const fresh = written.map((w) => w.name);
+    const scopeOf = new Map(written.map((w) => [w.name, w.scope]));
+    report.fetch = fetchLib.job(project, report.toFetch.filter((s) => scopeOf.has(s.name)).map((s) => ({ ...s, scope: scopeOf.get(s.name) })), fresh);
+    if (!report.fetch.fetch.length) fetchLib.status(fresh, { cwd: project, env, runCli, log });
+    else if (fetchFile !== false)
     {
-        const g = ctx.call(['mcp', 'get', f.name]);
-        log(`  claude mcp get ${f.name}: ${g.out || '(no output)'}`);
+        report.fetchFile = fetchLib.writeJob(fetchFile || path.join(ctx.tmp, 'fetch.json'), report.fetch);
+        log('', ...fetchLib.nextLines(report.fetchFile, report.fetch));
     }
-    if (!report.failed) log('', 'Restart Claude Code (or run /reload-plugins for plugins) so the new registrations load; a project-scope server also needs the trust prompt on the next session start.');
+    if (!report.failed) log('', `Restart Claude Code (or run /reload-plugins for plugins) so the new registrations load${report.fetchFile ? ' - after the fetch reports, so a session start does not download the same package beside it' : ''}; a project-scope server also needs the trust prompt on the next session start.`);
     return report;
 }
 
@@ -191,7 +197,7 @@ function main(argv)
     const plan = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (plan.errors && plan.errors.length) { console.error(`apply: the plan has errors - nothing applied:\n${plan.errors.map((e) => `  ! ${e}`).join('\n')}`); return 1; }
     const at = argv.indexOf('--tmp');
-    const report = apply(plan, { tmp: at >= 0 ? argv[at + 1] : undefined });
+    const report = apply(plan, { tmp: at >= 0 ? argv[at + 1] : undefined, log: (...a) => console.log(a.join('\n')) });
     return report.failed ? 1 : 0;
 }
 

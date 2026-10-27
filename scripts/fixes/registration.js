@@ -9,7 +9,7 @@ const E = require('../entries.js');
 const C = require('./common.js');
 
 const eachReg = (ctx, id, fn) => C.registrationsOf(ctx, id).map((reg) => fn(reg, C.routeOf(ctx, reg))).filter(Boolean);
-const PROJECT_ABS = 'the project scope is a committed file and cannot hold an absolute path - move the registration to local or user scope first (/preferred-tools:install, Location)';
+const PROJECT_ABS = 'the project scope is a committed file and cannot hold an absolute path - move the registration to local or user scope first (/preferred-tools:configure, Scope)';
 
 // ---- serena-windows-home --------------------------------------------------------------------------------------------
 // SERENA_HOME absolute, in backslashes and space-free. A value that is only wrong in its slashes keeps its folder (so the
@@ -110,7 +110,7 @@ function playwrightWebmcpDetect(ctx)
         const documented = route.package.version;
         const older = pin && C.compareVersions(pin, documented) === -1;
         return C.finding('playwright-webmcp', reg, 'page-registered WebMCP tools are not switched off (no --no-webmcp)',
-            older ? { blocked: `pinned @${pin} is older than ${documented}, the version whose README documents --no-webmcp - update it first (the update skill), then fix` } : {});
+            older ? { blocked: `pinned @${pin} is older than ${documented}, the version whose README documents --no-webmcp - update it first (/preferred-tools:update), then fix` } : {});
     });
 }
 

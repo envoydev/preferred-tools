@@ -5,21 +5,26 @@
 //   node plan.js <inventory.json> <answers.json> [--out <plan.json>]     the plan, printed, and written for apply.js
 //   node plan.js --questions <inventory.json> [<picks.json>]              every ask the walk makes, as data
 //
-// A fresh add builds its entry from catalog/tools.json. A rename, a move, a location change or a re-run on an INSTALLED
-// row starts from the registration as read - its pin, its cut-off, the args and env the user added - and changes only
-// what the answer names. So an updated pin is never downgraded, and the same answers twice plan nothing.
+// A fresh add builds its entry from catalog/tools.json. A rename, a move, a route or location change (configure) starts
+// from the registration as read - its pin, its cut-off, the args and env the user added - and changes only what the
+// answer names, so an updated pin is never downgraded. The same answers twice plan nothing.
 //
-// Answers: { picks: { <row id>: { route, scope, name, location, executablePath, token, params, moveFrom } },
+// Answers: { picks: { <row id>: { route, scope, name, location, executablePath, token, params } },
+//            change: { <key>: { row, <the same answers as a pick> } },
 //            remove: [{ kind: 'mcp', name, scope } | { kind: 'plugin', id, scope }], hud: 'recommended' | 'replace' | 'skip' | 'defer',
 //            machine: { docker } (from prereq.js --json) }
 //   name: 'keep' | 'prefixed' | any literal name       location: { side: 'keep' | 'default' | 'project' | 'account' | 'path', path }
+//   picks come from install and only ADD: a pick already there under its name and scope is left unchanged, and a
+//   registration of the row at another scope or name is left as it is, so a project gets its own copy beside one
+//   installed for every project. change comes from configure, keyed `mcp:<name>~<scope>` or `plugin:<id>~<scope>`: it
+//   renames, moves or rewrites that ONE registration, and another of the same row is left. Its `row` is for prereq.js.
 const fs = require('node:fs');
 const path = require('node:path');
 const catalogLib = require('./catalog.js');
 const E = require('./entries.js');
 const asks = require('./asks.js');
 const account = require('./account.js');
-const { installedOf } = require('./inventory.js');
+const { installedOf, keyOf, targetOf } = require('./inventory.js');
 const { blockingStdio } = require('./json-file.js');
 
 const SCOPES = ['local', 'project', 'user'];
@@ -80,9 +85,11 @@ function logicalFromWritten(str, scope, ctx)
     return root;
 }
 
-function wantedRoot(row, pick, cur, name, scope, ctx)
+// `copy`: an install beside a registration of the same row at another scope. A row whose data defaults to the account
+// folder then defaults to the project folder, so this project's copy has its own data, not the account-wide one's.
+function wantedRoot(row, pick, cur, name, scope, ctx, copy = false)
 {
-    const loc = pick.location || { side: cur ? 'keep' : 'default' };
+    const loc = pick.location || { side: cur ? 'keep' : copy && row.locations.defaultSide === 'account' ? 'project' : 'default' };
     let root;
     let existing = false;
     if (loc.side === 'keep' && cur && cur.rootStr) root = logicalFromWritten(cur.rootStr, cur.scope, ctx);
@@ -111,10 +118,10 @@ function wantedRoot(row, pick, cur, name, scope, ctx)
 function planMcp(row, pick, inv, ctx, catalog, out)
 {
     if (!row.os.includes(ctx.platform)) return out.errors.push(`${row.id}: not offered on ${ctx.platform}`);
+    // configure names its target; an install pick only adds, whatever else of this row is installed
     const here = inv.registrations.filter((r) => r.rowId === row.id && !r.alfredRetired);
-    const target = pick.target ? here.find((r) => r.name === pick.target.name && r.scope === pick.target.scope) : here[0];
+    const target = pick.target ? here.find((r) => r.name === pick.target.name && r.scope === pick.target.scope) : null;
     const cur = target ? currentOf(row, target) : null;
-    for (const r of here) if (r !== target) out.notes.push(`${row.id}: also installed as '${r.name}' at ${r.scope} scope - left as it is`);
 
     const routeId = pick.route || (cur ? cur.route : row.recommendedRoute);
     const route = row.routes[routeId];
@@ -127,6 +134,15 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     if (bad) return out.errors.push(`${row.id}: the ${scope} scope is unreadable (${bad.file} is ${bad.state}); nothing is written there`);
 
     const name = resolveName(pick, row, cur, ctx);
+    // an install pick already there under this name and scope - a re-run, or a tool installed since: never changed here
+    const same = !pick.target && here.find((r) => r.name === name && r.scope === scope);
+    for (const r of here)
+        if (r !== target && r !== same && !ctx.changing.has(keyOf('mcp', r.name, r.scope))) out.notes.push(`${row.id}: also installed as '${r.name}' at ${r.scope} scope - left as it is`);
+    if (same)
+    {
+        out.expect.push({ kind: 'mcp', row: row.id, name, scope, route: same.route });
+        return out.unchanged.push(`${row.id}: '${name}' is already installed at ${scope} scope - a change to it is /preferred-tools:configure`);
+    }
     const taken = inv.registrations.filter((r) => r.scope === scope);
     const problem = E.nameProblem(name, { catalog, taken, self: cur ? { name: cur.name, scope: cur.scope } : null });
     if (problem) return out.errors.push(`${row.id}: ${problem}`);
@@ -141,7 +157,7 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     let ensure = null;
     if (row.locations)
     {
-        const w = wantedRoot(row, pick, cur, name, scope, ctx);
+        const w = wantedRoot(row, pick, cur, name, scope, ctx, !cur && here.length > 0);
         if (w.error) return out.errors.push(`${row.id}: ${w.error}`);
         const f = E.formatRoot(w.root, scope, ctx);
         if (f.error) return out.errors.push(`${row.id}: ${f.error}`);
@@ -189,10 +205,14 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     if (row.dangerous && row.dangerous.length) out.dangerous.push({ row: row.id, name, tools: row.dangerous });
     out.expect.push({ kind: 'mcp', row: row.id, name, scope, route: routeId });
 
+    // a launch the cache may not hold yet is fetched once it is written (entries.js fetchStep says why); a change that
+    // keeps the package, such as a location or a name, fetches nothing
+    const fetch = E.fetchStep(name, entry, row.id, cur && cur.entry);
     if (!cur)
     {
         if (ensure) out.steps.push({ op: 'ensure-dir', path: ensure, why: `${row.id}: data folder, with a .gitignore holding * so the project's own .gitignore is never edited` });
         out.steps.push({ op: 'mcp-add', name, scope, entry, row: row.id, why: `${row.id}: add (${routeId})` });
+        if (fetch) out.steps.push(fetch);
         return undefined;
     }
     const moved = cur.name !== name || cur.scope !== scope;
@@ -205,6 +225,7 @@ function planMcp(row, pick, inv, ctx, catalog, out)
         out.steps.push({ op: 'mcp-move', from: { name: cur.name, scope: cur.scope }, to: { name, scope }, entry, old: cur.entry, row: row.id, why: `${row.id}: ${cur.name !== name ? `rename '${cur.name}' to '${name}'` : ''}${cur.name !== name && cur.scope !== scope ? ' and ' : ''}${cur.scope !== scope ? `move from ${cur.scope} to ${scope} scope` : ''} - add first, read back, then remove the old one` });
     else
         out.steps.push({ op: 'mcp-replace', name, scope, entry, old: cur.entry, row: row.id, why: `${row.id}: rewrite '${name}' from the registration as read` });
+    if (fetch) out.steps.push(fetch);
     return undefined;
 }
 
@@ -215,8 +236,13 @@ function planPlugin(row, pick, inv, ctx, catalog, out)
     if (!row.os.includes(ctx.platform)) return out.errors.push(`${row.id}: not offered on ${ctx.platform}`);
     const id = `${row.plugin}@${row.marketplace.name}`;
     const have = inv.plugins.filter((p) => p.rowId === row.id && !p.alfredRetired);
-    const scope = pick.scope || (have[0] ? have[0].scope : row.recommendedScope);
+    const scope = pick.scope || (pick.target ? pick.target.scope : row.recommendedScope);
+    // a configure change at another scope is a move: the copy it was picked at goes once the new one reads back. An
+    // install pick only adds: a copy at another scope stays.
+    const moveFrom = pick.target && scope !== pick.target.scope ? [pick.target.scope] : [];
     if (!SCOPES.includes(scope)) return out.errors.push(`${row.id}: unknown scope '${scope}'`);
+    for (const p of have)
+        if (p.scope !== scope && !moveFrom.includes(p.scope) && !ctx.changing.has(keyOf('plugin', p.id, p.scope))) out.notes.push(`${row.id}: also installed at ${p.scope} scope - left as it is`);
     if (row.alsoManagedByAlfred && inv.alfredCodeEnabled) out.notes.push(`${row.id}: also managed by alfred-code - a Remove holds only once alfred-code's hand-off has shipped`);
     out.expect.push({ kind: 'plugin', row: row.id, id, scope });
 
@@ -227,7 +253,7 @@ function planPlugin(row, pick, inv, ctx, catalog, out)
     {
         if (marketStep && !out.steps.some((s) => s.op === marketStep.op && s.source === marketStep.source)) out.steps.push(marketStep);
         out.steps.push({ op: 'plugin-install', id, scope, row: row.id, why: `${row.id}: install at ${scope} scope` });
-        for (const from of pick.moveFrom || []) if (have.some((p) => p.scope === from))
+        for (const from of moveFrom) if (have.some((p) => p.scope === from))
             out.steps.push({ op: 'plugin-uninstall', id, scope: from, row: row.id, why: `${row.id}: remove the ${from}-scope copy after the new one reads back` });
     }
     else if (!atScope.enabled)
@@ -237,13 +263,27 @@ function planPlugin(row, pick, inv, ctx, catalog, out)
     return undefined;
 }
 
+// ---- one configure change: an installed registration or plugin, by its key ------------------------------------------
+
+function planChange(key, pick, inv, ctx, catalog, out)
+{
+    const t = targetOf(inv, key);
+    if (!t) return out.errors.push(`change: nothing is installed as '${key}' (a key is mcp:<name>~<scope> or plugin:<id>~<scope>)`);
+    if (!t.item.rowId) return out.errors.push(`change: '${t.item.name || t.item.id}' is your own (it matches no catalog row) - left alone`);
+    if (t.item.alfredRetired) return out.errors.push(`change: '${t.item.name || t.item.id}' is alfred-code's (retired) - left alone`);
+    const row = catalog.byId.get(t.item.rowId);
+    const { row: _row, ...answers } = pick;
+    if (t.kind === 'mcp') return planMcp(row, { ...answers, target: { name: t.item.name, scope: t.item.scope } }, inv, ctx, catalog, out);
+    return planPlugin(row, { ...answers, target: { scope: t.item.scope } }, inv, ctx, catalog, out);
+}
+
 // ---- the plan -------------------------------------------------------------------------------------------------------
 
 function plan(inv, answers, opts = {})
 {
     const catalog = opts.catalog || catalogLib.load();
     // answers.machine: what prereq.js found (docker: false picks github's binary fallback); an explicit option wins
-    const ctx = makeCtx(inv, { ...opts, machine: opts.machine || answers.machine });
+    const ctx = { ...makeCtx(inv, { ...opts, machine: opts.machine || answers.machine }), changing: new Set(Object.keys(answers.change || {})) };
     const out = { version: 1, project: inv.project, os: inv.os, steps: [], notes: [], errors: [], unchanged: [], tokens: [], oauth: [], dangerous: [], expect: [], hud: null };
 
     for (const [rowId, pick] of Object.entries(answers.picks || {}))
@@ -253,6 +293,7 @@ function plan(inv, answers, opts = {})
         if (row.kind === 'mcp') planMcp(row, pick || {}, inv, ctx, catalog, out);
         else planPlugin(row, pick || {}, inv, ctx, catalog, out);
     }
+    for (const [key, pick] of Object.entries(answers.change || {})) planChange(key, pick || {}, inv, ctx, catalog, out);
     for (const r of answers.remove || []) planRemove(r, inv, out);
     if (out.hud && answers.hud) out.hud = answers.hud;
     // 'defer': a claude-hud that is not installed yet cannot be checked, so its settings ask follows the install
@@ -313,6 +354,7 @@ function render(p)
         else if (s.op === 'mcp-move') lines.push(`   claude mcp add-json ${shq(s.to.name)} ${shq(JSON.stringify(s.entry))} -s ${s.to.scope}`, '   (read back)', `   claude mcp remove ${shq(s.from.name)} -s ${s.from.scope}`);
         else if (s.op === 'mcp-replace') lines.push(`   claude mcp remove ${shq(s.name)} -s ${s.scope}`, `   claude mcp add-json ${shq(s.name)} ${shq(JSON.stringify(s.entry))} -s ${s.scope}`, `   (the old entry is saved to rollback.json and re-added if the add fails)`);
         else if (s.op === 'ensure-dir') lines.push(`   writes ${s.path}/.gitignore  (contents: *)`);
+        else if (s.op === 'fetch') lines.push(`   ${s.argv.map(shq).join(' ')}`, '   (after the apply, in the background: fills the cache only; if it fails the registration stays and the first start tries again)');
         else if (s.op === 'hud') lines.push(`   node scripts/hud-statusline.js ${s.mode === 'replace' ? '--replace' : s.mode === 'skip' ? '--statusline-only' : ''}`.trimEnd());
     });
     if (p.tokens.length) lines.push('', ...p.tokens.map((t) => `Token: ${t.name} reads \${${t.variable}} - ${t.set ? 'set in this shell' : 'NOT set here'}; set it in your shell or in the account settings.json "env". Nothing is written for it.`));

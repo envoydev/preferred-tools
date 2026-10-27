@@ -41,7 +41,14 @@ test('a fresh install writes through the CLI at each scope, and every add is rea
         const adds = w.calls().filter((a) => a[1] === 'add-json');
         assert.deepStrictEqual(adds.map((a) => [a[2], a[4], a[5]]), [['serena', '-s', 'local'], ['playwright-chrome', '-s', 'user'], ['context7', '-s', 'project']]);
         assert.match(r.text, /Read back:\n\s+ok\s+serena - local scope, local route \(serena\)/);
-        assert.match(r.text, /claude mcp get serena/);
+        // the slow half is handed to fetch.js, never run here: no download and no `claude mcp get` inside the apply
+        assert.ok(!w.calls().some((a) => a[0] === 'mcp' && a[1] === 'get'), 'apply asks the CLI for no status');
+        assert.deepStrictEqual(w.fetches(), [], 'apply runs no runtime');
+        assert.match(r.text, /3\. later  serena: fetch serena-agent@/);
+        assert.match(r.text, /Fetch next, in the background \(a first download can take minutes\): .*fetch\.json/);
+        const job = readJson(r.report.fetchFile);
+        assert.deepStrictEqual(job.fetch.map((s) => s.name), ['serena', 'playwright-chrome']);
+        assert.deepStrictEqual(job.check, ['serena', 'playwright-chrome', 'context7'], 'every server written, the hosted one too');
         assert.match(r.text, /Restart Claude Code/);
         // the data folders got a .gitignore holding *
         assert.strictEqual(fs.readFileSync(path.join(w.project, '.preferred-tools', 'serena', '.gitignore'), 'utf8'), '*\n');
@@ -90,13 +97,30 @@ test('a failure mid-apply stops there, leaves the earlier steps in place and nam
     finally { w.clean(); }
 });
 
+test('the fetch file holds only what was written: a failed add hands nothing of it to fetch.js', () => {
+    const w = world();
+    try
+    {
+        const r = walk(w, { picks: { serena: { scope: 'local' }, 'playwright-chrome': { scope: 'local' } } }, { fail: 'add-json playwright-chrome' });
+        assert.strictEqual(r.report.failed.op, 'mcp-add');
+        const job = readJson(r.report.fetchFile);
+        assert.deepStrictEqual([job.fetch.map((s) => s.name), job.check], [['serena'], ['serena']]);
+        // nothing written at all: no fetch file
+        const none = walk(w, { picks: { 'playwright-firefox': { scope: 'local' } } }, { fail: 'add-json playwright-firefox' });
+        assert.ok(none.report.failed);
+        assert.strictEqual(none.report.fetchFile, null);
+        assert.doesNotMatch(none.text, /Fetch next/);
+    }
+    finally { w.clean(); }
+});
+
 test('a same-name rewrite saves the old JSON first and re-adds it when the add fails', () => {
     const w = world();
     try
     {
         walk(w, { picks: { 'playwright-chrome': { scope: 'user' } } });
         const old = accountDoc(w).mcpServers['playwright-chrome'];
-        const r = walk(w, { picks: { 'playwright-chrome': { scope: 'user', location: { side: 'account' } } } }, { fail: w.home });
+        const r = walk(w, { change: { 'mcp:playwright-chrome~user': { location: { side: 'account' } } } }, { fail: w.home });
         // every add-json carrying the new location (under the account home) fails; the old one is under the project and succeeds
         assert.ok(r.report.failed, r.text);
         assert.strictEqual(r.report.failed.op, 'mcp-replace');
@@ -115,7 +139,7 @@ test('when the re-add also fails the report prints the line that restores it by 
     {
         walk(w, { picks: { appium: { scope: 'user' } } });
         const old = accountDoc(w).mcpServers['appium-mcp'];
-        const r = walk(w, { picks: { appium: { scope: 'user', location: { side: 'account' } } } }, { fail: 'add-json appium-mcp' });
+        const r = walk(w, { change: { 'mcp:appium-mcp~user': { location: { side: 'account' } } } }, { fail: 'add-json appium-mcp' });
         assert.match(r.report.failed.detail, /RESTORE BY HAND: claude mcp add-json appium-mcp '/);
         assert.ok(r.report.failed.detail.includes(JSON.stringify(old).slice(0, 40)));
         assert.strictEqual(accountDoc(w).mcpServers['appium-mcp'], undefined);
@@ -129,13 +153,13 @@ test('a rename adds the new name first, reads it back, then removes the old one;
     {
         walk(w, { picks: { serena: { scope: 'user' } } });
         const calls0 = w.calls().length;
-        const ok = walk(w, { picks: { serena: { scope: 'user', name: 'shop-serena' } } });
+        const ok = walk(w, { change: { 'mcp:serena~user': { name: 'shop-serena' } } });
         assert.strictEqual(ok.report.failed, null, ok.text);
         assert.deepStrictEqual(Object.keys(accountDoc(w).mcpServers), ['shop-serena']);
         const order = w.calls().slice(calls0).filter((a) => a[0] === 'mcp').map((a) => `${a[1]} ${a[2]}`);
         assert.deepStrictEqual(order.slice(0, 2), ['add-json shop-serena', 'remove serena']);
         // a failed add leaves 'shop-serena' alone
-        const bad = walk(w, { picks: { serena: { scope: 'user', name: 'other-serena' } } }, { fail: 'add-json other-serena' });
+        const bad = walk(w, { change: { 'mcp:shop-serena~user': { name: 'other-serena' } } }, { fail: 'add-json other-serena' });
         assert.ok(bad.report.failed);
         assert.deepStrictEqual(Object.keys(accountDoc(w).mcpServers), ['shop-serena']);
         assert.ok(!w.calls().some((a) => a[1] === 'remove' && a[2] === 'shop-serena'));
@@ -148,7 +172,7 @@ test('a scope move re-reads the paths for the new scope and removes the old scop
     try
     {
         walk(w, { picks: { context7: { route: 'remote', scope: 'project' } } });
-        const r = walk(w, { picks: { context7: { route: 'remote', scope: 'user' } } });
+        const r = walk(w, { change: { 'mcp:context7~project': { scope: 'user' } } });
         assert.strictEqual(r.report.failed, null, r.text);
         assert.deepStrictEqual(mcpJson(w).mcpServers, {});
         assert.deepStrictEqual(Object.keys(accountDoc(w).mcpServers), ['context7']);
@@ -242,7 +266,7 @@ test('a plugin move installs at the new scope first and uninstalls the old copy 
     {
         walk(w, { picks: { 'csharp-lsp': { scope: 'user' } } });
         const before = w.calls().length;
-        const r = walk(w, { picks: { 'csharp-lsp': { scope: 'project', moveFrom: ['user'] } } });
+        const r = walk(w, { change: { 'plugin:csharp-lsp@claude-plugins-official~user': { scope: 'project' } } });
         assert.strictEqual(r.report.failed, null, r.text);
         const made = w.writes().slice(-2).map((a) => a.slice(0, 3).join(' '));
         assert.deepStrictEqual(made, ['plugin install csharp-lsp@claude-plugins-official', 'plugin uninstall csharp-lsp@claude-plugins-official']);

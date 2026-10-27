@@ -169,6 +169,19 @@ function installedOf(inv, rowId)
     ];
 }
 
+// One installed thing, by the key configure asks with: `mcp:<name>~<scope>` or `plugin:<plugin id>~<scope>` (the same
+// shape as update.js's offer ids). -> { kind, item } or null when nothing is installed under that key.
+const keyOf = (kind, name, scope) => `${kind}:${name}~${scope}`;
+function targetOf(inv, key)
+{
+    const m = /^(mcp|plugin):(.+)~(local|project|user)$/.exec(key || '');
+    if (!m) return null;
+    const item = m[1] === 'mcp'
+        ? inv.registrations.find((r) => r.name === m[2] && r.scope === m[3])
+        : inv.plugins.find((p) => p.id === m[2] && p.scope === m[3]);
+    return item ? { kind: m[1], item } : null;
+}
+
 function main(argv)
 {
     blockingStdio();
@@ -191,4 +204,4 @@ function main(argv)
 }
 
 if (require.main === module) process.exit(main(process.argv.slice(2)));
-module.exports = { launchTokens, bareName, matchEntry, matchesFingerprint, buildInventory, installedOf, pluginRows };
+module.exports = { launchTokens, bareName, matchEntry, matchesFingerprint, buildInventory, installedOf, keyOf, targetOf, pluginRows };
