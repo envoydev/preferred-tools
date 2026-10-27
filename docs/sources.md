@@ -182,6 +182,10 @@ Docs: https://code.claude.com/docs/en/plugins/cli-reference.md and https://code.
 - `csharp-ls` install: `dotnet tool install --global csharp-ls`, or `brew install csharp-ls` on macOS - CONFIRMED.
   The plugin README says '.NET SDK 6.0 or later'; the brief's '.NET 10 SDK' is alfred-code's own pin and is checked by
   the prerequisite script against `dotnet --version` (see the catalog `prereqs.note`).
+- `csharp-ls` update: `dotnet tool update -g <id>` (alias `--global`) updates a global tool to the latest stable version -
+  CONFIRMED, read 2026-10-27: https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-tool-update . The update skill
+  prints `dotnet tool update --global csharp-ls` and runs nothing; a copy installed with Homebrew is updated with brew,
+  which is not verified here.
 
 ## claude-hud
 

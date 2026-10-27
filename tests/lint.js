@@ -48,7 +48,7 @@ for (const file of textFiles)
 
 // allowed-tools is a pre-approval, so it never covers a call that changes an install: the CLI's own prompt is the guard
 // beside the command's written ask. A script that writes is listed only with a read-only flag.
-const WRITES = /scripts\/(apply|update)\.js|scripts\/fix\.js"\s+(?:\*|--apply)|scripts\/hud-statusline\.js"\s+(?:\*|--replace|--statusline-only|\))|scripts\/hud-statusline\.js"\s*\)/;
+const WRITES = /scripts\/apply\.js|scripts\/(?:fix|update)\.js"\s*(?:\*|--apply|\))|scripts\/hud-statusline\.js"\s*(?:\*|--replace|--statusline-only|\))/;
 for (const file of textFiles)
 {
     const m = /^allowed-tools:\s*(.+)$/m.exec(fs.readFileSync(file, 'utf8'));
