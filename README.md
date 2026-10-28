@@ -66,3 +66,7 @@ npm run refresh-pins -- --write   # move catalog/tools.json; a moved pin is a re
 The plugin icon (`.claude-plugin/icon.png`) is Google's Material Symbols 'home_repair_service' glyph (rounded, filled)
 on a teal ground, used under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0) from
 [google/material-design-icons](https://github.com/google/material-design-icons).
+
+## License
+
+MIT - see [LICENSE](LICENSE).
