@@ -439,6 +439,29 @@ and Linux x64 ran only under emulation.
     `PROCESSOR_ARCHITECTURE`, as `isWindowsArm` means it to, so the x64 choices (`--python 3.13`, not the x64 build) are
     covered only by unit tests on a simulated platform.
 
+0.1.3 - the workspaces branch (inherited servers, key files, the `claude.cmd` quoting, the final review's fixes), on
+the same machines:
+
+- **macOS arm64:** npm test 282, 281 pass, 0 fail, 1 skip (the Windows-only `claude.cmd` round trip); matrix 62, 58
+  pass, 0 fail, 4 NOT RUN (windows-control x2: not win32; sentry and github local: no token); the hook replay 1884 PASS,
+  0 FINDING, 40 NOT RUN; the workspace checks W1-W4 pass.
+- **Linux aarch64:** npm test 282, 280 pass, 0 fail, 2 skip (the `claude.cmd` round trip; PL7); matrix 62, 55 pass, 0
+  fail, 7 NOT RUN (macos-control x2 and windows-control x2: not linux; sentry local: no token; github local: docker not
+  on PATH; csharp-ls not on PATH); W1-W4 pass; the hook replay 1845 PASS, 0 FINDING, 50 NOT RUN.
+- **Linux x64, emulated:** npm test 282, 270 pass, 2 skip, 10 fail - the same ten Rosetta `.cache` cases as above;
+  matrix 62, 55 pass, 0 fail, 7 NOT RUN, as aarch64; the hook replay as aarch64.
+- **Windows 11 on ARM64** (Claude Code 2.1.309, uv 0.13.4): npm test 282, 275 pass, 0 fail, 7 skip (three POSIX-only
+  tests, PL7, the reserved-names test and the two key-engine contract tests: no alfred-code git checkout beside the copy -
+  W4 reads the real engine of each release on Windows instead); matrix 62, 55 pass, 0 fail, 7 NOT RUN (macos-control x2:
+  not darwin; the windows-control start: no interactive desktop; sentry local: no token; github local: docker not on
+  PATH; typescript-language-server and csharp-ls: not on PATH); W1-W4 pass; appium answered its first start in 5.9 s,
+  '√ Connected'. The hook replay at v3.2.1 (solo, root and child; install, configure, fix and update): 573 PASS, 0
+  FINDING, 12 NOT RUN. Its first run, beside the Linux legs, had one `error ETIMEDOUT` (v3.2.1 child, SessionStart
+  `docs-session.js`) in 1884 PASS; alone it passed.
+- Found by the first 0.1.3 runs and fixed before these: the `claude.cmd` quoting (Windows; the Windows section below).
+  The rest were test shapes: a temp-folder check that matched any `tmp` in a path (Linux and Windows), the account file
+  read by the Windows project key, and the probe reading its scratch folder's real path before making it.
+
 ## alfred-code hooks over the commands (measured 2026-10-29, Claude Code 2.1.312, macOS arm64)
 
 `node tests/probes/alfred-hooks.js --scratch <S>` replays every step of the four commands (each
@@ -560,7 +583,11 @@ approval: pending - otherwise, a parent folder's settings included
 (the folder is the repo root, or the session folder in no repo; trust is its account entry's hasTrustDialogAccepted)
 ```
 
-Linux and Windows: NOT RUN yet; the same probe runs there before the release that relies on these facts.
+Linux and Windows (measured 2026-10-29, the same probe): Linux aarch64 (Docker `node:22.23.3`, Claude Code 2.1.312)
+gave all 31 RESULT lines as macOS did. Windows 11 on ARM64 (Claude Code 2.1.309, the native `claude.exe`; M5's link is
+a directory junction) gave 30 of them; in the 31st, M5, the servers start in the junction's own path (`../link`), not
+in `ws/api`, while `-s local` still keys `ws/api`. The 21 lines the inventory encodes (above) are identical on all
+three. Linux x64 and Windows x64: NOT RUN - no x64 machine.
 
 ## alfred-code key files and `claude mcp add-json` (read 2026-10-29)
 
