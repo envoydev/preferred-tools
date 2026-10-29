@@ -116,6 +116,8 @@ for (const c of LOCAL)
         assert.ok(r.report.fetchFile, `apply wrote no fetch file:\n${r.text}`);
         const f = await h.fetch(r.report.fetchFile);
         if (f.warnings.some((w) => NETWORK.test(w))) return t.skip(`NOT RUN: no network (${f.warnings[0].slice(0, 160)})`);
+        // a desktop server in a session with no desktop (a service account, an SSH or prlctl session): fetched, never started
+        if (f.warnings.some((w) => /No active interactive desktop/.test(w))) return t.skip('NOT RUN: no interactive desktop in this session (the fetch ran)');
         assert.deepStrictEqual(f.warnings, [], f.text);
         t.diagnostic(`${c.row}: ${f.text.split('\n').filter((l) => /ok |skip |: Status/.test(l)).map((l) => l.trim()).join('; ')}`);
         assert.match(f.status[0].out, /Connected/, `claude mcp get after fetch.js: ${f.status[0].out}`);
