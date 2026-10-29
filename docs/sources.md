@@ -392,3 +392,53 @@ from the file the CLI wrote.
   typescript-language-server answered; unit tests 218 pass, matrix 50 pass, 0 fail, 7 NOT RUN (macos-control and
   windows-control: not linux; sentry local: no token; github local: no docker in the container; csharp-ls: not
   installed there). Windows: NOT RUN - the user's VM.
+
+## alfred-code hooks over the commands (measured 2026-10-29, Claude Code 2.1.312, macOS arm64)
+
+`node tests/probes/alfred-hooks.js --scratch <S>` replays every step of the four commands (each
+`node "${CLAUDE_PLUGIN_ROOT}/scripts/..."` line parsed from `commands/*.md`, the writes of `<tmp>/picks.json` and
+`<tmp>/answers.json`, every ask) through the hooks the `alfred-code` entry of each release's
+`.claude-plugin/marketplace.json` registers, as one session per command: SessionStart, UserPromptSubmit,
+UserPromptExpansion, PreToolUse / real run / PostToolUse per step, Stop. The payload fields are the ones a logged-out
+`claude -p "/preferred-tools:install"` sent to logging hooks. Each release is installed by the real CLI into its own
+isolated account (every release names its marketplace `envoydev`), its projects set up by its own installer: a plain
+project at every release; a workspace root and its child from v2.11.0, the first release with workspaces (v2.11.0 joins
+the child with `workspace.js register`, its own matrix's way; v3.0.0 on answers `workspace.js role`). The folder is
+seeded with every catalog server for the OS plus registrations holding live-shaped values (a sentry token, a context7
+`X-API-Key` header, an own server's `API_KEY`, `DB_PASS`, `userPass` and a connection-string password, a userinfo URL).
+
+**The scratch folder sits outside the temp folder.** alfred-code's `guard-cross-project-write.js` (v3.2.1) allows the
+temp folder only while the temp folder does not hold the project (`allowRoots` drops a root that contains it), so a
+project built inside it saw every Write of `<tmp>/picks.json` blocked - a block no real project meets. The probe refuses
+a `--scratch` inside the temp folder.
+
+Counts as the run printed them; the probe now also prints the two step-changing contexts below as FINDING.
+
+| Release | Folders | PASS | CONTEXT | FINDING | NOT RUN |
+|---|---|---|---|---|---|
+| v2.9.0 | solo | 152 | 18 | 10 | 4 |
+| v2.11.0 | solo, root, child | 534 | 66 | 30 | 12 |
+| v3.0.0 | solo, root, child | 534 | 66 | 30 | 12 |
+| v3.2.1 | solo, root, child | 534 | 66 | 30 | 12 |
+
+Every release and every folder gave the same FINDINGs, all on the live values (D2):
+
+- `shell-guards.js` PreToolUse, `block (exit 2)` - 'this command runs a script FILE (`node <script>`) and names
+  `<tmp>/inventory.json`, which holds a credential under `registrations.<n>.entry.env.SENTRY_ACCESS_TOKEN` - nothing
+  ran': install `table.js` (step 3), `plan.js --questions` (4, 8), `plan.js` (14); configure `table.js` (3),
+  `plan.js --questions` (4, 9), `plan.js` (14), and `apply.js` naming `<tmp>/plan.json` (16, `steps.0.entry.env`).
+- `guard-stop-contract.js` Stop, `block (exit 2)` after configure - 'A credential appears to have entered this
+  session': configure's `plan.js` printed the `claude mcp add-json sentry-moved '...'` line it would run with the live
+  token in it (`sntryu_`, the guard's `SECRET_SHAPE`). Beside it, at the next ask, `guard-stop-contract.js` PreToolUse
+  added 'A credential-shaped value has already entered this session's tool results ... ask whether to rotate it'.
+- `guard-stop-contract.js` AskUserQuestion PreToolUse (additionalContext, configure steps 6 and 7) - 'This ask named
+  remote or job state that no remote-aware read in this turn backed. Read it fresh (`git fetch` ...) before acting':
+  the route ask '<tool>: remote or local?' with its 'Remote' option. The guard's `REMOTE_STATE_RE` (v3.2.1 :2528)
+  matches a bare `remote`, which in preferred-tools names the hosted route, not git state. Counted as a FINDING: it
+  sends Claude to fetch and re-ask.
+
+The rest of the CONTEXT lines only inform and are recorded as PASS: `docs-session.js`, `preferences-session.js`,
+`forge-session.js`, `memory-session.js` and `history-session.js` at SessionStart, `guard-answer.js`'s answer budget at
+UserPromptSubmit. `fix` and `update` passed whole at every release. NOT RUN in every install and configure session:
+`fetch.js "<file>"` (the replayed apply handed no fetch file on) and `hud-statusline.js --check` (claude-hud not
+picked).
