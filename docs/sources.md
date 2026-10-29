@@ -393,6 +393,52 @@ from the file the CLI wrote.
   windows-control: not linux; sentry local: no token; github local: no docker in the container; csharp-ls: not
   installed there). Windows: NOT RUN - the user's VM.
 
+## Platforms - macOS, Linux and Windows (measured 2026-10-29)
+
+Each OS ran `npm test`, the hook replay (`node tests/probes/alfred-hooks.js`, alfred-code v2.9.0, v2.11.0, v3.0.0 and
+v3.2.1) and `npm run matrix`, each in a throwaway home and account. Every machine here is ARM: Windows on x64 is NOT RUN,
+and Linux x64 ran only under emulation.
+
+- **macOS arm64** (Claude Code 2.1.312, uv 0.13.4): npm test 240, 239 pass, 0 fail, 1 skip (no alfred-code checkout
+  beside the scratch copy); `npm run validate` pass; matrix 57, 53 pass, 0 fail, 4 NOT RUN (windows-control x2: not
+  darwin; sentry and github local: no token). The hook replay is the next section's.
+- **Linux aarch64** (Docker `node:22.23.3`, Claude Code 2.1.312, uv 0.13.4, git 2.39.5): npm test 240, 239 pass, 1 skip
+  (PL7: no claude-hud in the container's plugin cache); matrix 57, 50 pass, 0 fail, 7 NOT RUN (macos-control x2 and
+  windows-control x2: not linux; sentry local: no token; github local: docker not on PATH; csharp-ls not on PATH); the
+  hook replay 1845 PASS, 0 FINDING, 50 NOT RUN (`fetch.js` with no fetch file handed on, `hud-statusline.js --check`
+  with claude-hud not picked).
+- **Linux x64, emulated** (the same versions in a `linux/amd64` image under Docker Desktop's Rosetta): npm test 240,
+  228 pass, 2 skip, 10 fail - all ten `plugin-settings.test.js` argument-error cases, for one reason: Rosetta writes
+  `$HOME/.cache/rosetta` for every x64 process (`HOME=<empty> node -e 0` leaves it), and those cases assert the throwaway
+  home stays empty. Each one's exit 2 and message passed first. Not a result for x64 hardware.
+- **Windows 11 on ARM64** (a Parallels VM driven by `prlctl exec`, which runs as SYSTEM; node 22.23.3, Claude Code
+  2.1.309 as the native `claude.exe`; uv 0.13.4 installed for this run at the user's word, with
+  `https://astral.sh/uv/0.13.4/install.ps1` into the machine PATH):
+  - npm test, the first run of the unit suite on Windows: 25 of 240 failed, all from the test world. A spawn of `claude`
+    looks for a `.exe` or `.com` only, so it ran the real `claude.exe` instead of the `claude.cmd` shim;
+    `tests/helpers.js` now leaves a PATH folder holding a real `claude`, `npm`, `uvx` or `docker` `.exe` or `.com` out of
+    a test's PATH, and `claude-cli.js` takes its `cmd.exe` route to the shim. Eight more tests were shaped for POSIX or
+    x64 and now expect each platform's own result: serena's data folder on Windows is `<home>\.serena`
+    (serena-windows-home); a home path inside the add-json JSON has its backslashes escaped; a bare
+    `spawnSync('claude')` cannot reach a `.cmd`; ARM64 Windows gets the x64 Python build (windows-arm-python); a
+    darwin-shaped seed on Windows also meets serena-windows-home. After: 240, 235 pass, 0 fail, 5 skip (three POSIX-only tests by design, no
+    alfred-code checkout beside the copy, PL7: no claude-hud in the cache). D6's test (local servers found
+    under the key Claude Code writes on Windows) passes.
+  - matrix 58, first run: 45 pass, 4 fail, 9 NOT RUN. The two serena data-folder checks failed on the POSIX shape above
+    (2/2 after the fix); `starts: appium` got no answer after a 346 s fetch on a VM another workload loaded, and that
+    run's cleanup hit EBUSY - alone, appium answered in 12.6 s, '√ Connected'. With uv: serena answered in 3.7 s on the
+    x64 Python build and memory in 3.8 s, each '√ Connected'; windows-control fetched `windows-mcp==0.8.8` and exited
+    'No active interactive desktop for physical input control', since SYSTEM has no desktop (`fetch.js` warned and kept
+    the registration, as it should). NOT RUN: macos-control x2 (not darwin), the windows-control start (no interactive
+    desktop), sentry local (no token), github local (docker not on PATH), typescript-language-server and csharp-ls (not
+    on PATH).
+  - the hook replay: 1881 PASS, 40 NOT RUN (the two kinds above) and 5 FINDING, all `error ETIMEDOUT` at v2.11.0 solo
+    (forge-session.js x2, docs-session.js x2, guard-answer.js) under that load; the v2.11.0 rerun (solo, root and child;
+    install, configure and fix) gave 486 PASS, 0 FINDING, 12 NOT RUN.
+  - Windows x64: NOT RUN - no x64 machine. An x64 node under the VM's emulation still reads ARM64 from
+    `PROCESSOR_ARCHITECTURE`, as `isWindowsArm` means it to, so the x64 choices (`--python 3.13`, not the x64 build) are
+    covered only by unit tests on a simulated platform.
+
 ## alfred-code hooks over the commands (measured 2026-10-29, Claude Code 2.1.312, macOS arm64)
 
 `node tests/probes/alfred-hooks.js --scratch <S>` replays every step of the four commands (each
