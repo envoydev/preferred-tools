@@ -98,10 +98,12 @@ class Harness
 
     inventory(project) { return inventory.buildInventory({ project, env: this.env }); }
 
-    // inventory -> plan -> apply, in-process, against the real CLI in the throwaway world
+    // inventory -> plan -> apply, in-process, against the real CLI in the throwaway world. The plan reads the inventory
+    // as inventory.js writes it - every credential value kept - so the apply puts each one back from the registration it
+    // reads, as the commands do.
     run(project, answers, { planOpts = {}, tmp } = {})
     {
-        const inv = this.inventory(project);
+        const inv = inventory.keptOf(this.inventory(project));
         const p = plan(inv, answers, { home: this.home, env: this.env, ...planOpts });
         const lines = [];
         const report = p.errors.length

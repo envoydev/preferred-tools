@@ -124,6 +124,8 @@ test('W2 - alfred-code solo, root and child: the W1 steps, a pasted key moved by
         const moved = h.run(d, { change: { 'mcp:sentry~local': { name: 'sentry-moved' } } });
         noErrors(moved);
         ok(moved);
+        // the plan was made from the inventory as inventory.js writes it, so the apply restored the value it reads back
+        assert.ok(![pasted, own].some((v) => JSON.stringify(moved.plan).includes(v) || moved.rendered.includes(v) || moved.text.includes(v)), 'no live value in the plan, as plan.js writes and prints it, or in the report');
         assert.strictEqual(localOf(h, d)['sentry-moved'].env[S], pasted, 'the pasted value reads back at the target');
         assert.ok(!localOf(h, d).sentry);
         assert.ok(h.inventory(d).registrations.some((r) => r.name === 'my-own' && r.own), 'listed as your own');
