@@ -6,6 +6,17 @@ const path = require('node:path');
 
 const FAKE = path.join(__dirname, 'fake-claude.js');
 const RUNTIME = path.join(__dirname, 'fake-runtime.js');
+const SHIMMED = ['claude', 'npm', 'uvx', 'docker'];
+
+// The PATH a world puts after its `bin`. On Windows a spawn looks for `<name>.exe` or `.com` on PATH and never for the
+// `.cmd` shims in `bin`, so a real claude.exe (the native installer's) would answer instead of the fake: the folders
+// holding a real one are left out, the spawn fails, and claude-cli.js takes its cmd.exe route to the shim.
+function basePath(platform = process.platform, envPath = process.env.PATH || '')
+{
+    const parts = envPath.split(path.delimiter);
+    if (platform !== 'win32') return parts.join(path.delimiter);
+    return parts.filter((d) => !SHIMMED.some((n) => ['.exe', '.com'].some((x) => fs.existsSync(path.join(d, `${n}${x}`))))).join(path.delimiter);
+}
 
 // A throwaway world: { dir, project, account, home, bin, log, env, calls() }. `claude` on its PATH is the fake.
 function world(prefix = 'pt-')
@@ -27,10 +38,13 @@ function world(prefix = 'pt-')
     for (const rt of ['npm', 'uvx', 'docker']) shim(rt, RUNTIME, rt);
     const log = path.join(dir, 'calls.jsonl');
     const fetchLog = path.join(dir, 'fetches.jsonl');
-    const env = {
-        ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: account,
-        PATH: `${bin}${path.delimiter}${process.env.PATH}`, FAKE_CLAUDE_LOG: log, FAKE_CLAUDE_STATE: path.join(dir, 'state'), FAKE_RUNTIME_LOG: fetchLog,
-    };
+    const env = { ...process.env };
+    // Windows names it `Path`: one key only, so no child sees the PATH without `bin`
+    for (const k of Object.keys(env)) if (k !== 'PATH' && k.toUpperCase() === 'PATH') delete env[k];
+    Object.assign(env, {
+        HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: account,
+        PATH: `${bin}${path.delimiter}${basePath()}`, FAKE_CLAUDE_LOG: log, FAKE_CLAUDE_STATE: path.join(dir, 'state'), FAKE_RUNTIME_LOG: fetchLog,
+    });
     delete env.FAKE_CLAUDE_FAIL;
     delete env.FAKE_RUNTIME_FAIL;
     const calls = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l).argv) : []);

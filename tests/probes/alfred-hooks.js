@@ -354,6 +354,7 @@ function main(argv)
     // alfred-code's cross-project write guard allows the temp folder only when it does not hold the project, so a
     // project built inside the temp folder would see every Write to <tmp> blocked - a block no real project meets.
     const tmpReal = fs.realpathSync(os.tmpdir());
+    if (val('--scratch')) fs.mkdirSync(val('--scratch'), { recursive: true });
     const scratch = fs.realpathSync(val('--scratch') || os.tmpdir());
     if (scratch === tmpReal || scratch.startsWith(tmpReal + path.sep))
     {

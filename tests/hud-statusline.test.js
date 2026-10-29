@@ -243,7 +243,7 @@ test('the account dir: --config-dir, else CLAUDE_CONFIG_DIR, else ~/.claude - th
 {
     const home = path.join(TMP, 'home');
     assert.strictEqual(resolveConfigDir({ flag: '/x/acct', env: { CLAUDE_CONFIG_DIR: '/y', HOME: home } }), path.resolve('/x/acct'));
-    assert.strictEqual(resolveConfigDir({ env: { CLAUDE_CONFIG_DIR: '/y', HOME: home } }), '/y');
+    assert.strictEqual(resolveConfigDir({ env: { CLAUDE_CONFIG_DIR: '/y', HOME: home } }), path.resolve('/y'));
     assert.strictEqual(resolveConfigDir({ env: { HOME: home } }), path.join(home, '.claude'));
 });
 
