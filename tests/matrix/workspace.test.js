@@ -44,10 +44,11 @@ const noErrors = (r) => assert.deepStrictEqual(r.plan.errors, [], r.rendered);
 // a value with the characters cmd.exe quoting must survive
 const keyValue = (tag) => `${tag}%a^b"c-${crypto.randomBytes(8).toString('hex')}`;
 const putKeys = (file, pairs) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, Object.entries(pairs).map(([k, v]) => `${k}=${v}\n`).join('')); };
-// no file under a world's temp folders holds any of the values
+// no file under a world's temp folders holds any of the values - a `tmp` folder inside the world, never the system's
+// temp folder above it (/tmp on Linux, the run's TEMP on Windows)
 function noValueInTmp(h, values)
 {
-    for (const f of h.files().filter((x) => x.includes(`${path.sep}tmp${path.sep}`)))
+    for (const f of h.files().filter((x) => path.relative(h.root, x).split(path.sep).includes('tmp')))
         for (const v of values) assert.ok(!fs.readFileSync(f, 'utf8').includes(v), `a key value in ${path.relative(h.root, f)}`);
 }
 
@@ -150,7 +151,8 @@ test('W3 - a subfolder session: the project file and the local key land where Cl
     ok(r);
     assert.deepStrictEqual(Object.keys(readJson(path.join(src, '.mcp.json')).mcpServers), ['context7'], "project scope: the subfolder's own .mcp.json");
     assert.deepStrictEqual(Object.keys(readJson(path.join(api, '.mcp.json')).mcpServers), ['atlassian'], "the root's file is not touched");
-    assert.ok(accountDoc(h).projects[account.projectKey(api)].mcpServers.serena, 'local scope: keyed on the repo root');
+    // the account file's own key for the repo root - on Windows the cwd as typed with `/` (D6)
+    assert.ok(account.projectEntry(accountDoc(h).projects, api).mcpServers.serena, 'local scope: keyed on the repo root');
     assert.deepStrictEqual(r.report.readback.map((x) => x.found), [true, true], 'both read back from the subfolder');
 });
 

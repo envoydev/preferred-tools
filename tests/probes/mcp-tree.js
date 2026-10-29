@@ -314,8 +314,10 @@ function main(argv)
     const val = (flag) => { const i = argv.indexOf(flag); return i >= 0 ? argv[i + 1] : undefined; };
     const only = val('--only') ? val('--only').split(',').map((s) => s.trim().toUpperCase()) : ALL;
     const claudeDir = val('--claude') ? path.dirname(path.resolve(val('--claude'))) : null;
-    const base = fs.realpathSync.native(val('--scratch') ? path.resolve(val('--scratch')) : os.tmpdir());
-    fs.mkdirSync(base, { recursive: true });
+    // a --scratch folder that is not there yet is made before its real path is read
+    const wanted = val('--scratch') ? path.resolve(val('--scratch')) : os.tmpdir();
+    fs.mkdirSync(wanted, { recursive: true });
+    const base = fs.realpathSync.native(wanted);
     const S = fs.mkdtempSync(path.join(base, 'preferred-tools-mcp-tree-'));
     const clean = (text) => String(text).split(S).join('<S>').split(S.replace(/\\/g, '/')).join('<S>');
     const print = (line) => console.log(clean(line));
