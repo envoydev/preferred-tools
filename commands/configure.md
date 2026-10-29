@@ -18,6 +18,8 @@ updated pin is never downgraded. Adding a tool that is not installed is `/prefer
 - **The `claude` CLI is the only writer** of `.mcp.json` and the account file; `apply.js` calls it. Never edit those
   files by hand.
 - **A registration that matches no catalog row is the user's.** It is listed, never offered, never touched.
+- **A server inherited from a parent folder's `.mcp.json` is that folder's.** It is noted under the table, never
+  offered; to change it, run `/preferred-tools:configure` in that folder.
 - **No secret goes into a file.** A token route registers `${VAR}`; tell the user which variable to set, never ask for its
   value, never write it.
 - **Every ask is data or one of the blocks below.** Ask exactly the options printed, in the order printed; do not add or

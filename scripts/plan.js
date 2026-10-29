@@ -24,7 +24,7 @@ const catalogLib = require('./catalog.js');
 const E = require('./entries.js');
 const asks = require('./asks.js');
 const account = require('./account.js');
-const { installedOf, keyOf, targetOf } = require('./inventory.js');
+const { installedOf, keyOf, targetOf, fromHere } = require('./inventory.js');
 const { blockingStdio } = require('./json-file.js');
 
 const SCOPES = ['local', 'project', 'user'];
@@ -144,7 +144,11 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     // an install pick already there under this name and scope - a re-run, or a tool installed since: never changed here
     const same = !pick.target && here.find((r) => r.name === name && r.scope === scope);
     for (const r of here)
-        if (r !== target && r !== same && !ctx.changing.has(keyOf('mcp', r.name, r.scope))) out.notes.push(`${row.id}: also installed as '${r.name}' at ${r.scope} scope - left as it is`);
+    {
+        if (r === target || r === same || ctx.changing.has(keyOf('mcp', r.name, r.scope))) continue;
+        if (r.scope !== 'inherited') out.notes.push(`${row.id}: also installed as '${r.name}' at ${r.scope} scope - left as it is`);
+        else if (r.name !== name) out.notes.push(`${row.id}: also inherited as '${r.name}' from ${fromHere(inv, r.from)} (${r.approval}) - change it there`);
+    }
     if (same)
     {
         out.expect.push({ kind: 'mcp', row: row.id, name, scope, route: same.route });
@@ -154,7 +158,17 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     const problem = E.nameProblem(name, { catalog, taken, self: cur ? { name: cur.name, scope: cur.scope } : null });
     if (problem) return out.errors.push(`${row.id}: ${problem}`);
     for (const r of inv.registrations)
-        if (r.name === name && r.scope !== scope) out.notes.push(`${row.id}: '${name}' also exists at ${r.scope} scope; Claude Code reads local, then project, then user, so the nearer one wins`);
+    {
+        if (r.name !== name || r.scope === scope) continue;
+        // a parent's copy ranks as project scope, below this project's local and project ones, above user (M2, M3)
+        if (r.scope === 'inherited')
+        {
+            if (r.shadowed && r.shadowed.scope === 'inherited') continue;
+            const from = fromHere(inv, r.from);
+            out.notes.push(`${row.id}: '${name}' is also inherited from ${from} (${r.approval}); Claude Code uses ${scope === 'user' ? `the inherited one from ${from} in this project - a .mcp.json server ranks above user scope` : `this project's ${scope} copy`}`);
+        }
+        else out.notes.push(`${row.id}: '${name}' also exists at ${r.scope} scope; Claude Code reads local, then project, then user, so the nearer one wins`);
+    }
 
     // the answers that edit an entry
     const params = { host: row.params ? (pick.params && pick.params.host) || (cur && cur.host) || row.params[0].default : undefined, ...(pick.params || {}) };

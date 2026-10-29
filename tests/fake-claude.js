@@ -11,6 +11,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const argv = process.argv.slice(2);
 const cwd = process.cwd();
@@ -26,8 +27,10 @@ const accountFile = () => (process.env.CLAUDE_CONFIG_DIR ? path.join(process.env
 const readJson = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) { if (e.code === 'ENOENT') return d; throw e; } };
 const writeJson = (f, v) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, `${JSON.stringify(v, null, 2)}\n`); };
 const real = (p) => { try { return fs.realpathSync.native(p); } catch { return path.resolve(p); } };
-// the account `projects` key: the real path, or on Windows the cwd as typed, in `/` (docs/sources.md)
-const accountKey = (p) => (process.platform === 'win32' ? path.resolve(p).replace(/\\/g, '/') : real(p));
+// the account `projects` key: the real path, or on Windows the cwd as typed, in `/` - of the git root when the cwd is
+// inside a repository (docs/sources.md, M4)
+const gitRoot = (p) => { const r = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd: p, encoding: 'utf8' }); return r.status === 0 && r.stdout.trim() ? path.resolve(r.stdout.trim()) : p; };
+const accountKey = (p) => { const at = fs.existsSync(path.join(p, '.git')) ? p : gitRoot(p); return process.platform === 'win32' ? path.resolve(at).replace(/\\/g, '/') : real(at); };
 
 const failList = (process.env.FAKE_CLAUDE_FAIL || '').split(',').filter(Boolean);
 if (failList.some((f) => argv.join(' ').includes(f))) die(`fake claude: injected failure for ${argv.join(' ')}`);

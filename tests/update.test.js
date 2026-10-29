@@ -189,6 +189,19 @@ test('a remote route, a docker tag and the user\'s own server are skipped or lef
     finally { w.clean(); }
 });
 
+test('an inherited server is skipped with its folder named', async () =>
+{
+    const w = world();
+    try
+    {
+        writeJson(path.join(w.dir, '.mcp.json'), { mcpServers: { context7: { command: 'npx', args: ['-y', '@upstash/context7-mcp@2.0.0'] } } });
+        const c = await run(w, ['--check', '--no-refresh'], { registry: fakeRegistry({ 'npm:@upstash/context7-mcp': [{ version: '9.0.0', time: ago(90) }] }) });
+        assert.match(c.text, /context7 \(inherited\): inherited from \.\. - update it there/);
+        assert.doesNotMatch(c.text, /2\.0\.0 -> 9\.0\.0/, 'never offered, however far behind');
+    }
+    finally { w.clean(); }
+});
+
 test('apply names an id nothing is behind under, and exits 1', async () =>
 {
     const w = world();

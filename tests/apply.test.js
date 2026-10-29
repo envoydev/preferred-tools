@@ -27,6 +27,28 @@ function walk(w, answers, { fail, planOpts = {} } = {})
 const accountDoc = (w) => readJson(account.accountFile(w.env));
 const mcpJson = (w) => readJson(path.join(w.project, '.mcp.json'));
 
+test('an apply from a subfolder reads back where the CLI wrote (M4)', () => {
+    const w = world();
+    try
+    {
+        spawnSync('git', ['init', '-q', w.project]);
+        const sub = path.join(w.project, 'packages', 'app');
+        fs.mkdirSync(sub, { recursive: true });
+        const env = { ...w.env };
+        const inv = inventory.buildInventory({ project: sub, env });
+        const p = plan(inv, { picks: { serena: { scope: 'local' }, context7: { route: 'remote', scope: 'project' } } }, { home: w.home, env });
+        assert.deepStrictEqual(p.errors, []);
+        const lines = [];
+        const report = apply(p, { env, tmp: path.join(w.dir, 'tmp'), log: (...a) => lines.push(a.join(' ')) });
+        assert.strictEqual(report.failed, null, lines.join('\n'));
+        assert.deepStrictEqual(Object.keys(accountDoc(w).projects[accountKey(w.project)].mcpServers), ['serena'], 'local scope: keyed on the repo root');
+        assert.deepStrictEqual(Object.keys(readJson(path.join(sub, '.mcp.json')).mcpServers), ['context7'], "project scope: the subfolder's own .mcp.json");
+        assert.ok(!fs.existsSync(path.join(w.project, '.mcp.json')));
+        assert.deepStrictEqual(report.readback.map((r) => r.found), [true, true], 'both read back');
+    }
+    finally { w.clean(); }
+});
+
 test('a fresh install writes through the CLI at each scope, and every add is read back from the file', () => {
     const w = world();
     try

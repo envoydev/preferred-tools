@@ -13,9 +13,9 @@ const { launchTokens, bareName } = require('../inventory.js');
 const fixOf = (ctx, id) => ctx.catalog.fixes.find((f) => f.id === id);
 const rowOf = (ctx, id) => ctx.catalog.byId.get(id);
 
-// The registrations a fix row covers: matched to one of its tools by what they launch, not the user's own, and not an
-// alfred-code leftover.
-const registrationsOf = (ctx, fixId) => ctx.inv.registrations.filter((r) => !r.own && !r.alfredRetired && fixOf(ctx, fixId).tool.includes(r.rowId));
+// The registrations a fix row covers: matched to one of its tools by what they launch, not the user's own, not an
+// alfred-code leftover, and not inherited from a parent folder (fixed by running fix there).
+const registrationsOf = (ctx, fixId) => ctx.inv.registrations.filter((r) => !r.own && !r.alfredRetired && r.scope !== 'inherited' && fixOf(ctx, fixId).tool.includes(r.rowId));
 const routeOf = (ctx, reg) => rowOf(ctx, reg.rowId).routes[reg.route];
 
 // The executable a registration launches, looking through a `cmd /c` wrapper.

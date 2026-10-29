@@ -289,3 +289,168 @@ test('the CLI form writes every credential value as the marker; nothing it print
     }
     finally { w.clean(); }
 });
+
+// ---- inherited servers: the .mcp.json files above the project, as Claude Code reads them (docs/sources.md, '.mcp.json
+// in parent folders', M1-M7). A tree shaped like tests/probes/mcp-tree.js's under the world's folder: a file above
+// HOME, in HOME, in ws and in ws/api; ws/api and ws/web are git repos, ws one only when `gitWs`.
+
+const SRV = (tag) => ({ command: 'node', args: ['server.js', tag] });
+function tree(w, { gitWs = true } = {})
+{
+    const t = { above: w.dir, home: w.home, ws: path.join(w.home, 'ws') };
+    Object.assign(t, { api: path.join(t.ws, 'api'), src: path.join(t.ws, 'api', 'src'), web: path.join(t.ws, 'web'), notes: path.join(t.ws, 'notes') });
+    for (const d of [t.src, t.web, t.notes]) fs.mkdirSync(d, { recursive: true });
+    writeJson(path.join(t.above, '.mcp.json'), { mcpServers: { 'p-above': SRV('p-above') } });
+    writeJson(path.join(t.home, '.mcp.json'), { mcpServers: { 'p-home': SRV('p-home') } });
+    writeJson(path.join(t.ws, '.mcp.json'), { mcpServers: { 'p-ws': SRV('p-ws'), dup: SRV('ws') } });
+    writeJson(path.join(t.api, '.mcp.json'), { mcpServers: { 'p-api': SRV('p-api'), dup: SRV('api') } });
+    for (const repo of gitWs ? [t.ws, t.api, t.web] : [t.api, t.web]) spawnSync('git', ['init', '-q', repo]);
+    return t;
+}
+// what came from inside the world (a real file above the temp folder is the machine's, not the test's)
+const inherited = (w, i) => i.registrations.filter((r) => r.scope === 'inherited' && !path.relative(w.dir, r.from).startsWith('..'));
+const fromOf = (w, i) => inherited(w, i).map((r) => `${r.name}@${path.relative(w.dir, r.from).split(path.sep).join('/') || '.'}`);
+const atProject = (w, project) => inv.buildInventory({ project, env: w.env, catalog });
+
+test('the walk reads the parent .mcp.json files Claude Code reads (M1)', () => {
+    for (const gitWs of [true, false])
+    {
+        const w = world();
+        try
+        {
+            const t = tree(w, { gitWs });
+            const dirs = (p) => inv.ancestorMcpFiles(p).map((f) => f.dir).filter((d) => !path.relative(w.dir, d).startsWith('..'));
+            assert.deepStrictEqual(dirs(t.api), [t.ws, t.home, t.above], `ws/api, nearest first, HOME and above included (git ws: ${gitWs})`);
+            assert.deepStrictEqual(dirs(t.src), [t.api, t.ws, t.home, t.above], `ws/api/src (git ws: ${gitWs})`);
+            assert.deepStrictEqual(fromOf(w, atProject(w, t.src)), ['p-api@home/ws/api', 'dup@home/ws/api', 'p-ws@home/ws', 'dup@home/ws', 'p-home@home', 'p-above@.']);
+            assert.deepStrictEqual(fromOf(w, atProject(w, t.api)), ['p-ws@home/ws', 'dup@home/ws', 'p-home@home', 'p-above@.'], "the project's own file is not inherited");
+            const r = inherited(w, atProject(w, t.src)).find((x) => x.name === 'p-api');
+            assert.deepStrictEqual([r.file, r.own, r.rowId], [path.join(t.api, '.mcp.json'), true, null]);
+        }
+        finally { w.clean(); }
+    }
+});
+
+test('the same name nearer wins, the farther one is shadowed (M2)', () => {
+    const w = world();
+    try
+    {
+        const t = tree(w);
+        const dups = (p) => inherited(w, atProject(w, p)).filter((r) => r.name === 'dup').map((r) => [path.relative(w.home, r.from).split(path.sep).join('/'), r.shadowed]);
+        assert.deepStrictEqual(dups(t.src), [['ws/api', null], ['ws', { scope: 'inherited', from: t.api }]]);
+        assert.deepStrictEqual(dups(t.api), [['ws', { scope: 'project', from: t.api }]], "the project's own .mcp.json is nearer still");
+    }
+    finally { w.clean(); }
+});
+
+test('a local copy shadows the inherited one (M3)', () => {
+    const w = world();
+    try
+    {
+        const t = tree(w);
+        writeJson(account.accountFile(w.env), { projects: { [accountKey(t.web)]: { mcpServers: { dup: SRV('local') } } } });
+        const i = atProject(w, t.web);
+        assert.deepStrictEqual(inherited(w, i).find((r) => r.name === 'dup').shadowed, { scope: 'local', from: null });
+        assert.ok(i.registrations.some((r) => r.name === 'dup' && r.scope === 'local'));
+    }
+    finally { w.clean(); }
+});
+
+test('a malformed parent .mcp.json is named, not fatal', () => {
+    const w = world();
+    try
+    {
+        const t = tree(w);
+        fs.writeFileSync(path.join(t.ws, '.mcp.json'), '{ not json');
+        const i = atProject(w, t.api);
+        assert.deepStrictEqual(fromOf(w, i), ['p-home@home', 'p-above@.'], 'only that file is lost, as M6 measured');
+        const u = i.unreadable.filter((x) => x.scope === 'inherited');
+        assert.deepStrictEqual(u.map((x) => [x.file, x.state]), [[path.join(t.ws, '.mcp.json'), 'malformed']]);
+        assert.ok(i.sources.inherited.some((s) => s.file === path.join(t.ws, '.mcp.json') && s.state === 'malformed'));
+        assert.deepStrictEqual(i.registrations.filter((r) => r.scope === 'project').map((r) => r.name), ['p-api', 'dup'], 'its own file still read');
+    }
+    finally { w.clean(); }
+});
+
+test('the walk follows a symlinked cwd the way Claude Code does (M5)', () => {
+    const w = world();
+    try
+    {
+        const t = tree(w);
+        const link = path.join(w.dir, 'link');
+        fs.symlinkSync(t.api, link, process.platform === 'win32' ? 'junction' : 'dir');
+        const i = atProject(w, link);
+        assert.deepStrictEqual(fromOf(w, i), ['p-ws@home/ws', 'dup@home/ws', 'p-home@home', 'p-above@.'], "the real folder's parents, not the link's");
+        assert.deepStrictEqual(inherited(w, i).map((r) => inv.fromHere(i, r.from)), ['..', '..', '../..', '../../..'], 'named from the real folder, as Claude Code walks it');
+    }
+    finally { w.clean(); }
+});
+
+test('the approval of an inherited server follows the measured rules (M7)', () => {
+    const w = world();
+    try
+    {
+        const t = tree(w);
+        const acct = account.accountFile(w.env);
+        const childLocal = path.join(t.web, '.claude', 'settings.local.json');
+        const parentLocal = path.join(t.ws, '.claude', 'settings.local.json');
+        const user = path.join(w.account, 'settings.json');
+        const approval = ({ trusted = false, entry = {}, files = {} } = {}) =>
+        {
+            for (const f of [childLocal, parentLocal, user]) fs.rmSync(f, { force: true });
+            for (const [f, doc] of Object.entries(files)) writeJson(f, doc);
+            writeJson(acct, { projects: { [accountKey(t.web)]: { hasTrustDialogAccepted: trusted, ...entry } } });
+            return inherited(w, atProject(w, t.web)).find((r) => r.name === 'p-ws').approval;
+        };
+        const on = { enabledMcpjsonServers: ['p-ws'] };
+        const off = { disabledMcpjsonServers: ['p-ws'] };
+        assert.strictEqual(approval({ trusted: true }), 'pending', 'nothing set');
+        assert.strictEqual(approval({ trusted: true, entry: on }), 'approved', "the account file's entry, trusted");
+        assert.strictEqual(approval({ trusted: false, entry: on }), 'pending', "the account file's entry, untrusted");
+        assert.strictEqual(approval({ trusted: true, files: { [childLocal]: on } }), 'approved', "the folder's settings.local.json, trusted");
+        assert.strictEqual(approval({ trusted: false, files: { [childLocal]: on } }), 'pending', "the folder's settings.local.json, untrusted");
+        assert.strictEqual(approval({ trusted: true, files: { [parentLocal]: on } }), 'pending', "a parent folder's settings approve nothing");
+        assert.strictEqual(approval({ trusted: false, entry: off }), 'rejected', "disabled in the account file's entry");
+        assert.strictEqual(approval({ trusted: true, files: { [childLocal]: off } }), 'rejected', "disabled in the folder's settings.local.json");
+        assert.strictEqual(approval({ trusted: false, files: { [user]: { enableAllProjectMcpServers: true } } }), 'approved', 'enableAllProjectMcpServers in the user settings, untrusted');
+    }
+    finally { w.clean(); }
+});
+
+test('no parent file, no inherited entry', () => {
+    const w = world();
+    try
+    {
+        writeJson(path.join(w.project, '.mcp.json'), { mcpServers: { mine: SRV('mine') } });
+        const i = build(w);
+        assert.deepStrictEqual(inherited(w, i), []);
+        assert.deepStrictEqual(i.sources.inherited.filter((s) => !path.relative(w.dir, s.file).startsWith('..')), []);
+    }
+    finally { w.clean(); }
+});
+
+test('a subfolder session reads the project file and key M4 measured', () => {
+    for (const gitWs of [true, false])
+    {
+        const w = world();
+        try
+        {
+            const t = tree(w, { gitWs });
+            writeJson(path.join(t.src, '.mcp.json'), { mcpServers: { here: SRV('here') } });
+            // inside a repo the local key is the repo root; in no repo, the folder itself
+            const notesKey = gitWs ? t.ws : t.notes;
+            writeJson(account.accountFile(w.env), { projects: {
+                [accountKey(t.api)]: { mcpServers: { 'at-root': SRV('root') } },
+                [accountKey(t.src)]: { mcpServers: { 'at-cwd': SRV('cwd') } },
+                [accountKey(notesKey)]: { mcpServers: { 'notes-key': SRV('notes') } },
+            } });
+            const src = atProject(w, t.src);
+            assert.deepStrictEqual(src.registrations.filter((r) => r.scope === 'project').map((r) => r.name), ['here'], "ws/api/src's own .mcp.json is its project file");
+            assert.deepStrictEqual(src.registrations.filter((r) => r.scope === 'local').map((r) => r.name), ['at-root'], 'ws/api/src: the local servers keyed on the repo root');
+            assert.deepStrictEqual(atProject(w, t.notes).registrations.filter((r) => r.scope === 'local').map((r) => r.name), ['notes-key'], `ws/notes (git ws: ${gitWs})`);
+            assert.strictEqual(account.readRegistration('at-root', 'local', t.src, w.env).args[1], 'root');
+            assert.strictEqual(account.readRegistration('here', 'project', t.src, w.env).args[1], 'here');
+        }
+        finally { w.clean(); }
+    }
+});

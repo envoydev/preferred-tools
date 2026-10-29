@@ -6,6 +6,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const { parseJson } = require('./json-file.js');
 
 const homeDir = (env = process.env) => env.HOME || env.USERPROFILE || os.homedir();
@@ -16,6 +17,17 @@ function projectKey(dir)
 {
     try { return fs.realpathSync.native(dir); }
     catch { return path.resolve(dir); }
+}
+
+// The folder Claude Code keys a session's trust and local servers on: the git repository root when the folder is inside
+// one, else the folder itself (https://code.claude.com/docs/en/permissions, 'Project allow rules and workspace trust';
+// the local key MEASURED, M4). `git rev-parse` runs only when the folder holds no `.git` of its own; no git, or not a
+// repository: the folder.
+function localRoot(project)
+{
+    if (fs.existsSync(path.join(project, '.git')) || !fs.existsSync(project)) return project;
+    const r = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd: project, encoding: 'utf8', windowsHide: true });
+    return r.status === 0 && r.stdout.trim() ? path.resolve(r.stdout.trim()) : project;
 }
 
 // `~` and `~/x` to the home directory (the script expands it; the server never sees a `~`).
@@ -57,15 +69,17 @@ function projectEntry(projects, project, platform = process.platform)
     return key === undefined ? undefined : projects[key];
 }
 
-// The account file, narrowed to what the inventory needs: user servers, and this project's local servers.
+// The account file, narrowed to what the inventory needs: user servers, and this project's local servers - keyed on the
+// git root when the project is a folder inside a repository, as the CLI keys them from a subfolder (MEASURED,
+// docs/sources.md '.mcp.json in parent folders', M4).
 function readAccount(env, project, platform = process.platform)
 {
     const file = accountFile(env);
     const s = readState(file);
     const doc = s.doc || {};
     const projects = doc.projects && typeof doc.projects === 'object' ? doc.projects : {};
-    const mine = projectEntry(projects, project, platform) || {};
-    return { ...s, user: doc.mcpServers || {}, local: mine.mcpServers || {} };
+    const mine = projectEntry(projects, localRoot(project), platform) || {};
+    return { ...s, user: doc.mcpServers || {}, local: mine.mcpServers || {}, projects };
 }
 
 // What the CLI wrote for one server at one scope, read from the file it wrote it to.
@@ -80,4 +94,4 @@ function readRegistration(name, scope, project, env)
     return (scope === 'user' ? a.user : a.local)[name];
 }
 
-module.exports = { homeDir, configDir, accountFile, projectKey, expandHome, readState, readAccount, readRegistration };
+module.exports = { homeDir, configDir, accountFile, projectKey, localRoot, expandHome, readState, projectEntry, readAccount, readRegistration };

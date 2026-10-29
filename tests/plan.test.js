@@ -769,3 +769,47 @@ test('configure plan.js from a kept inventory prints no live value', () => {
     }
     finally { fs.rmSync(d, { recursive: true, force: true }); }
 });
+
+// ---- inherited servers (a parent folder's .mcp.json): offered as this project's own copy, never changed from here ----
+
+const C7_HOSTED = { type: 'http', url: 'https://mcp.context7.com/mcp' };
+const inheritedC7 = (approval = 'pending', extra = {}) => reg('context7', 'inherited', C7_HOSTED, 'context7', 'remote', { from: '/work', file: '/work/.mcp.json', approval, shadowed: null, ...extra });
+
+test('install offers an inherited row as this project\'s own copy, labelled with its folder and approval', () => {
+    const i = inv(MAC, { registrations: [inheritedC7()] });
+    const o = asks.pickQuestions(i, catalog).flat().flatMap((q) => q.options).find((x) => x.label.startsWith('context7'));
+    assert.strictEqual(o.label, 'context7 (inherited from .. as context7, pending)');
+    assert.match(o.description, /^adds this project's own copy; the one inherited from \.\. stays in its folder - /);
+    const both = inv(MAC, { registrations: [inheritedC7('approved'), reg('c7', 'user', C7_HOSTED, 'context7', 'remote')] });
+    assert.strictEqual(asks.pickQuestions(both, catalog).flat().flatMap((q) => q.options).find((x) => x.label.startsWith('context7')).label,
+        'context7 (inherited from .. as context7, approved; installed for every project as c7)');
+    const two = inv(MAC, { registrations: [inheritedC7(), inheritedC7('pending', { from: '/', file: '/.mcp.json' })] });
+    assert.match(asks.pickQuestions(two, catalog).flat().flatMap((q) => q.options).find((x) => x.label.startsWith('context7')).description,
+        /^adds this project's own copy; the one inherited from \.\. and the one inherited from \.\.\/\.\. stay in their folders - /);
+    const q = asks.all(i, { rows: ['context7'], routes: { context7: 'remote' } }, catalog);
+    assert.match(q.tools.context7.questions.find((x) => x.id === 'name-context7').options[0].description, /used instead of the one inherited from \.\./);
+    const p = plan(i, pickOne('context7', { route: 'remote', scope: 'project' }), opts('/Users/me'));
+    assert.deepStrictEqual(p.errors, []);
+    assert.strictEqual(addStep(p).scope, 'project');
+});
+
+test('configure never lists an inherited server', () => {
+    const own = reg('c7', 'local', { command: 'npx', args: ['-y', '@upstash/context7-mcp@4.4.4'] }, 'context7', 'local');
+    const i = inv(MAC, { registrations: [inheritedC7(), own] });
+    const ch = asks.changeQuestions(i, catalog);
+    assert.deepStrictEqual(Object.values(ch.keys), ['mcp:c7~local']);
+    assert.deepStrictEqual(asks.removeQuestions(i, catalog).flat().flatMap((q) => q.options.map((o) => o.label)).filter((l) => /inherited/.test(l)), []);
+    assert.strictEqual(inventoryLib.targetOf(i, 'mcp:context7~inherited'), null);
+    assert.ok(plan(i, { change: { 'mcp:context7~inherited': { row: 'context7', name: 'x' } } }, opts('/h')).errors.length > 0, 'a change keyed on it is refused');
+});
+
+test('a local copy over an inherited one notes which Claude Code uses', () => {
+    const i = inv(MAC, { registrations: [inheritedC7('approved')] });
+    const local = plan(i, pickOne('context7', { route: 'remote', scope: 'local' }), opts('/Users/me'));
+    assert.deepStrictEqual(local.errors, []);
+    assert.ok(local.notes.some((n) => /context7: 'context7' is also inherited from \.\. \(approved\); Claude Code uses this project's local copy/.test(n)), local.notes.join('\n'));
+    const user = plan(i, pickOne('context7', { route: 'remote', scope: 'user' }), opts('/Users/me'));
+    assert.ok(user.notes.some((n) => /Claude Code uses the inherited one from \.\. in this project/.test(n)), user.notes.join('\n'));
+    const renamed = plan(i, pickOne('context7', { route: 'remote', scope: 'project', name: 'docs' }), opts('/Users/me'));
+    assert.ok(renamed.notes.some((n) => /context7: also inherited as 'context7' from \.\. \(approved\) - change it there/.test(n)), renamed.notes.join('\n'));
+});

@@ -4,8 +4,9 @@
 //
 //   node inventory.js --project <dir> --json <out>
 //
-// Reads the project's .mcp.json, the account file (user servers, and this project's local servers) and
-// `claude plugin list --json`, and matches each registration to a catalog row by what it LAUNCHES - the package in its
+// Reads the project's .mcp.json, the account file (user servers, and this project's local servers), the .mcp.json of
+// every folder above (inherited: listed, never changed from here) and `claude plugin list --json`, and matches each
+// registration to a catalog row by what it LAUNCHES - the package in its
 // args, or the URL host and path - never by its name. So a tool under a custom name is still recognised, and a
 // registration that matches no row is the user's: it is listed as `own` and nothing in this plugin touches it.
 const fs = require('node:fs');
@@ -89,6 +90,48 @@ const settingsOf = (scope, project, env) => path.join(
     scope === 'user' ? account.configDir(env) : path.join(project, '.claude'),
     scope === 'local' ? 'settings.local.json' : 'settings.json');
 
+// ---- inherited: the .mcp.json files of the folders above ------------------------------------------------------------
+// Claude Code reads the .mcp.json of the folder it starts in and of every folder above it up to the filesystem root,
+// from the real path: the nearest file wins a name, a local registration beats them all, and a malformed file loses
+// only its own servers (MEASURED, docs/sources.md '.mcp.json in parent folders', M1-M6).
+
+const realOf = (p) => { try { return fs.realpathSync.native(p); } catch { return path.resolve(p); } };
+
+// -> [{ dir, file }], nearest first, the project's own file left out
+function ancestorMcpFiles(project)
+{
+    const out = [];
+    for (let dir = realOf(project), up = path.dirname(dir); up !== dir; dir = up, up = path.dirname(dir))
+    {
+        const file = path.join(up, '.mcp.json');
+        if (fs.existsSync(file)) out.push({ dir: up, file });
+    }
+    return out;
+}
+
+// What decides a parent's server here: the user settings, this folder's settings files, and its account entry and
+// trust, all keyed on the trust root (the git root, else the folder).
+function approvalContext(proj, env, acct, platform)
+{
+    const root = account.localRoot(proj);
+    const entry = account.projectEntry(acct.projects || {}, root, platform) || {};
+    const files = [path.join(root, '.claude', 'settings.local.json'), path.join(proj, '.claude', 'settings.local.json'), path.join(proj, '.claude', 'settings.json')];
+    return { user: readState(settingsOf('user', proj, env)).doc, folder: [...new Set(files)].map((f) => readState(f).doc), entry, trusted: entry.hasTrustDialogAccepted === true };
+}
+
+const names = (doc, key, name) => Boolean(doc) && Array.isArray(doc[key]) && doc[key].includes(name);
+const approves = (doc, name) => Boolean(doc) && (doc.enableAllProjectMcpServers === true || names(doc, 'enabledMcpjsonServers', name));
+
+// approved | pending | rejected, as `claude mcp list` says it here (MEASURED, M7; the MCP docs' 'Project server approvals
+// and workspace trust'): a disabledMcpjsonServers entry anywhere rejects; the user settings approve in any folder; this
+// folder's settings and account entry approve only once it is trusted; a parent folder's settings never count.
+function approvalOf(name, a)
+{
+    if ([a.user, ...a.folder, a.entry].some((d) => names(d, 'disabledMcpjsonServers', name))) return 'rejected';
+    if (approves(a.user, name) || (a.trusted && [...a.folder, a.entry].some((d) => approves(d, name)))) return 'approved';
+    return 'pending';
+}
+
 function pluginRows(listJson, project, env, catalog, alfredCheck)
 {
     const rows = [];
@@ -145,6 +188,28 @@ function buildInventory({ project, env = process.env, platform = process.platfor
         }
     }
 
+    // the parents' servers, nearest first; `shadowed` names what Claude Code uses in their place
+    const approval = approvalContext(proj, env, acct, platform);
+    const wins = new Map(Object.keys(acct.local || {}).map((n) => [n, { scope: 'local', from: null }]));
+    for (const n of Object.keys((mcp.doc && mcp.doc.mcpServers) || {})) if (!wins.has(n)) wins.set(n, { scope: 'project', from: proj });
+    out.sources.inherited = [];
+    for (const { dir, file } of ancestorMcpFiles(proj))
+    {
+        const s = readState(file);
+        out.sources.inherited.push({ file, state: s.state });
+        if (s.state === 'malformed' || s.state === 'unreadable') { out.unreadable.push({ scope: 'inherited', file, state: s.state, error: s.error }); continue; }
+        const servers = s.doc && s.doc.mcpServers && typeof s.doc.mcpServers === 'object' ? s.doc.mcpServers : {};
+        for (const [name, entry] of Object.entries(servers))
+        {
+            const m = matchEntry(entry, catalog);
+            out.registrations.push({
+                name, scope: 'inherited', from: dir, file, entry, rowId: m ? m.rowId : null, route: m ? m.route : null, own: !m,
+                alfredRetired: catalog.reserved.has(name), shadowed: wins.get(name) || null, approval: approvalOf(name, approval),
+            });
+        }
+        for (const n of Object.keys(servers)) if (!wins.has(n)) wins.set(n, { scope: 'inherited', from: dir });
+    }
+
     const version = cli.available({ env, cwd: proj });
     out.cli = version ? { ok: true, version } : { ok: false, version: null };
     if (!version) return out;
@@ -169,11 +234,16 @@ function keptOf(inv, catalog = catalogLib.load())
     return { ...inv, registrations: inv.registrations.map((r) => ({ ...r, entry: kept.keep(r.entry, r.rowId ? catalog.byId.get(r.rowId) : null) })) };
 }
 
+// A parent folder as the project names it: '..', '../..', from the real folder, as the walk found it.
+const fromHere = (inv, dir) => path.relative(realOf(inv.project), dir).split(path.sep).join('/') || '.';
+
 // What a row looks like installed: every registration or plugin that belongs to it, with its scope.
 function installedOf(inv, rowId)
 {
     return [
-        ...inv.registrations.filter((r) => r.rowId === rowId && !r.alfredRetired).map((r) => ({ kind: 'mcp', name: r.name, scope: r.scope, route: r.route, entry: r.entry })),
+        ...inv.registrations.filter((r) => r.rowId === rowId && !r.alfredRetired).map((r) => (r.scope === 'inherited'
+            ? { kind: 'mcp', name: r.name, scope: r.scope, from: r.from, route: r.route, entry: r.entry, approval: r.approval }
+            : { kind: 'mcp', name: r.name, scope: r.scope, route: r.route, entry: r.entry })),
         ...inv.plugins.filter((p) => p.rowId === rowId && !p.alfredRetired).map((p) => ({ kind: 'plugin', name: p.id, scope: p.scope, version: p.version, enabled: p.enabled })),
     ];
 }
@@ -206,11 +276,12 @@ function main(argv)
     const text = JSON.stringify(keptOf(inv), null, 2);
     if (outFile) fs.writeFileSync(outFile, text);
     else console.log(text);
-    for (const u of inv.unreadable) console.error(`preferred-tools: ${u.file} is ${u.state}${u.error ? ` (${u.error})` : ''} - the ${u.scope} scope is treated as unreadable and nothing will be written there.`);
+    for (const u of inv.unreadable)
+        console.error(`preferred-tools: ${u.file} is ${u.state}${u.error ? ` (${u.error})` : ''} - ${u.scope === 'inherited' ? "Claude Code skips that parent folder's servers too; nothing here writes to it." : `the ${u.scope} scope is treated as unreadable and nothing will be written there.`}`);
     const own = inv.registrations.filter((r) => r.own).length;
     console.log(`inventory: ${inv.registrations.length} registrations (${inv.registrations.length - own} match a catalog row, ${own} are your own), ${inv.plugins.length} plugins${outFile ? ` -> ${outFile}` : ''}`);
     return 0;
 }
 
 if (require.main === module) process.exit(main(process.argv.slice(2)));
-module.exports = { launchTokens, bareName, matchEntry, matchesFingerprint, buildInventory, keptOf, installedOf, keyOf, targetOf, pluginRows };
+module.exports = { launchTokens, bareName, matchEntry, matchesFingerprint, ancestorMcpFiles, buildInventory, keptOf, fromHere, installedOf, keyOf, targetOf, pluginRows };

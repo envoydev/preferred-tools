@@ -4,7 +4,7 @@
 // 'Other' is added by AskUserQuestion itself and never listed here.
 const path = require('node:path');
 const E = require('./entries.js');
-const { installedOf, keyOf, targetOf } = require('./inventory.js');
+const { installedOf, keyOf, targetOf, fromHere } = require('./inventory.js');
 const { pinOf } = require('./table.js');
 
 const REC = ' (Recommended)';
@@ -70,8 +70,8 @@ function packed(items, { id, question, none })
 }
 
 // The install pick: the rows for this OS not installed in this project. A row installed only for every project (user
-// scope, below its recommended scope) is offered too: picking it adds this project's own copy beside that one. A row
-// installed here, or at its recommended scope, is configure's.
+// scope, below its recommended scope) or inherited from a parent folder's .mcp.json is offered too: picking it adds this
+// project's own copy beside that one. A row installed here, or at its recommended scope, is configure's.
 const offeredForInstall = (row, inv) =>
 {
     const at = installedOf(inv, row.id).map((h) => h.scope);
@@ -85,19 +85,25 @@ function pickQuestions(inv, catalog)
         for (const row of catalog.tools.filter((r) => r.group === g.id && r.os.includes(inv.os) && offeredForInstall(r, inv)))
         {
             const have = installedOf(inv, row.id);
-            const tag = !have.length ? '' : row.kind === 'mcp' ? ` (installed for every project as ${have.map((h) => h.name).join(', ')})` : ' (installed for every project)';
-            items.push({ group: g, label: `${row.label}${tag}`, description: have.length ? `adds this project's own copy; the one for every project stays - ${row.summary}` : row.summary });
+            const inherited = have.filter((h) => h.scope === 'inherited');
+            const user = have.filter((h) => h.scope === 'user');
+            const tags = inherited.map((h) => `inherited from ${fromHere(inv, h.from)} as ${h.name}, ${h.approval}`);
+            if (user.length) tags.push(row.kind === 'mcp' ? `installed for every project as ${user.map((h) => h.name).join(', ')}` : 'installed for every project');
+            const stays = [...(user.length ? ['the one for every project'] : []), ...inherited.map((h) => `the one inherited from ${fromHere(inv, h.from)}`)];
+            const keep = `${stays.join(' and ')} ${stays.length > 1 ? 'stay' : 'stays'}${user.length ? '' : stays.length > 1 ? ' in their folders' : ' in its folder'}`;
+            items.push({ group: g, label: `${row.label}${tags.length ? ` (${tags.join('; ')})` : ''}`, description: have.length ? `adds this project's own copy; ${keep} - ${row.summary}` : row.summary });
         }
     return packed(items, { id: 'pick', question: 'which tools do you want to install?', none: 'install nothing' });
 }
 
-// Every catalog registration and plugin installed here, one item each (a row at two scopes is two), grouped.
+// Every catalog registration and plugin installed here, one item each (a row at two scopes is two), grouped. An
+// inherited server is not here: it is changed by running the command in its own folder.
 function installedItems(inv, catalog, describe)
 {
     const items = [];
     for (const g of catalog.groups)
         for (const row of catalog.tools.filter((r) => r.group === g.id))
-            for (const h of installedOf(inv, row.id))
+            for (const h of installedOf(inv, row.id).filter((x) => x.scope !== 'inherited'))
                 items.push({ group: g, row, h, label: h.kind === 'mcp' ? `${h.name} (${row.label}, ${h.scope})` : `${row.label} (${h.scope})`, description: describe(row, h) });
     return items;
 }
@@ -157,10 +163,10 @@ function toolQuestions(row, inv, { route, current = null, ctx = null, catalog, c
 
     const orig = row.name;
     const proj = ctx ? `${path.basename(ctx.project).replace(/[^A-Za-z0-9_-]+/g, '-')}-${orig}`.slice(0, 64) : `project-${orig}`;
-    const shadows = copyOf.some((c) => c.name === orig);
+    const shadows = copyOf.find((c) => c.name === orig);
     const nameOpts = current && current.name !== orig
         ? [{ label: `Keep \`${current.name}\`${REC}`, description: 'the name it has now' }, { label: `Use \`${orig}\``, description: 'the original name' }]
-        : [{ label: `Keep \`${orig}\`${REC}`, description: shadows ? 'the original name; in this project it is used instead of the copy for every project' : 'the original name' }, { label: `Use \`${proj}\``, description: 'a per-project name' }];
+        : [{ label: `Keep \`${orig}\`${REC}`, description: shadows ? `the original name; in this project it is used instead of ${shadows.scope === 'inherited' ? `the one inherited from ${fromHere(inv, shadows.from)}` : 'the copy for every project'}` : 'the original name' }, { label: `Use \`${proj}\``, description: 'a per-project name' }];
     qs.push({ id: `name-${row.id}`, header: 'Name', multiSelect: false, question: `${row.label}: registration name?`, options: nameOpts });
 
     if (row.locations && ctx)

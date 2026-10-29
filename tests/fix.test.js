@@ -306,6 +306,14 @@ test('typescript-lsp-ts7: a global TypeScript 7 under the installed plugin is fo
 
 // ---- narrowing and rendering ----------------------------------------------------------------------------------------
 
+test('fix detectors never return an inherited registration', () =>
+{
+    const entry = fresh('serena');
+    const stripped = { ...entry, env: { SERENA_HOME: entry.env.SERENA_HOME } };
+    assert.deepStrictEqual(ids(detect(ctxFor({ registrations: [reg('serena', stripped)] })).found), ['serena-telemetry'], 'the same entry at local scope has a finding');
+    assert.deepStrictEqual(detect(ctxFor({ registrations: [reg('serena', stripped, { scope: 'inherited' })] })).found, []);
+});
+
 test('--only narrows by fix id, tool or registration name; the table names the held row; nothing found says so', () =>
 {
     const entry = fresh('serena');

@@ -116,6 +116,7 @@ async function mcpOffers(ctx, out)
     for (const r of ctx.inv.registrations)
     {
         if (r.own || r.alfredRetired) continue;
+        if (r.scope === 'inherited') { out.skipped.push(`${r.name} (inherited): inherited from ${inventory.fromHere(ctx.inv, r.from)} - update it there`); continue; }
         const row = ctx.catalog.byId.get(r.rowId);
         const def = row.routes[r.route];
         const at = `${r.name} (${r.scope})`;

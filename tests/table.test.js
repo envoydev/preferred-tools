@@ -103,3 +103,15 @@ test('main reads the inventory file; a missing file exits 2', () =>
     }
     finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('inherited servers are noted by folder and approval, never in a scope column; an unreadable parent file is named', () =>
+{
+    const c7 = { ...reg('context7', 'context7', 'inherited', { type: 'http', url: 'https://mcp.context7.com/mcp' }, 'remote'), from: '/', approval: 'pending', shadowed: null };
+    const mine = { name: 'tool', scope: 'inherited', entry: { command: 'node', args: ['x'] }, rowId: null, route: null, own: true, alfredRetired: false, from: '/', approval: 'approved', shadowed: { scope: 'local', from: null } };
+    const out = table.render(inv({ registrations: [c7, mine], unreadable: [{ scope: 'inherited', file: '/x/.mcp.json', state: 'malformed', error: 'bad' }] }), catalog);
+    const c7Line = out.split('\n').find((l) => / context7 /.test(l));
+    assert.doesNotMatch(c7Line, /context7 \[remote/, 'no scope cell holds it');
+    assert.match(out, /Inherited from a parent folder's \.mcp\.json - change them there: context7 \(from \.\., pending\), tool \(from \.\., approved, not used here: the local one wins\)\./);
+    assert.doesNotMatch(out, /Your own, not in this catalog/, 'an inherited own server is in the inherited note only');
+    assert.match(out, /\/x\/\.mcp\.json is malformed \(bad\): Claude Code skips that parent folder's servers; nothing here writes to it\./);
+});

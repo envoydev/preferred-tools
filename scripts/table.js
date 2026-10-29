@@ -9,6 +9,7 @@
 // row is the user's: it is named under the table and nothing in this plugin touches it.
 const fs = require('node:fs');
 const catalogLib = require('./catalog.js');
+const { fromHere } = require('./inventory.js');
 const { pinnedVersion, launchArgs } = require('./fixes/common.js');
 const { blockingStdio } = require('./json-file.js');
 
@@ -36,7 +37,7 @@ function render(inv, catalog = catalogLib.load())
     {
         const cells = Object.fromEntries(SCOPES.map((s) => [s, []]));
         if (row.kind === 'mcp')
-            for (const r of inv.registrations.filter((x) => x.rowId === row.id && !x.alfredRetired))
+            for (const r of inv.registrations.filter((x) => x.rowId === row.id && !x.alfredRetired && x.scope !== 'inherited'))
             {
                 const pin = pinOf(row, r.route, r.entry);
                 cells[r.scope].push(`${r.name} [${r.route}${pin ? `, ${pin}` : ''}]`);
@@ -53,14 +54,18 @@ function render(inv, catalog = catalogLib.load())
     const out = [line(head), line(widths.map((w) => '-'.repeat(w))), ...body.map(line)];
 
     const notes = [];
-    const own = inv.registrations.filter((r) => r.own && !r.alfredRetired);
+    const own = inv.registrations.filter((r) => r.own && !r.alfredRetired && r.scope !== 'inherited');
     if (own.length) notes.push(`Your own, not in this catalog and never touched: ${own.map((r) => `${r.name} (${r.scope})`).join(', ')}.`);
-    const retired = inv.registrations.filter((r) => r.alfredRetired);
+    const inherited = inv.registrations.filter((r) => r.scope === 'inherited');
+    const usedBy = (s) => (s.scope === 'inherited' ? `the one in ${fromHere(inv, s.from)} wins` : `the ${s.scope} one wins`);
+    if (inherited.length) notes.push(`Inherited from a parent folder's .mcp.json - change them there: ${inherited.map((r) => `${r.name} (from ${fromHere(inv, r.from)}, ${r.approval}${r.shadowed ? `, not used here: ${usedBy(r.shadowed)}` : ''})`).join(', ')}.`);
+    const retired = inv.registrations.filter((r) => r.alfredRetired && r.scope !== 'inherited');
     if (retired.length) notes.push(`Under names alfred-code once registered, left alone: ${retired.map((r) => `${r.name} (${r.scope})`).join(', ')}.`);
     const other = catalog.tools.filter((r) => !r.os.includes(inv.os));
     if (other.length) notes.push(`Not offered on this OS (${inv.os}): ${other.map((r) => r.label).join(', ')}.`);
     for (const p of inv.plugins.filter((x) => x.errors && x.errors.length && x.rowId)) notes.push(`${p.id} (${p.scope}) reports: ${p.errors.join('; ')}`);
-    for (const u of inv.unreadable || []) notes.push(`${u.file} is ${u.state}${u.error ? ` (${u.error})` : ''}: the ${u.scope} scope is unreadable here, and nothing will be written to it.`);
+    for (const u of inv.unreadable || [])
+        notes.push(`${u.file} is ${u.state}${u.error ? ` (${u.error})` : ''}: ${u.scope === 'inherited' ? "Claude Code skips that parent folder's servers; nothing here writes to it." : `the ${u.scope} scope is unreadable here, and nothing will be written to it.`}`);
     return [...out, ...(notes.length ? ['', ...notes] : [])].join('\n');
 }
 
