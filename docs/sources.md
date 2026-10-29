@@ -592,3 +592,20 @@ D7 (key files, `scripts/keys.js`) rests on these:
   such as `API_KEY`, expands as written.' `CONTEXT7_API_KEY` and `GITHUB_PERSONAL_ACCESS_TOKEN` are outside the named
   set, so a project-scope `${VAR}` header still expands; a remote route written at local or user scope holds the key
   itself and expands nothing.
+
+## Windows - the claude.cmd route (measured 2026-10-29, Windows 11 on ARM64, node 22.23.3)
+
+npm installs Claude Code on Windows as `claude.cmd`, which Node spawns only through `cmd.exe`; `claude-cli.js` falls
+back to that route on ENOENT or EINVAL (the native `claude.exe` is spawned directly and never takes it). The line is read
+twice by cmd.exe - once for `cmd /d /s /c`, again for the shim's `%*` - and then by the C runtime of the node the shim
+starts. Through an npm-shaped shim (`@"<node>" "%~dp0\echo.js" %*`) the old quoting (`"..."`, a quote as `""`) cut a JSON
+value holding `\"` short, let cmd.exe expand `%PATH%`, and broke a path ending in a backslash; Task 6's key test with a
+key holding `%^"` failed 'Invalid JSON' on it.
+
+`cmdArg` now quotes each argument by the argv rules - a run of backslashes before a quote doubled plus one, before the
+closing quote doubled, others kept
+(https://learn.microsoft.com/en-us/cpp/c-language/parsing-c-command-line-arguments, read 2026-10-29), written as a loop,
+linear in the argument - then caret-escapes each cmd.exe metacharacter ``()[]%!^"`<>&|;, *?`` twice, cross-spawn's
+`escapeArgument` for a shim (https://github.com/moxystudio/node-cross-spawn/blob/master/lib/util/escape.js, read
+2026-10-29). All 14 measured values - a JSON quote, `%VAR%`, carets, `&` and `|`, runs of backslashes before a quote and
+the end, an empty argument, Unicode - came back unchanged (`tests/claude-cli.test.js`).
