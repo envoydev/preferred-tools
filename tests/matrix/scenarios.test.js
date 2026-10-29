@@ -286,6 +286,40 @@ for (const f of FIXES)
     });
 }
 
+test('fix windows-mcp-one-per-desktop: two real registrations on a simulated win32 are reported, blocked, and left as they are', T, () =>
+{
+    const p = h.project('fix-windows-mcp-one');
+    const only = 'windows-mcp-one-per-desktop';
+    add(p, 'wd-a', freshEntry('windows-control', 'win32', 'x64', 'local'), 'local');
+    add(p, 'wd-b', freshEntry('windows-control', 'win32'), 'user');
+    try
+    {
+        // x64 as the FIXES cases: an ARM64 host would fire windows-arm-python on the same entries
+        const mk = () => fix.makeCtx({ inv: h.inventory(p), catalog, env: h.env, platform: 'win32', arch: 'x64',
+            machine: { exists: () => false, realpath: () => null, which: () => null, run: () => ({ status: 1, stdout: '', stderr: '' }), nodeVersion: process.versions.node } });
+        const detected = fix.detectAll(mk(), { only });
+        assert.strictEqual(detected.found.length, 1, JSON.stringify(detected.found));
+        // the shared account may hold other cases' windows-mcp entries: these two are named, the count is not asserted
+        assert.match(detected.found[0].found, /wd-a \(local\)/);
+        assert.match(detected.found[0].found, /wd-b \(user\)/);
+        assert.match(detected.found[0].blocked, /^keep one per Windows desktop - /);
+        assert.deepStrictEqual(fix.questions(detected), { choose: null, pick: [] });
+        const before = accountText();
+        const lines = [];
+        const res = fix.applyFixes(mk(), [only], { only, tmp: path.join(root, 'tmp'), log: (...a) => lines.push(a.join(' ')) });
+        assert.ok(!res.failed, lines.join('\n'));
+        assert.match(lines.join('\n'), /skipped windows-mcp-one-per-desktop/);
+        assert.strictEqual(res.steps, 0);
+        assert.strictEqual(accountText(), before, 'the account file is byte-identical');
+        assert.deepStrictEqual(account.readAccount(h.env, p).local['wd-a'], reg(p, 'wd-a', 'local').entry);
+    }
+    finally
+    {
+        h.claude(p, ['mcp', 'remove', 'wd-a', '-s', 'local']);
+        h.claude(p, ['mcp', 'remove', 'wd-b', '-s', 'user']);
+    }
+});
+
 // ---- claude-hud (needs the network for the plugin install) ---------------------------------------------------------
 
 test('claude-hud: recommended keeps the user\'s value; \'Apply and replace differing\' overwrites it and writes a settings.json backup', T, (t) =>

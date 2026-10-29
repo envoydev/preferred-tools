@@ -663,3 +663,12 @@ alfred-code launches windows-mcp from plugins: its v2.9.0 `.claude-plugin/market
 (mcpServers `windows-control`) and `windows-desktop` ('RETIRED in 2.4.0 - renamed windows-control', mcpServers
 `windows-desktop`), both through `desktop-launch.js` with `windows-mcp==0.8.8`; 3.4.0's lists neither.
 `inventory.windowsMcpServers` counts them, enabled, beside the registrations that start here (M2, M3, M7 above).
+
+Measured 2026-10-29 on this change (0.1.4): macOS arm64, Claude Code 2.1.312 - `npm test` 288: 287 pass, 1 skip;
+`npm run matrix` 63: 59 pass, 0 fail, 4 NOT RUN (the win32-only windows-control cases; github and sentry local need
+their keys). Windows 11 on ARM64, Claude Code 2.1.309, node 22.23.3, uv 0.13.4 - `npm test` 288: 281 pass, 0 fail, 7
+skip; `npm run matrix` 63: 56 pass, 0 fail, 7 NOT RUN (the macos-control cases; windows-control's start, no interactive
+desktop; sentry's key; github's docker; the two LSP binaries). The matrix case 'fix windows-mcp-one-per-desktop' passes
+on both: two real registrations are reported once, blocked, asked nothing, and left byte-identical. Linux NOT RUN (the
+user's ruling: the row is win32-only and its logic is OS-independent). The live two-server state is NOT RUN: no
+interactive desktop on the test VM.
