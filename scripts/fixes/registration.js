@@ -6,6 +6,7 @@
 // A finding the machine cannot act on carries `blocked` (the reason), is shown, and is never applied.
 const path = require('node:path');
 const E = require('../entries.js');
+const keys = require('../keys.js');
 const C = require('./common.js');
 
 const eachReg = (ctx, id, fn) => C.registrationsOf(ctx, id).map((reg) => fn(reg, C.routeOf(ctx, reg))).filter(Boolean);
@@ -186,8 +187,36 @@ function serenaTelemetryFix(entry)
     return { ...entry, env: { ...(entry.env || {}), SERENA_USAGE_REPORTING: 'false' } };
 }
 
+// ---- token-sync -----------------------------------------------------------------------------------------------------
+// A local or user registration of a token route whose key field holds ${VAR} while its key file has the key, or a value
+// that differs from it (keys.js, D7). The finding names the key and the file, never a value; the fix reads the key again.
+// A user registration that already holds a key changes only from the home file: a differing project chain is reported.
+const keyOpts = (ctx, reg) => ({ project: ctx.inv.project, env: ctx.env, alfredEnabled: ctx.inv.alfredCodeEnabled, name: reg.name, before: reg.scope === 'user' ? reg.entry : null });
+
+function tokenSyncDetect(ctx)
+{
+    return eachReg(ctx, 'token-sync', (reg, route) =>
+    {
+        const fields = keys.tokenFields(reg.entry, route);
+        if (reg.scope === 'project' || !fields.length) return null;
+        const v = route.tokenVar;
+        const k = keys.keysFor(ctx.inv.project, reg.scope, [v], keyOpts(ctx, reg));
+        if (k.error) return C.finding('token-sync', reg, `${v} cannot be read`, { route: reg.route, blocked: k.error });
+        if (k.missing.length) return null;
+        const r = keys.keysInto(reg.entry, C.rowOf(ctx, reg.rowId), reg.route, reg.scope, keyOpts(ctx, reg));
+        if (JSON.stringify(r.entry) === JSON.stringify(reg.entry)) return r.note && /kept, not written/.test(r.note) ? C.finding('token-sync', reg, `${v} in ${k.from[v]} differs from the registration's`, { route: reg.route, blocked: r.note }) : null;
+        const holds = fields.every((f) => keys.PLACEHOLDER.test(String(f.at.reduce((o, x) => o[x], reg.entry))));
+        return C.finding('token-sync', reg, holds ? `the registration holds \${${v}} while ${k.from[v]} has the key` : `${v} in ${k.from[v]} differs from the registration's`, { route: reg.route });
+    });
+}
+
+function tokenSyncFix(entry, f, ctx)
+{
+    return keys.keysInto(entry, C.rowOf(ctx, f.row), f.route, f.scope, keyOpts(ctx, { name: f.name, scope: f.scope, entry })).entry;
+}
+
 module.exports = {
     serenaWindowsHomeDetect, serenaWindowsHomeFix, uvxPythonDetect, uvxPythonFix, windowsArmPythonDetect, windowsArmPythonFix,
     windowsNpxCmdDetect, windowsNpxCmdFix, playwrightWebmcpDetect, playwrightWebmcpFix, appiumSdkEnvDetect, appiumSdkEnvFix,
-    serenaTelemetryDetect, serenaTelemetryFix, androidSdk, javaHome,
+    serenaTelemetryDetect, serenaTelemetryFix, tokenSyncDetect, tokenSyncFix, androidSdk, javaHome,
 };

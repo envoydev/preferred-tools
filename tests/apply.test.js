@@ -503,3 +503,120 @@ test('tmpdir sweeps only its own folders older than 24 hours', () => {
     }
     finally { w.clean(); }
 });
+
+// ---- key files (D7): the key is written in by the target scope, from the file the scope reads ----------------------
+
+const S = 'SENTRY_ACCESS_TOKEN';
+const G = 'GITHUB_PERSONAL_ACCESS_TOKEN';
+const keyFile = (dir, pairs) => { fs.mkdirSync(path.join(dir, '.preferred-tools'), { recursive: true }); fs.writeFileSync(path.join(dir, '.preferred-tools', '.secrets'), Object.entries(pairs).map(([k, v]) => `${k}=${v}\n`).join('')); };
+// alfred-code enabled for every project, as `claude plugin list` and the user settings report it
+function alfredOn(w)
+{
+    writeJson(path.join(w.dir, 'state', 'plugins.json'), { marketplaces: [], installed: [{ id: 'alfred-code@envoydev', version: '3.2.1', scope: 'user', enabled: true, installPath: '/c' }] });
+    writeJson(path.join(w.account, 'settings.json'), { enabledPlugins: { 'alfred-code@envoydev': true } });
+}
+const noValueIn = (w, r, values) =>
+{
+    for (const f of files(path.join(w.dir, 'tmp'))) for (const v of values) assert.ok(!fs.readFileSync(f, 'utf8').includes(v), `a key value in ${path.basename(f)}`);
+    for (const v of values) assert.ok(!r.text.includes(v) && !JSON.stringify(r.p).includes(v), 'no key value printed or in the plan');
+};
+
+test('a token route at local scope is written with the key file\'s value, .mcp.json at project scope keeps ${VAR}, and no file under <tmp> holds the value', () => {
+    const w = world();
+    try
+    {
+        const [s, g] = [`s%^"${hex(12)}`, `g-${hex(12)}`];
+        keyFile(w.project, { [S]: s, [G]: g });
+        const r = walk(w, { picks: { sentry: { route: 'local', scope: 'local' }, github: { route: 'remote', scope: 'project' } } });
+        assert.deepStrictEqual(r.p.errors, []);
+        assert.strictEqual(r.report.failed, null, r.text);
+        assert.strictEqual(accountDoc(w).projects[accountKey(w.project)].mcpServers.sentry.env[S], s, 'the value, as the file holds it');
+        assert.strictEqual(mcpJson(w).mcpServers.github.headers.Authorization, `Bearer \${${G}}`, 'the committed file keeps the variable');
+        assert.match(r.text, new RegExp(`${S} for 'sentry' \\(local\\) from .*\\.preferred-tools.\\.secrets`));
+        noValueIn(w, r, [s, g]);
+    }
+    finally { w.clean(); }
+});
+
+test('a configure move local -> project of a filled github remote writes ${GITHUB_PERSONAL_ACCESS_TOKEN} into .mcp.json', () => {
+    const w = world();
+    try
+    {
+        const g = `g-${hex(12)}`;
+        register(w, 'github', { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headers: { Authorization: `Bearer ${g}` } });
+        const r = keptWalk(w, { change: { 'mcp:github~local': { scope: 'project' } } });
+        assert.deepStrictEqual(r.p.errors, []);
+        assert.strictEqual(r.report.failed, null, r.text);
+        assert.strictEqual(mcpJson(w).mcpServers.github.headers.Authorization, `Bearer \${${G}}`);
+        assert.ok(!fs.readFileSync(path.join(w.project, '.mcp.json'), 'utf8').includes(g));
+        assert.strictEqual((accountDoc(w).projects[accountKey(w.project)].mcpServers || {}).github, undefined, 'the local one is gone');
+        noValueIn(w, r, [g]);
+    }
+    finally { w.clean(); }
+});
+
+test('a configure move local -> user fills the key from the user-scope source', () => {
+    const w = world();
+    try
+    {
+        const [home, live] = [`h-${hex(12)}`, `l-${hex(12)}`];
+        keyFile(w.home, { [G]: home });
+        register(w, 'github', { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headers: { Authorization: `Bearer ${live}` } });
+        const r = keptWalk(w, { change: { 'mcp:github~local': { scope: 'user' } } });
+        assert.strictEqual(r.report.failed, null, r.text);
+        assert.strictEqual(accountDoc(w).mcpServers.github.headers.Authorization, `Bearer ${home}`);
+        noValueIn(w, r, [home, live]);
+    }
+    finally { w.clean(); }
+});
+
+test('a missing key keeps ${VAR} and the report names the file', () => {
+    const w = world();
+    try
+    {
+        const r = walk(w, { picks: { sentry: { route: 'local', scope: 'local' } } });
+        assert.strictEqual(r.report.failed, null, r.text);
+        assert.strictEqual(accountDoc(w).projects[accountKey(w.project)].mcpServers.sentry.env[S], `\${${S}}`);
+        assert.match(r.text, new RegExp(`${S} for 'sentry' \\(local\\) is in none of .*\\.preferred-tools.\\.secrets.* - it stays \\$\\{${S}\\}; put it in .*\\.preferred-tools.\\.secrets`));
+    }
+    finally { w.clean(); }
+});
+
+test('a plan that names .preferred-tools/.secrets writes .preferred-tools/.gitignore holding * first', () => {
+    const w = world();
+    try
+    {
+        const r = walk(w, { picks: { sentry: { route: 'local', scope: 'local' } } });
+        assert.strictEqual(r.p.steps[0].op, 'ensure-ignore');
+        assert.strictEqual(r.p.steps[0].path, path.join(w.project, '.preferred-tools'));
+        assert.match(require('../scripts/plan.js').render(r.p), /writes .*\.preferred-tools\/\.gitignore {2}\(contents: \*\)/);
+        assert.strictEqual(fs.readFileSync(path.join(w.project, '.preferred-tools', '.gitignore'), 'utf8'), '*\n');
+        const again = plan(inventory.buildInventory({ project: w.project, env: w.env }), { picks: { sentry: { route: 'local', scope: 'local', name: 'sentry-2' } } }, { home: w.home, env: w.env });
+        assert.ok(!again.steps.some((s) => s.op === 'ensure-ignore'), 'a .gitignore already there: no step');
+        const user = plan(inventory.buildInventory({ project: w.project, env: w.env }), { picks: { github: { route: 'remote', scope: 'user' } } }, { home: w.home, env: w.env });
+        assert.ok(!user.steps.some((s) => s.op === 'ensure-ignore'), 'user scope names no project key file');
+    }
+    finally { w.clean(); }
+});
+
+test('a configure of a filled user registration run from a second alfred-code project keeps its key', () => {
+    const w = world();
+    try
+    {
+        alfredOn(w);
+        const [live, other, home] = [`a-${hex(12)}`, `b-${hex(12)}`, `c-${hex(12)}`];
+        fs.mkdirSync(path.join(w.project, '.alfred'), { recursive: true });
+        fs.writeFileSync(path.join(w.project, '.alfred', '.secrets'), `${S}=${other}\n`);
+        register(w, 'sentry', { command: 'npx', args: ['-y', '@sentry/mcp-server@0.42.0'], env: { [S]: live } }, 'user');
+        const r = keptWalk(w, { change: { 'mcp:sentry~user': { name: 'sentry-2' } } });
+        assert.strictEqual(r.report.failed, null, r.text);
+        assert.strictEqual(accountDoc(w).mcpServers['sentry-2'].env[S], live, "this project's store never swaps the key of a server for every project");
+        assert.match(r.text, /differs from the key 'sentry-2' \(user\) holds - kept, not written/);
+        keyFile(w.home, { [S]: home });
+        const h = keptWalk(w, { change: { 'mcp:sentry-2~user': { name: 'sentry' } } });
+        assert.strictEqual(h.report.failed, null, h.text);
+        assert.strictEqual(accountDoc(w).mcpServers.sentry.env[S], home, 'the home file changes it');
+        noValueIn(w, h, [live, other, home]);
+    }
+    finally { w.clean(); }
+});

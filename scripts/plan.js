@@ -24,6 +24,7 @@ const catalogLib = require('./catalog.js');
 const E = require('./entries.js');
 const asks = require('./asks.js');
 const account = require('./account.js');
+const keys = require('./keys.js');
 const { installedOf, keyOf, targetOf, fromHere } = require('./inventory.js');
 const { blockingStdio } = require('./json-file.js');
 
@@ -217,10 +218,16 @@ function planMcp(row, pick, inv, ctx, catalog, out)
         if (row.params && cur.host && params.host !== cur.host) entry.url = E.subst(route.url, params);
     }
 
+    // the key: at project scope the ${VAR} stays for each session's environment; at local and user scope apply.js writes
+    // it in from the key file the scope reads (keys.js), and a plan naming the project's own file first makes it ignored
     if (route.tokenVar)
     {
         const needsVar = route.auth === 'token' || (route.auth === 'optional-token' && wantToken);
-        if (needsVar) out.tokens.push({ row: row.id, name, variable: route.tokenVar, set: Boolean(ctx.env[route.tokenVar]) });
+        const files = needsVar ? keys.filesFor(ctx.project, scope, { env: { ...ctx.env, HOME: ctx.home, USERPROFILE: ctx.home }, alfredEnabled: inv.alfredCodeEnabled }) : [];
+        if (needsVar) out.tokens.push({ row: row.id, name, variable: route.tokenVar, scope, set: Boolean(ctx.env[route.tokenVar]), files });
+        const ignore = path.join(ctx.project, '.preferred-tools');
+        if (files.includes(keys.projectFile(ctx.project)) && !(ctx.exists || fs.existsSync)(path.join(ignore, '.gitignore')) && !out.steps.some((s) => s.op === 'ensure-ignore'))
+            out.steps.unshift({ op: 'ensure-ignore', path: ignore, why: 'key file: .preferred-tools/.gitignore holding *, so the .secrets beside it is never committed' });
     }
     if (route.auth === 'oauth') out.oauth.push({ row: row.id, name, scope });
     if (row.dangerous && row.dangerous.length) out.dangerous.push({ row: row.id, name, tools: row.dangerous });
@@ -232,7 +239,7 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     if (!cur)
     {
         if (ensure) out.steps.push({ op: 'ensure-dir', path: ensure, why: `${row.id}: data folder, with a .gitignore holding * so the project's own .gitignore is never edited` });
-        out.steps.push({ op: 'mcp-add', name, scope, entry, row: row.id, why: `${row.id}: add (${routeId})` });
+        out.steps.push({ op: 'mcp-add', name, scope, entry, row: row.id, route: routeId, why: `${row.id}: add (${routeId})` });
         if (fetch) out.steps.push(fetch);
         return undefined;
     }
@@ -243,9 +250,9 @@ function planMcp(row, pick, inv, ctx, catalog, out)
         out.notes.push(`${row.id}: the old data stays at ${cur.rootStr}; moving a location moves no data`);
     if (ensure && (!cur.rootStr || rootStr !== cur.rootStr)) out.steps.push({ op: 'ensure-dir', path: ensure, why: `${row.id}: new data folder` });
     if (moved)
-        out.steps.push({ op: 'mcp-move', from: { name: cur.name, scope: cur.scope }, to: { name, scope }, entry, old: cur.entry, row: row.id, why: `${row.id}: ${cur.name !== name ? `rename '${cur.name}' to '${name}'` : ''}${cur.name !== name && cur.scope !== scope ? ' and ' : ''}${cur.scope !== scope ? `move from ${cur.scope} to ${scope} scope` : ''} - add first, read back, then remove the old one` });
+        out.steps.push({ op: 'mcp-move', from: { name: cur.name, scope: cur.scope }, to: { name, scope }, entry, old: cur.entry, row: row.id, route: routeId, why: `${row.id}: ${cur.name !== name ? `rename '${cur.name}' to '${name}'` : ''}${cur.name !== name && cur.scope !== scope ? ' and ' : ''}${cur.scope !== scope ? `move from ${cur.scope} to ${scope} scope` : ''} - add first, read back, then remove the old one` });
     else
-        out.steps.push({ op: 'mcp-replace', name, scope, entry, old: cur.entry, row: row.id, why: `${row.id}: rewrite '${name}' from the registration as read` });
+        out.steps.push({ op: 'mcp-replace', name, scope, entry, old: cur.entry, row: row.id, route: routeId, why: `${row.id}: rewrite '${name}' from the registration as read` });
     if (fetch) out.steps.push(fetch);
     return undefined;
 }
@@ -305,7 +312,7 @@ function plan(inv, answers, opts = {})
     const catalog = opts.catalog || catalogLib.load();
     // answers.machine: what prereq.js found (docker: false picks github's binary fallback); an explicit option wins
     const ctx = { ...makeCtx(inv, { ...opts, machine: opts.machine || answers.machine }), changing: new Set(Object.keys(answers.change || {})) };
-    const out = { version: 1, project: inv.project, os: inv.os, steps: [], notes: [], errors: [], unchanged: [], tokens: [], oauth: [], dangerous: [], expect: [], hud: null };
+    const out = { version: 1, project: inv.project, os: inv.os, alfredCodeEnabled: Boolean(inv.alfredCodeEnabled), steps: [], notes: [], errors: [], unchanged: [], tokens: [], oauth: [], dangerous: [], expect: [], hud: null };
 
     for (const [rowId, pick] of Object.entries(answers.picks || {}))
     {
@@ -374,11 +381,13 @@ function render(p)
         if (argv) lines.push(`   claude ${argv.map(shq).join(' ')}`);
         else if (s.op === 'mcp-move') lines.push(`   claude mcp add-json ${shq(s.to.name)} ${shq(JSON.stringify(s.entry))} -s ${s.to.scope}`, '   (read back)', `   claude mcp remove ${shq(s.from.name)} -s ${s.from.scope}`);
         else if (s.op === 'mcp-replace') lines.push(`   claude mcp remove ${shq(s.name)} -s ${s.scope}`, `   claude mcp add-json ${shq(s.name)} ${shq(JSON.stringify(s.entry))} -s ${s.scope}`, `   (the old entry is saved to rollback.json and re-added if the add fails)`);
-        else if (s.op === 'ensure-dir') lines.push(`   writes ${s.path}/.gitignore  (contents: *)`);
+        else if (s.op === 'ensure-dir' || s.op === 'ensure-ignore') lines.push(`   writes ${s.path}/.gitignore  (contents: *)`);
         else if (s.op === 'fetch') lines.push(`   ${s.argv.map(shq).join(' ')}`, '   (after the apply, in the background: fills the cache only; if it fails the registration stays and the first start tries again)');
         else if (s.op === 'hud') lines.push(`   node scripts/hud-statusline.js ${s.mode === 'replace' ? '--replace' : s.mode === 'skip' ? '--statusline-only' : ''}`.trimEnd());
     });
-    if (p.tokens.length) lines.push('', ...p.tokens.map((t) => `Token: ${t.name} reads \${${t.variable}} - ${t.set ? 'set in this shell' : 'NOT set here'}; set it in your shell or in the account settings.json "env". Nothing is written for it.`));
+    if (p.tokens.length) lines.push('', ...p.tokens.map((t) => (t.scope === 'project' || !t.files
+        ? `Token: ${t.name} reads \${${t.variable}} - ${t.set ? 'set in this shell' : 'NOT set here'}; set it in your shell or in the account settings.json "env". Nothing is written for it.`
+        : `Token: ${t.name} (${t.scope}) - the apply writes ${t.variable} into the registration from ${t.files.join(', then ')}; a key in none of them stays \${${t.variable}}. The key is never printed.`)));
     if (p.oauth.length) lines.push('', `OAuth: run /mcp once in a session to log in to ${p.oauth.map((o) => o.name).join(', ')}.`);
     if (p.dangerous.length) lines.push('', ...p.dangerous.map((d) => `Code-running tool on '${d.name}': ${d.tools.map((t) => `${t.tool} (${t.why})`).join('; ')}. This plugin adds no guard.`));
     if (p.notes.length) lines.push('', ...p.notes.map((n) => `Note: ${n}`));

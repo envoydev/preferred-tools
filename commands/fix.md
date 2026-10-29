@@ -68,5 +68,6 @@ End with the restart line the script prints: the repaired registrations load on 
 
 - Nothing is applied before step 2's answer. A fix that was not picked is never run.
 - A registration that matches no catalog row is the user's and is never touched.
-- A secret is never written. This command writes no token and no key.
+- A key is written only by `token-sync`, from its key file into the registration. This command never asks for, prints
+  or edits a key or a key file; a finding names the key and the file.
 - Do not repeat a fix 'STILL FOUND' in a loop. Show it and stop; the finding's note says what is left to do.

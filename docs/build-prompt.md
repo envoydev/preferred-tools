@@ -160,10 +160,22 @@ it may carry only relative paths and `${VAR}` references. Each local row carries
 browser launcher used absolute paths because Playwright resolves a relative one by its own rules. Plugins: `claude-hud` recommends `user`, the LSP pair
 `project`.
 
-**Secrets.** No token is ever written to any file. A remote route prefers OAuth (the user runs `/mcp` once to log in); a
-token route registers `${VAR}` (for example `Authorization: Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN}`) and the walk tells
-the user where to set the variable (their shell, or the account `settings.json` `env`). An unset variable is reported,
-not filled.
+**Secrets - key files (the user's ruling, 2026-10-29, replacing 'no token in any file': 'preffered tools must consider
+alfreds keys files when alfred present, if not then preffered tools files', delivered as 'Write it in at install').** A
+remote route prefers OAuth (the user runs `/mcp` once to log in). A token route at `project` scope registers `${VAR}`
+(for example `Authorization: Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN}`), since `.mcp.json` is committed. At `local` and
+`user` scope `apply.js` writes the key into the registration, just before each `claude mcp add-json`, from one source:
+alfred-code's store chain when alfred-code is enabled and set up in the project (its own engine,
+`.claude/hooks/secret-chain.js` `chainOf`, required in-process; no engine: `.alfred/.secrets`, then
+`.alfred/.sensitive-data`), else `<project>/.preferred-tools/.secrets`, then `~/.preferred-tools/.secrets`. A `user`
+registration reads the home file first, and one that already holds a key changes only from it, so a run from another
+project never swaps that project's key into every project's server. A key the source lacks keeps what the registration
+holds and the report names the file; `/preferred-tools:fix` (`token-sync`) writes it in later. A project key file git
+does not ignore is refused and named; a plan that names `.preferred-tools/.secrets` first writes
+`.preferred-tools/.gitignore` holding `*`. Why: a `${VAR}` set in no environment left a token server without its key,
+and alfred-code already keeps keys in its store. The cost: the key travels as the `claude mcp add-json` argument (the CLI
+takes the JSON no other way, docs/sources.md), visible in the process list while that call runs; it never reaches the
+chat or a file a command line names (`scripts/kept.js`).
 
 **Per-OS rules, applied at install time** (each also a fix row): uvx servers get the row's `--python` (3.13; 3.14 for
 windows-control) and on Windows ARM64 the x64 build (`cpython-3.13-windows-x86_64-none`) - `../alfred-code/docs/uv-python-pin-evidence.md`
@@ -369,6 +381,7 @@ rows - each `source` line is the alfred-code file to read for the detail:
 | playwright-webmcp | page-registered WebMCP tools appear beside Playwright's own | add `--no-webmcp` | `browser-launch.js` header |
 | appium-sdk-env | appium cannot find the Android SDK or a JDK (Claude Code started from the dock or an IDE) | look up `ANDROID_HOME` / `JAVA_HOME` and set them in the registration's `env` | `mobile-launch.js` header |
 | serena-telemetry | serena sends a usage ping at every start | `SERENA_USAGE_REPORTING=false` | `serena-launch.js` |
+| token-sync | a token server at local or user scope lacks the key its key file has, or holds an older one | write the key in from the key file (a user registration holding a key: only from `~/.preferred-tools/.secrets`) | `scripts/keys.js`, D7 |
 | typescript-lsp-ts7 | typescript-lsp shows no diagnostics (TypeScript 7 ships no `tsserver.js`) | `npm install -g typescript-language-server typescript@6` | alfred-code `meta/stack-manifest.json`, the typescript-lsp row |
 
 A new problem the user meets later becomes a new row, with its `verifiedOn`.

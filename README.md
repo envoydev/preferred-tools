@@ -41,7 +41,11 @@ in `docs/sources.md`.
   script writes `.mcp.json` or `~/.claude.json`, and no launcher sits between Claude Code and the server.
 - A registration is recognised by what it launches (its package, or its URL host and path), not by its name, so a tool
   under a custom per-project name is still found, and a server of your own is never touched.
-- No token is written to any file. Remote routes prefer OAuth; token routes register `${VAR}` references.
+- A key is never asked for, printed or put in a file a command names. Remote routes prefer OAuth. A token route at
+  project scope registers a `${VAR}` reference (the committed `.mcp.json`); at local and user scope the key is written
+  into the registration from a key file you fill by hand: alfred-code's store when alfred-code is set up in the project,
+  else `.preferred-tools/.secrets` (git-ignored by a `.gitignore` the install writes) and `~/.preferred-tools/.secrets`.
+  `/preferred-tools:fix` (`token-sync`) writes a key in after you add or change it.
 - A new package is downloaded right after its registration is written, and the server is started once, in the
   background, so the first session start answers inside Claude Code's 30-second limit (memory's first start downloads
   an embedding model for about 2 minutes). Restart Claude Code once that reports. If it fails, nothing is undone and

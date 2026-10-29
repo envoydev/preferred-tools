@@ -17,8 +17,11 @@ changed or removed with `/preferred-tools:configure`; say so whenever the user a
 - **The `claude` CLI is the only writer** of `.mcp.json` and the account file; `apply.js` calls it. Never edit those
   files by hand.
 - **A registration that matches no catalog row is the user's.** It is listed, never touched.
-- **No secret goes into a file.** A token route registers `${VAR}`; tell the user which variable to set, never ask for its
-  value, never write it.
+- **A key comes from its key file, never from the chat.** At `project` scope a token route registers `${VAR}` (the
+  committed `.mcp.json`); at `local` and `user` scope the apply writes the key into the registration from the key file
+  the plan names - alfred-code's store when alfred-code is set up in this project, else `.preferred-tools/.secrets`,
+  then `~/.preferred-tools/.secrets` (for `user`, the home file first). Never ask for a key, and never read, print or
+  edit a key file: name it, and the user fills it by hand.
 - **Every ask is data or one of the blocks below.** Ask exactly the options printed, in the order printed; do not add or
   reword one. `AskUserQuestion` adds 'Other' itself.
 - Every file below lives in one temp folder. Make it once with `node "${CLAUDE_PLUGIN_ROOT}/scripts/tmpdir.js"` and call
@@ -136,8 +139,8 @@ When claude-hud is picked, set `"hud": "defer"` in the answers: its settings are
 node "${CLAUDE_PLUGIN_ROOT}/scripts/plan.js" <tmp>/inventory.json <tmp>/answers.json --out <tmp>/plan.json
 ```
 
-Paste the output verbatim in a fenced block: every CLI call, every file it writes, the environment variables the user
-must set for a token route, the sign-in a remote route will ask for, and the tools that can run code. Exit 1 means the
+Paste the output verbatim in a fenced block: every CLI call, every file it writes, the key file each token route reads
+(at project scope, the variable to set), the sign-in a remote route will ask for, and the tools that can run code. Exit 1 means the
 plan has errors; show them and go back to the ask that causes them, never around them. Add the audit and 'register
 anyway' lines from step 5. Then:
 
@@ -165,7 +168,8 @@ the line that puts a registration back (`RESTORE BY HAND`): give it to the user 
 A key in it shows as `${PREFERRED_TOOLS_KEPT}`, never its value: the user puts their key back there.
 
 Then report each picked tool as the read-back printed it (name, scope, route). Start step 8, and while it runs, continue
-with 'claude-hud' if the plan set `hudAfter`. Tokens: list the variable names to set, nothing else. Close with one line: a
+with 'claude-hud' if the plan set `hudAfter`. Keys: relay each `key:` line as printed (the key and its file, never a value); for a key in none of its files, name the
+file to fill, and say `/preferred-tools:fix` writes it in once it is there. Close with one line: a
 later rename, move, route or location change, or a remove, is `/preferred-tools:configure`.
 
 ## 8. Fetch

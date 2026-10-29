@@ -561,3 +561,34 @@ approval: pending - otherwise, a parent folder's settings included
 ```
 
 Linux and Windows: NOT RUN yet; the same probe runs there before the release that relies on these facts.
+
+## alfred-code key files and `claude mcp add-json` (read 2026-10-29)
+
+D7 (key files, `scripts/keys.js`) rests on these:
+
+- alfred-code's key engine is `stack/hooks/secret-chain.js`, which its installer copies into a project's
+  `.claude/hooks/` (`HOOK_ENGINES`, `scripts/install/alfred-code.js:106` at v2.11.0, `:107` at v3.0.0 and v3.2.1; not
+  in v2.9.0). It exports `{ SECRET_FILES, readStore, storesOf, valuesOf, masker, chainOf }` (v2.11.0 `:138`, v3.0.0 and
+  v3.2.1 `:109`); `chainOf(start, { env })` (v2.11.0 `:124`, v3.0.0 and v3.2.1 `:95`) returns `{ stores, values, from,
+  notes }`: the project's store, then each linked workspace member's, nearest value first, a key an `ignore secret`
+  line names dropped. It requires only `./layout.js` beside it, which requires only Node's own modules.
+  `SECRET_FILES` is `.secrets`, then `.sensitive-data`; at each place the chain reads the first that exists, under the
+  data root `layout.dataRootOf` reports (`.alfred` unless a `DATA_PATH` setting moves it).
+- The store grammar is `layout.js` `readDotenv` (v3.2.1 `:443`, `DOTENV_LINE` `:417`): `KEY=value`, an optional
+  `export `, one pair of matching quotes dropped from the trimmed value, `#` and `;` lines and blank lines comments, a
+  BOM deciding UTF-16. `keys.js` `readDotenv` reads the same grammar for `.preferred-tools/.secrets` and an engine-less
+  `.alfred` store.
+- `tests/keys.test.js` requires the real engine of v2.11.0 and v3.2.1 from their tags and reads a project store through
+  it (the contract test); a release that drops or changes `chainOf` is a named error and the registration keeps
+  `${VAR}`.
+- `claude mcp add-json --help` (Claude Code 2.1.312, isolated home): `Usage: claude mcp add-json [options] <name>
+  <json>`, options `--client-secret` and `-s, --scope`. The MCP docs' 'Add MCP servers from JSON configuration'
+  (https://code.claude.com/docs/en/mcp, read 2026-10-29) show only `claude mcp add-json <name> '<json>'`. No stdin or
+  file form exists, so `apply.js` passes the filled entry as the argument: the key is visible in the process list while
+  that one call runs, and in nothing a command prints or names.
+- The same page, 'Credential variables that read as empty': 'In a remote server's `url` and `headers`, Claude Code
+  reads credential variables from your environment as empty rather than expanding them' - Claude Code's own
+  credentials, cloud provider credentials and others such as `HTTPS_PROXY` and `NPM_TOKEN`; 'A name outside this set,
+  such as `API_KEY`, expands as written.' `CONTEXT7_API_KEY` and `GITHUB_PERSONAL_ACCESS_TOKEN` are outside the named
+  set, so a project-scope `${VAR}` header still expands; a remote route written at local or user scope holds the key
+  itself and expands nothing.

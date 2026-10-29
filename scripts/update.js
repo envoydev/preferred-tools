@@ -283,7 +283,7 @@ function updateMcp(ctx, offer, tmp, log)
 {
     // the new pin is not in the cache yet: fetch it right after the rewrite (entries.js fetchStep)
     const fetch = E.fetchStep(offer.name, offer.entry, offer.row, offer.old);
-    const plan = { project: ctx.project, steps: [{ op: 'mcp-replace', name: offer.name, scope: offer.scope, old: offer.old, entry: offer.entry, why: `${offer.package} ${offer.from} -> ${offer.to}` }, ...(fetch ? [fetch] : [])], expect: [{ kind: 'mcp', name: offer.name, scope: offer.scope, route: offer.route }] };
+    const plan = { project: ctx.project, alfredCodeEnabled: Boolean(ctx.inv && ctx.inv.alfredCodeEnabled), steps: [{ op: 'mcp-replace', name: offer.name, scope: offer.scope, old: offer.old, entry: offer.entry, row: offer.row, route: offer.route, why: `${offer.package} ${offer.from} -> ${offer.to}` }, ...(fetch ? [fetch] : [])], expect: [{ kind: 'mcp', name: offer.name, scope: offer.scope, route: offer.route }] };
     const report = apply(plan, { env: ctx.env, tmp, runCli: ctx.runCli, fetchFile: false, log: (...a) => log(a.join(' ')) });
     if (report.fetch && report.fetch.fetch.length) ctx.fetches.push(report.fetch);
     if (report.failed) return false;

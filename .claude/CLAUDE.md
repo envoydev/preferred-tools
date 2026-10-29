@@ -47,7 +47,12 @@ private project names, no absolute local paths, no tokens, nothing from a user's
 - **A change starts from what is installed.** Only a fresh add builds from `catalog/tools.json`. A rename, a move, a
   fix or a re-run starts from the registration as read (its pin, its cut-off, the args or env the user added), so an
   updated pin is never downgraded.
-- **No secret in any file.** Remote routes prefer OAuth; token routes register `${VAR}`.
+- **A key comes from a key file and goes only into its registration** (the user's ruling, 2026-10-29: 'preffered tools
+  must consider alfreds keys files when alfred present, if not then preffered tools files', delivered as 'Write it in at
+  install'). Project scope keeps `${VAR}`; at local and user scope `apply.js` writes the key in from alfred-code's store
+  chain (alfred-code set up in the project) or `.preferred-tools/.secrets`, then `~/.preferred-tools/.secrets` (user: the
+  home file first). `scripts/keys.js` holds the rule. No key in a file a command line names (`scripts/kept.js`), none
+  printed, none asked for. Remote routes prefer OAuth.
 - **Paths by scope.** `project` scope (the committed `.mcp.json`) gets relative paths and `${VAR}` only. `local` and
   `user` scope get absolute paths, with `~` expanded by the script.
 - **`allowed-tools` pre-approves read-only calls only.** `apply.js`, `fetch.js`, `fix.js --apply`, `update.js --apply` and the

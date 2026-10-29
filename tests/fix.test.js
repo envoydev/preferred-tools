@@ -524,3 +524,80 @@ test('CLI: --detect and --questions print; --apply applies; bad arguments exit 2
     }
     finally { w.clean(); }
 });
+
+// ---- token-sync (D7): a registration behind its key file --------------------------------------------------------------
+
+const fsx = require('node:fs');
+const cryptox = require('node:crypto');
+const { writeJson, files } = require('./helpers.js');
+const SK = 'SENTRY_ACCESS_TOKEN';
+const SENTRY = (value) => ({ command: 'npx', args: ['-y', '@sentry/mcp-server@0.42.0'], env: { [SK]: value } });
+const hexv = (p) => `${p}-${cryptox.randomBytes(10).toString('hex')}`;
+const keyFileIn = (dir, value) =>
+{
+    fsx.mkdirSync(path.join(dir, '.preferred-tools'), { recursive: true });
+    fsx.writeFileSync(path.join(dir, '.preferred-tools', '.secrets'), `${SK}=${value}\n`);
+    fsx.writeFileSync(path.join(dir, '.preferred-tools', '.gitignore'), '*\n');
+};
+const localEntry = (w, name) => account.readAccount(w.env, w.project).local[name];
+
+test('token-sync finds a registration behind its key file, rewrites it, and prints no value', () =>
+{
+    const w = world();
+    try
+    {
+        const [v1, v2] = [hexv('one'), hexv('two')];
+        seed(w, 'sentry', 'local', SENTRY(`\${${SK}}`));
+        keyFileIn(w.project, v1);
+        const found = detect(ctxOf(w)).found.filter((f) => f.id === 'token-sync');
+        assert.deepStrictEqual(found.map((f) => [f.name, f.scope, Boolean(f.blocked)]), [['sentry', 'local', false]]);
+        assert.match(found[0].found, new RegExp(`holds \\$\\{${SK}\\} while .*\\.preferred-tools.\\.secrets has the key`));
+        const shown = `${fix.render(detect(ctxOf(w)))}${JSON.stringify(detect(ctxOf(w)))}`;
+        assert.ok(!shown.includes(v1), 'the detection names the key and the file, never the value');
+        const lines = [];
+        const res = fix.applyFixes(ctxOf(w), ['token-sync'], { tmp: path.join(w.dir, 'tmp'), log: (...a) => lines.push(a.join(' ')) });
+        assert.strictEqual(res.failed, null, lines.join('\n'));
+        assert.strictEqual(localEntry(w, 'sentry').env[SK], v1);
+        assert.deepStrictEqual(res.applied.map((f) => f.id), ['token-sync']);
+        keyFileIn(w.project, v2);
+        assert.match(detect(ctxOf(w)).found.find((f) => f.id === 'token-sync').found, /differs from the registration's/);
+        const lines2 = [];
+        fix.applyFixes(ctxOf(w), ['token-sync'], { tmp: path.join(w.dir, 'tmp'), log: (...a) => lines2.push(a.join(' ')) });
+        assert.strictEqual(localEntry(w, 'sentry').env[SK], v2);
+        assert.deepStrictEqual(detect(ctxOf(w)).found.filter((f) => f.id === 'token-sync'), [], 'in sync: nothing found');
+        for (const v of [v1, v2]) assert.ok(!`${lines.join('\n')}${lines2.join('\n')}`.includes(v), 'nothing printed holds the value');
+        for (const f of files(path.join(w.dir, 'tmp'))) for (const v of [v1, v2]) assert.ok(!fsx.readFileSync(f, 'utf8').includes(v), path.basename(f));
+    }
+    finally { w.clean(); }
+});
+
+test('token-sync rewrites a live user registration only from the home file - a differing project chain is reported, not written', () =>
+{
+    const w = world();
+    try
+    {
+        writeJson(path.join(w.dir, 'state', 'plugins.json'), { marketplaces: [], installed: [{ id: 'alfred-code@envoydev', version: '3.2.1', scope: 'user', enabled: true, installPath: '/c' }] });
+        writeJson(path.join(w.account, 'settings.json'), { enabledPlugins: { 'alfred-code@envoydev': true } });
+        const [live, chain, home] = [hexv('live'), hexv('chain'), hexv('home')];
+        fsx.mkdirSync(path.join(w.project, '.alfred'), { recursive: true });
+        fsx.writeFileSync(path.join(w.project, '.alfred', '.secrets'), `${SK}=${chain}\n`);
+        seed(w, 'sentry', 'user', SENTRY(live));
+        const f = detect(ctxOf(w)).found.find((x) => x.id === 'token-sync');
+        assert.match(f.blocked, /a server for every project takes a new key only from .*\.preferred-tools.\.secrets/);
+        const lines = [];
+        const res = fix.applyFixes(ctxOf(w), ['token-sync'], { log: (...a) => lines.push(a.join(' ')) });
+        assert.deepStrictEqual(res.skipped.map((x) => x.id), ['token-sync']);
+        assert.strictEqual(userEntry(w, 'sentry').env[SK], live, 'reported, not written');
+        // a user registration still holding ${VAR} takes this project's key
+        seed(w, 'sentry-b', 'user', SENTRY(`\${${SK}}`));
+        fix.applyFixes(ctxOf(w), ['token-sync'], { only: 'sentry-b', tmp: path.join(w.dir, 'tmp'), log: () => {} });
+        assert.strictEqual(userEntry(w, 'sentry-b').env[SK], chain);
+        // the home file changes a live one
+        keyFileIn(w.home, home);
+        assert.ok(!detect(ctxOf(w)).found.find((x) => x.id === 'token-sync' && x.name === 'sentry').blocked);
+        fix.applyFixes(ctxOf(w), ['token-sync'], { only: 'sentry', tmp: path.join(w.dir, 'tmp'), log: (...a) => lines.push(a.join(' ')) });
+        assert.strictEqual(userEntry(w, 'sentry').env[SK], home);
+        for (const v of [live, chain, home]) assert.ok(!lines.join('\n').includes(v));
+    }
+    finally { w.clean(); }
+});

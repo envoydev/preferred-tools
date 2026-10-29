@@ -28,6 +28,7 @@ const fetchLib = require('./fetch.js');
 const { argvOf, deepEqual } = require('./plan.js');
 const { blockingStdio } = require('./json-file.js');
 const kept = require('./kept.js');
+const keys = require('./keys.js');
 const catalogLib = require('./catalog.js');
 const tmpdir = require('./tmpdir.js');
 
@@ -85,6 +86,22 @@ function restoreStep(step, ctx)
     return entry.error ? changed : { step: { ...step, entry: entry.entry, old: step.old ? source : step.old } };
 }
 
+// The key of a token route, set just before the add by the TARGET scope (keys.js): the ${VAR} form into .mcp.json, the
+// key file's value into a local or user registration. -> { step, note } - the note names the key and the file, never a
+// value.
+function fillStep(step, ctx)
+{
+    if (!['mcp-add', 'mcp-replace', 'mcp-move'].includes(step.op)) return { step, note: null };
+    const m = step.row && step.route ? null : inventory.matchEntry(step.entry, ctx.catalog);
+    const row = rowOf(ctx, step) || (m && ctx.catalog.byId.get(m.rowId)) || null;
+    if (!row || row.kind !== 'mcp') return { step, note: null };
+    const routeId = step.route || (m && m.route);
+    const to = step.op === 'mcp-move' ? step.to : { name: step.name, scope: step.scope };
+    const fromUser = (step.op === 'mcp-move' ? step.from.scope : step.scope) === 'user';
+    const r = keys.keysInto(step.entry, row, routeId, to.scope, { project: ctx.project, env: ctx.env, alfredEnabled: ctx.alfredEnabled, name: to.name, before: to.scope === 'user' && fromUser ? step.old : null });
+    return { step: { ...step, entry: r.entry }, note: r.note };
+}
+
 function pluginState(ctx, id, scope)
 {
     const inv = inventory.buildInventory({ project: ctx.project, env: ctx.env });
@@ -102,6 +119,13 @@ function runStep(step, ctx)
             fs.mkdirSync(step.path, { recursive: true });
             if (!existed) fs.writeFileSync(path.join(step.path, '.gitignore'), '*\n');
             return { ok: true, detail: existed ? `${step.path} exists - left as it is` : `created ${step.path} with a .gitignore holding *` };
+        }
+        case 'ensure-ignore': {
+            const file = path.join(step.path, '.gitignore');
+            if (fs.existsSync(file)) return { ok: true, detail: `${file} exists - left as it is` };
+            fs.mkdirSync(step.path, { recursive: true });
+            fs.writeFileSync(file, '*\n');
+            return { ok: true, detail: `wrote ${file} holding *` };
         }
         case 'mcp-add': return addAndVerify(call, ctx, step.name, step.scope, step.entry);
         case 'mcp-remove': return removeAndVerify(call, ctx, step.name, step.scope);
@@ -159,14 +183,14 @@ function runStep(step, ctx)
 function apply(plan, { env = process.env, tmp, runCli = cli.run, log = console.log, fetchFile } = {})
 {
     const project = plan.project;
-    const report = { applied: [], failed: null, notRun: [], readback: [], noop: false, toFetch: [], fetch: null, fetchFile: null, tmp: tmp || null };
+    const report = { applied: [], failed: null, notRun: [], readback: [], keys: [], noop: false, toFetch: [], fetch: null, fetchFile: null, tmp: tmp || null };
     if (!plan.steps.length)
     {
         report.noop = true;
         log('Nothing to apply: every answer already matches what is installed. No claude call was made.');
         return report;
     }
-    const ctx = { project, env, tmp: tmp || fs.mkdtempSync(path.join(os.tmpdir(), 'preferred-tools-')), runCli, catalog: catalogLib.load() };
+    const ctx = { project, env, tmp: tmp || fs.mkdtempSync(path.join(os.tmpdir(), 'preferred-tools-')), runCli, catalog: catalogLib.load(), alfredEnabled: Boolean(plan.alfredCodeEnabled) };
     ctx.call = makeRunner(ctx);
     report.tmp = ctx.tmp;
     for (let i = 0; i < plan.steps.length; i++)
@@ -174,10 +198,12 @@ function apply(plan, { env = process.env, tmp, runCli = cli.run, log = console.l
         const step = plan.steps[i];
         if (step.op === 'fetch') { report.toFetch.push(step); log(`${i + 1}. later  ${step.why} (fetch.js, after the read-back)`); continue; }
         const ready = restoreStep(step, ctx);
-        const r = ready.error ? { ok: false, detail: ready.error } : runStep(ready.step, ctx);
-        if (r.ok) { report.applied.push({ i: i + 1, op: step.op, detail: r.detail }); log(`${i + 1}. ok     ${r.detail}`); continue; }
+        const filled = ready.error ? null : fillStep(ready.step, ctx);
+        const r = ready.error ? { ok: false, detail: ready.error } : runStep(filled.step, ctx);
+        log(`${i + 1}. ${r.ok ? 'ok    ' : 'FAILED'} ${r.detail}`);
+        if (filled && filled.note) { report.keys.push(filled.note); log(`   key: ${filled.note}`); }
+        if (r.ok) { report.applied.push({ i: i + 1, op: step.op, detail: r.detail }); continue; }
         report.failed = { i: i + 1, op: step.op, detail: r.detail };
-        log(`${i + 1}. FAILED ${r.detail}`);
         report.notRun = plan.steps.slice(i + 1).map((s, k) => ({ i: i + 2 + k, op: s.op, why: s.why }));
         break;
     }
@@ -237,4 +263,4 @@ function main(argv)
 }
 
 if (require.main === module) process.exit(main(process.argv.slice(2)));
-module.exports = { apply, runStep, restoreStep, readRegistration, restoreLine };
+module.exports = { apply, runStep, restoreStep, fillStep, readRegistration, restoreLine };

@@ -147,6 +147,25 @@
       "source": "alfred-code stack/mcp/serena-launch.js; docs/sources.md 'serena'"
     },
     {
+      "id": "token-sync",
+      "tool": [
+        "context7",
+        "github",
+        "sentry"
+      ],
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "kind": "registration",
+      "symptom": "a token server at local or user scope does not hold the key its key file has: it was registered before the key was put in, or the key changed since (a server for every project changes only from ~/.preferred-tools/.secrets)",
+      "detect": "tokenSyncDetect",
+      "fix": "tokenSyncFix",
+      "verifiedOn": "this build: tests/fix.test.js token-sync and tests/keys.test.js (alfred-code v2.11.0 and v3.2.1 engines, 2026-10-29)",
+      "source": "docs/build-prompt.md D7; docs/sources.md 'alfred-code key files'"
+    },
+    {
       "id": "typescript-lsp-ts7",
       "tool": [
         "typescript-lsp"

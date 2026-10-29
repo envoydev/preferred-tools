@@ -139,12 +139,25 @@ test('routes: context7, github and sentry each build both ways; the others have 
 test('a token route registers the ${VAR} and the plan says whether it is set; no token value is ever in the plan', () => {
     const fake = ['gh', 'p_', 'FAKE0123456789abcdefFAKE0123456789'].join('');
     const p = plan(inv(MAC), pickOne('github', { route: 'remote' }), opts('/h', { env: { GITHUB_PERSONAL_ACCESS_TOKEN: fake } }));
-    assert.deepStrictEqual(p.tokens, [{ row: 'github', name: 'github', variable: 'GITHUB_PERSONAL_ACCESS_TOKEN', set: true }]);
+    assert.deepStrictEqual(p.tokens, [{ row: 'github', name: 'github', variable: 'GITHUB_PERSONAL_ACCESS_TOKEN', scope: 'project', set: true, files: [] }]);
     assert.ok(!JSON.stringify(p).includes(fake));
     assert.ok(!render(p).includes(fake));
     assert.match(render(p), /GITHUB_PERSONAL_ACCESS_TOKEN\} - set in this shell/);
     const unset = plan(inv(MAC), pickOne('github', { route: 'remote' }), opts('/h'));
     assert.match(render(unset), /NOT set here/);
+});
+
+test('at local and user scope the token note names the key files the apply reads, in order, and never a value', () => {
+    const local = plan(inv(MAC), pickOne('github', { route: 'remote', scope: 'local' }), opts('/h'));
+    const P = (...a) => path.join(...a);
+    assert.deepStrictEqual(local.tokens[0].files, [P('/work/shop', '.preferred-tools', '.secrets'), P('/h', '.preferred-tools', '.secrets')]);
+    assert.ok(render(local).includes(`Token: github (local) - the apply writes GITHUB_PERSONAL_ACCESS_TOKEN into the registration from ${P('/work/shop', '.preferred-tools', '.secrets')}, then ${P('/h', '.preferred-tools', '.secrets')}; a key in none of them stays \${GITHUB_PERSONAL_ACCESS_TOKEN}.`));
+    assert.strictEqual(local.steps[0].op, 'ensure-ignore');
+    assert.strictEqual(addStep(local).route, 'remote', 'the route id, never the route object');
+    assert.ok(!JSON.stringify(local.steps).includes('"auth"'));
+    const user = plan(inv(MAC), pickOne('github', { route: 'remote', scope: 'user' }), opts('/h'));
+    assert.deepStrictEqual(user.tokens[0].files, [P('/h', '.preferred-tools', '.secrets')]);
+    assert.ok(!user.steps.some((s) => s.op === 'ensure-ignore'));
 });
 
 test('scopes: local and user write absolute paths with ~ expanded; project is refused for a local route', () => {

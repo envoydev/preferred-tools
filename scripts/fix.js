@@ -132,7 +132,7 @@ function applyFixes(ctx, ids, { only, input = {}, tmp, log = console.log, runCli
         }
         catch (e) { res.failed = `${list[0].name}: ${e.message}`; log(`FAILED ${res.failed}`); return res; }
         if (deepEqual(entry, reg.entry)) continue;
-        steps.push({ op: 'mcp-replace', name: reg.name, scope: reg.scope, entry, old: reg.entry, row: reg.rowId, why: `${list.map((x) => x.id).join(' + ')}: rewrite '${reg.name}' from the registration as read` });
+        steps.push({ op: 'mcp-replace', name: reg.name, scope: reg.scope, entry, old: reg.entry, row: reg.rowId, route: reg.route, why: `${list.map((x) => x.id).join(' + ')}: rewrite '${reg.name}' from the registration as read` });
     }
     res.steps = steps.length;
     if (steps.length)
@@ -143,7 +143,7 @@ function applyFixes(ctx, ids, { only, input = {}, tmp, log = console.log, runCli
             const f = E.fetchStep(s.name, s.entry, s.row, s.old);
             return f ? [s, f] : [s];
         });
-        const plan = { version: 1, project: ctx.inv.project, os: ctx.platform, steps: withFetch, notes: [], errors: [], expect: steps.map((s) => ({ kind: 'mcp', name: s.name, scope: s.scope, route: ctx.inv.registrations.find((r) => r.name === s.name && r.scope === s.scope).route })) };
+        const plan = { version: 1, project: ctx.inv.project, os: ctx.platform, alfredCodeEnabled: Boolean(ctx.inv.alfredCodeEnabled), steps: withFetch, notes: [], errors: [], expect: steps.map((s) => ({ kind: 'mcp', name: s.name, scope: s.scope, route: ctx.inv.registrations.find((r) => r.name === s.name && r.scope === s.scope).route })) };
         res.tmp = tmp || fs.mkdtempSync(path.join(os.tmpdir(), 'preferred-tools-fix-'));
         const report = apply(plan, { env: ctx.env, tmp: res.tmp, runCli, log });
         res.fetchFile = report.fetchFile;

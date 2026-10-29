@@ -188,7 +188,7 @@ test('every fix row has the fields the brief names and points at an existing row
     const FIX = ['id', 'tool', 'os', 'symptom', 'detect', 'fix', 'verifiedOn', 'source'];
     assert.strictEqual(new Set(cat.fixes.map((f) => f.id)).size, cat.fixes.length);
     assert.deepStrictEqual(cat.fixes.map((f) => f.id), ['serena-windows-home', 'serena-windows-ts-shim', 'uvx-python', 'windows-arm-python',
-        'windows-npx-cmd', 'playwright-webmcp', 'appium-sdk-env', 'serena-telemetry', 'typescript-lsp-ts7']);
+        'windows-npx-cmd', 'playwright-webmcp', 'appium-sdk-env', 'serena-telemetry', 'token-sync', 'typescript-lsp-ts7']);
     for (const f of cat.fixes)
     {
         for (const k of FIX) assert.ok(f[k] !== undefined && f[k] !== '', `${f.id} lacks ${k}`);
