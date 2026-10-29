@@ -26,7 +26,7 @@ const asks = require('./asks.js');
 const account = require('./account.js');
 const keys = require('./keys.js');
 const kept = require('./kept.js');
-const { installedOf, keyOf, targetOf, fromHere } = require('./inventory.js');
+const { installedOf, keyOf, targetOf, fromHere, otherWindowsMcp } = require('./inventory.js');
 const { blockingStdio } = require('./json-file.js');
 
 const SCOPES = ['local', 'project', 'user'];
@@ -159,6 +159,12 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     const taken = inv.registrations.filter((r) => r.scope === scope);
     const problem = E.nameProblem(name, { catalog, taken, self: cur ? { name: cur.name, scope: cur.scope } : null });
     if (problem) return out.errors.push(`${row.id}: ${problem}`);
+    // windows-mcp 0.8.8 makes one missed overlay confirmation permanent; another session cannot be seen, so it is named
+    if (row.id === 'windows-control' && !target)
+    {
+        const others = otherWindowsMcp(inv, name);
+        out.notes.push(`windows-control: keep one windows-mcp per Windows desktop - another Claude Code session with it open${others.length ? `, or ${others.join(', ')},` : ''} can leave its tools unavailable until a new session starts it again`);
+    }
     for (const r of inv.registrations)
     {
         if (r.name !== name || r.scope === scope) continue;

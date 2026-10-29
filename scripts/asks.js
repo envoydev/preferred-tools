@@ -4,7 +4,7 @@
 // 'Other' is added by AskUserQuestion itself and never listed here.
 const path = require('node:path');
 const E = require('./entries.js');
-const { installedOf, keyOf, targetOf, fromHere } = require('./inventory.js');
+const { installedOf, keyOf, targetOf, fromHere, otherWindowsMcp } = require('./inventory.js');
 const { pinOf } = require('./table.js');
 
 const REC = ' (Recommended)';
@@ -91,7 +91,10 @@ function pickQuestions(inv, catalog)
             if (user.length) tags.push(row.kind === 'mcp' ? `installed for every project as ${user.map((h) => h.name).join(', ')}` : 'installed for every project');
             const stays = [...(user.length ? ['the one for every project'] : []), ...inherited.map((h) => `the one inherited from ${fromHere(inv, h.from)}`)];
             const keep = `${stays.join(' and ')} ${stays.length > 1 ? 'stay' : 'stays'}${user.length ? '' : stays.length > 1 ? ' in their folders' : ' in its folder'}`;
-            items.push({ group: g, label: `${row.label}${tags.length ? ` (${tags.join('; ')})` : ''}`, description: have.length ? `adds this project's own copy; ${keep} - ${row.summary}` : row.summary });
+            // windows-mcp 0.8.8 keeps one per desktop healthy; a copy under the row's own name replaces that one here
+            const others = row.id === 'windows-control' ? otherWindowsMcp(inv, row.name) : [];
+            const warn = others.length ? `; another windows-mcp already starts here (${others.join(', ')}) - keep one per desktop` : '';
+            items.push({ group: g, label: `${row.label}${tags.length ? ` (${tags.join('; ')})` : ''}`, description: `${have.length ? `adds this project's own copy; ${keep} - ${row.summary}` : row.summary}${warn}` });
         }
     return packed(items, { id: 'pick', question: 'which tools do you want to install?', none: 'install nothing' });
 }

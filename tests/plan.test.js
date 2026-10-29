@@ -826,3 +826,37 @@ test('a local copy over an inherited one notes which Claude Code uses', () => {
     const renamed = plan(i, pickOne('context7', { route: 'remote', scope: 'project', name: 'docs' }), opts('/Users/me'));
     assert.ok(renamed.notes.some((n) => /context7: also inherited as 'context7' from \.\. \(approved\) - change it there/.test(n)), renamed.notes.join('\n'));
 });
+
+// ---- windows-mcp: keep one per desktop --------------------------------------------------------------------------------
+
+const WMCP = { command: 'uvx', args: ['--from', 'windows-mcp==0.8.8', 'windows-mcp', 'serve'] };
+const alfredWin = (scope = 'user') => ({ id: 'windows-control@envoydev', plugin: 'windows-control', marketplace: 'envoydev', scope, enabled: true, rowId: null, alfredRetired: true });
+const wdOption = (i) => asks.pickQuestions(i, catalog).flat().flatMap((q) => q.options).find((o) => o.label.startsWith(catalog.byId.get('windows-control').label));
+const wdNotes = (p) => p.notes.filter((n) => n.startsWith('windows-control: keep one windows-mcp per Windows desktop'));
+
+test('the windows-control pick names a windows-mcp that already starts here', () => {
+    assert.match(wdOption(inv(WIN, { plugins: [alfredWin()] })).description, /; another windows-mcp already starts here \(windows-control@envoydev \(user\)\) - keep one per desktop$/);
+    const atUser = wdOption(inv(WIN, { registrations: [reg('windows-desktop', 'user', WMCP, 'windows-control', 'local')] }));
+    assert.ok(atUser, "offered as this project's own copy");
+    assert.doesNotMatch(atUser.description, /another windows-mcp/);
+    assert.doesNotMatch(wdOption(inv(WIN)).description, /another windows-mcp/);
+});
+
+test('adding windows-control notes one windows-mcp per desktop', () => {
+    const alone = plan(inv(WIN), pickOne('windows-control'), opts('C:\\Users\\me'));
+    assert.deepStrictEqual(alone.errors, []);
+    assert.deepStrictEqual(wdNotes(alone), ['windows-control: keep one windows-mcp per Windows desktop - another Claude Code session with it open can leave its tools unavailable until a new session starts it again']);
+    const beside = wdNotes(plan(inv(WIN, { plugins: [alfredWin()] }), pickOne('windows-control'), opts('C:\\Users\\me')));
+    assert.strictEqual(beside.length, 1);
+    assert.match(beside[0], /another Claude Code session with it open, or windows-control@envoydev \(user\), can leave its tools unavailable/);
+});
+
+test('a copy that keeps the name is not another windows-mcp', () => {
+    const i = inv(WIN, { registrations: [reg('windows-desktop', 'user', WMCP, 'windows-control', 'local')] });
+    const kept = wdNotes(plan(i, pickOne('windows-control', { scope: 'local' }), opts('C:\\Users\\me')));
+    assert.strictEqual(kept.length, 1);
+    assert.doesNotMatch(kept[0], /windows-desktop \(user\)/);
+    const prefixed = wdNotes(plan(i, pickOne('windows-control', { scope: 'local', name: 'prefixed' }), opts('C:\\Users\\me')));
+    assert.strictEqual(prefixed.length, 1);
+    assert.match(prefixed[0], /, or windows-desktop \(user\), can leave/);
+});

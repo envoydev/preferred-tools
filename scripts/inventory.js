@@ -268,6 +268,10 @@ function windowsMcpServers(inv)
     ];
 }
 
+// The windows-mcp servers here that a new registration under `name` does not replace - one of the same name is the same
+// server, whichever scope wins - as 'name (scope)'.
+const otherWindowsMcp = (inv, name) => windowsMcpServers(inv).filter((s) => s.kind === 'plugin' || s.name !== name).map((s) => `${s.name} (${s.scope})`);
+
 // One installed thing, by the key configure asks with: `mcp:<name>~<scope>` or `plugin:<plugin id>~<scope>` (the same
 // shape as update.js's offer ids). -> { kind, item } or null when nothing is installed under that key.
 const keyOf = (kind, name, scope) => `${kind}:${name}~${scope}`;
@@ -304,4 +308,4 @@ function main(argv)
 }
 
 if (require.main === module) process.exit(main(process.argv.slice(2)));
-module.exports = { launchTokens, bareName, matchEntry, matchesFingerprint, ancestorMcpFiles, buildInventory, keptOf, fromHere, installedOf, windowsMcpServers, keyOf, targetOf, pluginRows };
+module.exports = { launchTokens, bareName, matchEntry, matchesFingerprint, ancestorMcpFiles, buildInventory, keptOf, fromHere, installedOf, windowsMcpServers, otherWindowsMcp, keyOf, targetOf, pluginRows };
