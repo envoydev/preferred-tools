@@ -121,4 +121,19 @@ function restore(entry, source, row)
 
 const holdsKept = (node) => JSON.stringify(node === undefined ? null : node).includes(MARKER);
 
-module.exports = { MARKER, keep, restore, holdsKept, credKey };
+// credentialPaths(entry, row) -> the dotted path of every credential value the entry holds, live or already MARKER
+// ('headers.X-API-Key', 'args.3', 'url'), for the check that a committed file never gets one.
+function credentialPaths(entry, row)
+{
+    const masked = keep(entry, row);
+    const out = [];
+    const walk = (node, kept, path) =>
+    {
+        if (typeof node === 'string') { if (node !== kept || node.includes(MARKER)) out.push(path.join('.')); return; }
+        if (node && typeof node === 'object') for (const k of Object.keys(node)) walk(node[k], kept == null ? undefined : kept[k], [...path, k]);
+    };
+    walk(entry, masked, []);
+    return out;
+}
+
+module.exports = { MARKER, keep, restore, holdsKept, credKey, credentialPaths };

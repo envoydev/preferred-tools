@@ -172,7 +172,9 @@ registration reads the home file first, and one that already holds a key changes
 project never swaps that project's key into every project's server. A key the source lacks keeps what the registration
 holds and the report names the file; `/preferred-tools:fix` (`token-sync`) writes it in later. A project key file git
 does not ignore is refused and named; a plan that names `.preferred-tools/.secrets` first writes
-`.preferred-tools/.gitignore` holding `*`. Why: a `${VAR}` set in no environment left a token server without its key,
+`.preferred-tools/.gitignore` holding `*`. A configure move into `project` scope whose entry holds a credential outside
+the route's token field (a header of the user's own, a userinfo URL) is a plan error that names the field: the masked
+plan cannot show it, and `.mcp.json` is committed. Why: a `${VAR}` set in no environment left a token server without its key,
 and alfred-code already keeps keys in its store. The cost: the key travels as the `claude mcp add-json` argument (the CLI
 takes the JSON no other way, docs/sources.md), visible in the process list while that call runs; it never reaches the
 chat or a file a command line names (`scripts/kept.js`).

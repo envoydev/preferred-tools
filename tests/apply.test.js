@@ -555,6 +555,27 @@ test('a configure move local -> project of a filled github remote writes ${GITHU
     finally { w.clean(); }
 });
 
+test('a configure move to project scope is refused while the entry holds a credential no route field takes - a header of the user\'s own never reaches .mcp.json', () => {
+    const w = world();
+    try
+    {
+        const [k, x, u] = [`ctx7sk-${hex(12)}`, `x-${hex(12)}`, `glpat-${hex(12)}`];
+        register(w, 'context7', { type: 'http', url: 'https://mcp.context7.com/mcp', headers: { CONTEXT7_API_KEY: k } });
+        register(w, 'ctx-x', { type: 'http', url: 'https://mcp.context7.com/mcp', headers: { 'X-API-Key': x } });
+        register(w, 'gitlab', { type: 'http', url: `https://dev:${u}@gitlab.com/api/v4/mcp` });
+        const r = keptWalk(w, { change: { 'mcp:context7~local': { scope: 'project' }, 'mcp:ctx-x~local': { scope: 'project' }, 'mcp:gitlab~local': { scope: 'project' } } });
+        assert.strictEqual(r.p.errors.length, 3, r.p.errors.join('\n'));
+        assert.match(r.p.errors[0], /context7: 'context7' holds a credential in headers\.CONTEXT7_API_KEY, which the committed \.mcp\.json must not carry/);
+        assert.match(r.p.errors[1], /context7: 'ctx-x' holds a credential in headers\.X-API-Key/);
+        assert.match(r.p.errors[2], /gitlab: 'gitlab' holds a credential in url/);
+        assert.ok(!fs.existsSync(path.join(w.project, '.mcp.json')) || ![k, x, u].some((v) => fs.readFileSync(path.join(w.project, '.mcp.json'), 'utf8').includes(v)));
+        const local = accountDoc(w).projects[accountKey(w.project)].mcpServers;
+        assert.deepStrictEqual(Object.keys(local).sort(), ['context7', 'ctx-x', 'gitlab'], 'each stays where it is');
+        noValueIn(w, r, [k, x, u]);
+    }
+    finally { w.clean(); }
+});
+
 test('a configure move local -> user fills the key from the user-scope source', () => {
     const w = world();
     try

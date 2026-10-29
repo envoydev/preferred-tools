@@ -25,6 +25,7 @@ const E = require('./entries.js');
 const asks = require('./asks.js');
 const account = require('./account.js');
 const keys = require('./keys.js');
+const kept = require('./kept.js');
 const { installedOf, keyOf, targetOf, fromHere } = require('./inventory.js');
 const { blockingStdio } = require('./json-file.js');
 
@@ -216,6 +217,15 @@ function planMcp(row, pick, inv, ctx, catalog, out)
             }
         }
         if (row.params && cur.host && params.host !== cur.host) entry.url = E.subst(route.url, params);
+    }
+
+    // .mcp.json is committed: a move into it never carries a credential the route's own token field does not take - a
+    // header of the user's own, a userinfo URL (D7); the token field itself becomes ${VAR} at apply (keys.js)
+    if (scope === 'project' && cur && cur.scope !== 'project')
+    {
+        const own = new Set(keys.tokenFields(entry, route).map((f) => f.at.join('.')));
+        const held = kept.credentialPaths(entry, row).filter((p) => !own.has(p));
+        if (held.length) return out.errors.push(`${row.id}: '${cur.name}' holds a credential in ${held.join(', ')}, which the committed .mcp.json must not carry - keep it at ${cur.scope} scope, or put a \${VAR} there first`);
     }
 
     // the key: at project scope the ${VAR} stays for each session's environment; at local and user scope apply.js writes

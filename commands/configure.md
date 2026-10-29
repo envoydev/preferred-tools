@@ -151,7 +151,8 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/plan.js" <tmp>/inventory.json <tmp>/answers.
 
 Paste the output verbatim in a fenced block: every CLI call, every file it writes, the key file each token route reads
 (at project scope, the variable to set), the sign-in a remote route will ask for, and the tools that can run code. A
-move to project scope writes `${VAR}` into `.mcp.json` in place of the key. A rename or a scope
+move to project scope writes `${VAR}` into `.mcp.json` in place of the key; one whose entry holds a credential anywhere
+else - a header of its own, a userinfo URL - is a plan error naming the field, never written. A rename or a scope
 move adds the new registration first, reads it back, then removes the old one; a route or location change rewrites it in
 place and keeps the old entry to put back if the add fails. Exit 1 means the plan has errors; show them and go back to
 the ask that causes them, never around them. Then:
