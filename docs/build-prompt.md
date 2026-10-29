@@ -363,14 +363,17 @@ never from memory.
 ## The fix command - `commands/fix.md` and `catalog/fixes.json`
 
 `disable-model-invocation: true`. `node scripts/fix.js --detect` runs every fix row's detector over the inventory
-and the machine and prints one table: row, tool (by registration name), what was found. Then one ask: 'Apply all found
-(Recommended)', 'Pick which' (the grouped shape), 'Skip'. `scripts/fix.js --apply <ids>` applies each pick. A
+and the machine and prints one table: row, tool (by registration name), what was found. Then one ask, only when a found
+problem can be applied: 'Apply all found (Recommended)', 'Pick which' (the grouped shape), 'Skip'. When every line is NOT
+APPLICABLE, nothing is asked: the lines are the advice. `scripts/fix.js --apply <ids>` applies each pick. A
 registration fix rewrites the entry through the CLI (remove, then add-json with the same name and scope). A file fix
 (the shim patch) edits the package file and keeps a `.bak`. Each fix is read back, then the restart line is printed. A
 row whose detector finds nothing is not shown. `/preferred-tools:fix <tool or id>` narrows it.
 
 A fix row: `id`, `tool`, `os`, `symptom` (what the user sees), `detect` (the name of a function in `scripts/fixes/`),
-`fix` (the same), `verifiedOn` (tool version and OS the fix was proved on), `source` (where the lesson comes from). Seed
+`fix` (the same), `verifiedOn` (tool version and OS the fix was proved on), `source` (where the lesson comes from),
+`advice` (`true` with `fix: null`: every finding is blocked - shown, never offered or applied, whatever its detector
+returned). Seed
 rows - each `source` line is the alfred-code file to read for the detail:
 
 | id | Symptom | Fix | Source |

@@ -290,10 +290,11 @@ test('fix windows-mcp-one-per-desktop: two real registrations on a simulated win
 {
     const p = h.project('fix-windows-mcp-one');
     const only = 'windows-mcp-one-per-desktop';
-    add(p, 'wd-a', freshEntry('windows-control', 'win32', 'x64', 'local'), 'local');
-    add(p, 'wd-b', freshEntry('windows-control', 'win32'), 'user');
     try
     {
+        // inside the try: a failed second add still removes the first (`add` asserts, the removes below do not)
+        add(p, 'wd-a', freshEntry('windows-control', 'win32', 'x64', 'local'), 'local');
+        add(p, 'wd-b', freshEntry('windows-control', 'win32'), 'user');
         // x64 as the FIXES cases: an ARM64 host would fire windows-arm-python on the same entries
         const mk = () => fix.makeCtx({ inv: h.inventory(p), catalog, env: h.env, platform: 'win32', arch: 'x64',
             machine: { exists: () => false, realpath: () => null, which: () => null, run: () => ({ status: 1, stdout: '', stderr: '' }), nodeVersion: process.versions.node } });

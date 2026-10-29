@@ -44,7 +44,9 @@ function detectAll(ctx, { only } = {})
         if (!fix.os.includes(ctx.platform)) continue;
         const detect = F[fix.detect];
         if (typeof detect !== 'function') throw new Error(`fix row ${fix.id}: no function ${fix.detect} in scripts/fixes/`);
-        for (const f of detect(ctx)) if (matches(f, only)) out.found.push({ ...f, kind: fix.kind, symptom: fix.symptom, documented: fix.documented !== false });
+        // an advice row has no fix: its finding is shown and never offered, whatever its detector returned
+        const advice = (f) => (fix.advice && !f.blocked ? { blocked: 'advice only - nothing here is applied' } : {});
+        for (const f of detect(ctx)) if (matches(f, only)) out.found.push({ ...f, ...advice(f), kind: fix.kind, symptom: fix.symptom, documented: fix.documented !== false });
     }
     return out;
 }

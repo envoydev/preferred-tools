@@ -324,6 +324,17 @@ test('windows-mcp-one-per-desktop: two servers give one blocked finding naming b
     assert.deepStrictEqual(mine(detect(two('darwin'))), []);
 });
 
+test("windows-mcp-one-per-desktop: each owner's own drop line", () =>
+{
+    const wd = reg('windows-control', fresh('windows-control', 'win32'));
+    const blockedWith = (other) => F.windowsMcpOneDetect(ctxFor({ platform: 'win32', project: '/proj', registrations: [wd, other] }))[0].blocked;
+    const alfred = { name: 'windows-control', scope: 'local', entry: {}, rowId: null, route: null, own: true, alfredRetired: true };
+    const parent = (r) => ({ ...r, scope: 'inherited', from: '/', approval: 'approved', shadowed: null });
+    assert.match(blockedWith(alfred), /claude mcp remove windows-control -s local/);
+    assert.match(blockedWith(parent(reg('windows-control', fresh('windows-control', 'win32'), { name: 'wd-parent' }))), /\/preferred-tools:configure \(Remove\), run in \.\./);
+    assert.match(blockedWith(parent(alfred)), /claude mcp remove windows-control -s project, run in \.\./);
+});
+
 test('questions: only NOT APPLICABLE findings give no apply ask', () =>
 {
     const advice = { id: 'windows-mcp-one-per-desktop', name: 'windows-desktop', scope: 'local', kind: 'registration', found: 'x', blocked: 'y' };
@@ -454,6 +465,30 @@ test('apply: picked ids only; --only narrows to one registration; an unknown id 
         // a held row cannot be picked into a change
         const held = fix.applyFixes(ctxOf(w, { platform: 'win32' }), ['serena-windows-ts-shim'], { log: () => {} });
         assert.strictEqual(held.applied.length, 0);
+    }
+    finally { w.clean(); }
+});
+
+test('an advice row never reaches a fix: a finding it returns unblocked is blocked by detectAll', () =>
+{
+    const w = world();
+    try
+    {
+        const entry = fresh('serena', process.platform, process.arch);
+        seed(w, 'serena', 'user', { ...entry, env: { SERENA_HOME: entry.env.SERENA_HOME } });
+        // a future advice row whose detector forgot `blocked`
+        const advice = { ...catalog.fixes.find((f) => f.id === 'serena-telemetry'), advice: true, fix: null };
+        const ctx = { ...ctxOf(w), catalog: { ...catalog, fixes: [advice] } };
+        const found = fix.detectAll(ctx).found;
+        assert.deepStrictEqual(found.map((f) => [f.id, f.blocked]), [['serena-telemetry', 'advice only - nothing here is applied']]);
+        assert.deepStrictEqual(fix.questions(fix.detectAll(ctx)), { choose: null, pick: [] });
+        const before = w.writes().length;
+        const lines = [];
+        const res = fix.applyFixes(ctx, ['all'], { log: (...a) => lines.push(a.join(' ')) });
+        assert.strictEqual(res.failed, null, lines.join('\n'));
+        assert.strictEqual(res.steps, 0);
+        assert.ok(lines.some((l) => l.startsWith('skipped serena-telemetry')), lines.join('\n'));
+        assert.deepStrictEqual(w.writes().slice(before), []);
     }
     finally { w.clean(); }
 });
