@@ -229,21 +229,22 @@ test('plugins: catalog rows by exact id, enabled read from the settings file at 
 });
 
 // Whether a plugin runs HERE: the first boolean in the git root's settings.local.json, this folder's settings.local.json,
-// its settings.json, then the user settings, from the install scope up (docs/sources.md, P1-P5)
-const plugState = (w, ids) => writeJson(path.join(w.dir, 'state', 'plugins.json'), { marketplaces: [], installed: ids.map(([id, scope]) =>
-    ({ id, version: '1.0.0', scope, enabled: true, installPath: '/c', ...(scope === 'user' ? {} : { projectPath: account.projectKey(w.project) }) })) });
+// its settings.json, then the user settings, whatever the install scope (docs/sources.md, P1-P6)
+const plugState = (w, ids) => writeJson(path.join(w.dir, 'state', 'plugins.json'), { marketplaces: [], installed: ids.map(([id, scope, enabled = true]) =>
+    ({ id, version: '1.0.0', scope, enabled, installPath: '/c', ...(scope === 'user' ? {} : { projectPath: account.projectKey(w.project) }) })) });
 const here = (i) => Object.fromEntries(i.plugins.map((p) => [p.id, [p.enabled, p.enabledHere]]));
 
-test('plugins: enabledHere reads the local files, then settings.json, then the install scope (P1-P3)', () => {
+test('plugins: enabledHere reads the local files, then settings.json, then the user settings, whatever the install scope (P1-P3, P6)', () => {
     const w = world();
     try
     {
-        plugState(w, [['a@m', 'user'], ['b@m', 'user'], ['c@m', 'user'], ['d@m', 'project'], ['e@m', 'local']]);
-        writeJson(path.join(w.account, 'settings.json'), { enabledPlugins: { 'a@m': true, 'b@m': true, 'c@m': true } });
-        writeJson(path.join(w.project, '.claude', 'settings.json'), { enabledPlugins: { 'a@m': false, 'b@m': false, 'd@m': false, 'e@m': false } });
+        plugState(w, [['a@m', 'user'], ['b@m', 'user'], ['c@m', 'user'], ['d@m', 'project'], ['e@m', 'local'], ['f@m', 'local'], ['g@m', 'project', false]]);
+        writeJson(path.join(w.account, 'settings.json'), { enabledPlugins: { 'a@m': true, 'b@m': true, 'c@m': true, 'g@m': true } });
+        writeJson(path.join(w.project, '.claude', 'settings.json'), { enabledPlugins: { 'a@m': false, 'b@m': false, 'd@m': false, 'e@m': false, 'f@m': false } });
         writeJson(path.join(w.project, '.claude', 'settings.local.json'), { enabledPlugins: { 'b@m': true, 'e@m': true } });
-        // [enabled at the install scope, enabledHere]: the first reading stays what configure and update act on
-        assert.deepStrictEqual(here(build(w)), { 'a@m': [true, false], 'b@m': [true, true], 'c@m': [true, true], 'd@m': [false, false], 'e@m': [true, true] });
+        // [enabled at the install scope, enabledHere]: the first reading stays what configure and update act on; f and g
+        // carry no key in their own install file, so the list's flag (true, false) is their per-scope reading
+        assert.deepStrictEqual(here(build(w)), { 'a@m': [true, false], 'b@m': [true, true], 'c@m': [true, true], 'd@m': [false, false], 'e@m': [true, true], 'f@m': [true, false], 'g@m': [false, true] });
     }
     finally { w.clean(); }
 });
@@ -550,4 +551,10 @@ test("windowsMcpServers: this folder's own server counts once approved, a plugin
     assert.deepStrictEqual(startsHere([WM('project', 'wd', { approval: 'pending' }), WM('user', 'wd')]), ['wd user catalog']);
     assert.deepStrictEqual(startsHere([], [{ ...PLUG('windows-control@envoydev', true), enabledHere: false }]), [], 'off for this project');
     assert.deepStrictEqual(startsHere([], [{ ...PLUG('windows-control@envoydev', false), enabledHere: true }]), ['windows-control@envoydev user alfred-code'], 'on for this project only');
+});
+
+test('windowsMcpServers: one plugin id installed at two scopes is one server, at the nearer scope (S28)', () => {
+    const at = (scope, enabled) => ({ ...PLUG('windows-control@envoydev', enabled, scope), enabledHere: true });
+    assert.deepStrictEqual(startsHere([], [at('user', false), at('project', true)]), ['windows-control@envoydev project alfred-code']);
+    assert.deepStrictEqual(startsHere([], [at('user', true), at('local', true)]), ['windows-control@envoydev local alfred-code']);
 });

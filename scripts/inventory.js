@@ -111,12 +111,11 @@ function ancestorMcpFiles(project)
 
 // The settings files a session started in `proj` reads, nearest first: the trust root's settings.local.json (the git
 // root, else the folder), this folder's settings.local.json, then its settings.json - a parent folder's settings.json
-// never counts (MEASURED: M7 for approvals, P4 and P5 for enabledPlugins). -> [{ scope: 'local' | 'project', file }]
+// never counts (MEASURED: M7 for approvals, P4 and P5 for enabledPlugins). -> [file]
 function hereSettings(proj)
 {
     const root = account.localRoot(proj);
-    const files = [{ scope: 'local', file: path.join(root, '.claude', 'settings.local.json') }, { scope: 'local', file: path.join(proj, '.claude', 'settings.local.json') }, { scope: 'project', file: path.join(proj, '.claude', 'settings.json') }];
-    return files.filter((f, i) => files.findIndex((g) => g.file === f.file) === i);
+    return [...new Set([path.join(root, '.claude', 'settings.local.json'), path.join(proj, '.claude', 'settings.local.json'), path.join(proj, '.claude', 'settings.json')])];
 }
 
 // What decides a parent's server here: the user settings, this folder's settings files, and its account entry and
@@ -125,7 +124,7 @@ function approvalContext(proj, env, acct, platform)
 {
     const root = account.localRoot(proj);
     const entry = account.projectEntry(acct.projects || {}, root, platform) || {};
-    return { user: readState(settingsOf('user', proj, env)).doc, folder: hereSettings(proj).map((f) => readState(f.file).doc), entry, trusted: entry.hasTrustDialogAccepted === true };
+    return { user: readState(settingsOf('user', proj, env)).doc, folder: hereSettings(proj).map((f) => readState(f).doc), entry, trusted: entry.hasTrustDialogAccepted === true };
 }
 
 const names = (doc, key, name) => Boolean(doc) && Array.isArray(doc[key]) && doc[key].includes(name);
@@ -141,12 +140,10 @@ function approvalOf(name, a)
     return 'pending';
 }
 
-const RANK = { local: 0, project: 1, user: 2 };
-
 function pluginRows(listJson, project, env, catalog, alfredCheck)
 {
     const rows = [];
-    const here = hereSettings(project).map((f) => ({ ...f, doc: readState(f.file).doc }));
+    const here = [...hereSettings(project), settingsOf('user', project, env)].map((f) => readState(f).doc);
     const flagIn = (doc, id) => (doc && doc.enabledPlugins ? doc.enabledPlugins[id] : undefined);
     for (const r of Array.isArray(listJson) ? listJson : [])
     {
@@ -162,9 +159,9 @@ function pluginRows(listJson, project, env, catalog, alfredCheck)
         }
         // Two readings, kept apart: `enabled` is the install scope's own, which configure and update act on (an `enable`
         // over an enabled scope exits 1, S28); `enabledHere` is whether it loads in this project - the first boolean in
-        // this project's settings files at or above the install scope, else `enabled` (MEASURED, P1-P5). Only the
-        // windows-mcp count reads it.
-        const flagHere = here.filter((f) => RANK[f.scope] <= RANK[r.scope]).map((f) => flagIn(f.doc, r.id)).find((v) => typeof v === 'boolean');
+        // this project's settings files, then the user settings, whatever the install scope, else `enabled` (MEASURED,
+        // P1-P6). Only the windows-mcp count reads it.
+        const flagHere = here.map((doc) => flagIn(doc, r.id)).find((v) => typeof v === 'boolean');
         const enabledHere = typeof flagHere === 'boolean' ? flagHere : enabled;
         const row = catalog.tools.find((t) => t.kind === 'plugin' && t.plugin === name && t.marketplace.name === marketplace);
         rows.push({
@@ -272,7 +269,7 @@ function installedOf(inv, rowId)
 // (docs/sources.md 'windows-mcp 0.8.8 - the sticky overlay failure'). One per name, the nearest: local, project (once
 // approved - M8; a hand-built inventory carries no approval), a parent's .mcp.json (approved and not shadowed - M7),
 // then user (M2, M3). Counted: the windows-control row's registrations, alfred-code's under its reserved name (its
-// launcher hides the package), and alfred-code's plugins that load here - on for this project (P1-P5), and an id its
+// launcher hides the package), and alfred-code's plugins that load here - on for this project (P1-P6), and an id its
 // marketplace dropped says so only in `errors` (plugin-cli-evidence S13, S25).
 // -> [{ name, scope, kind, owner: 'catalog' | 'alfred-code', from }]
 const WINDOWS_MCP_PLUGINS = ['windows-control', 'windows-desktop'];
@@ -282,11 +279,14 @@ function windowsMcpServers(inv)
     const starts = inv.registrations.filter((r) => (r.scope === 'inherited' ? r.approval === 'approved' && !r.shadowed : r.scope !== 'project' || !r.approval || r.approval === 'approved'));
     const wins = new Map();
     for (const r of starts.slice().sort((a, b) => NEAREST[a.scope] - NEAREST[b.scope])) if (!wins.has(r.name)) wins.set(r.name, r);
+    // one plugin id is one server, however many scopes hold an install row for it (S28): the nearest row names it
+    const loads = (inv.plugins || []).filter((p) => (p.enabledHere ?? p.enabled) && !(p.errors || []).length && p.marketplace === 'envoydev' && WINDOWS_MCP_PLUGINS.includes(p.plugin));
+    const nearest = new Map();
+    for (const p of loads.slice().sort((a, b) => NEAREST[a.scope] - NEAREST[b.scope])) if (!nearest.has(p.id)) nearest.set(p.id, p);
     return [
         ...[...wins.values()].filter((r) => r.rowId === 'windows-control' || (r.alfredRetired && r.name === 'windows-control'))
             .map((r) => ({ name: r.name, scope: r.scope, kind: 'mcp', owner: r.alfredRetired ? 'alfred-code' : 'catalog', from: r.from || null })),
-        ...(inv.plugins || []).filter((p) => (p.enabledHere ?? p.enabled) && !(p.errors || []).length && p.marketplace === 'envoydev' && WINDOWS_MCP_PLUGINS.includes(p.plugin))
-            .map((p) => ({ name: p.id, scope: p.scope, kind: 'plugin', owner: 'alfred-code', from: null })),
+        ...loads.filter((p) => nearest.get(p.id) === p).map((p) => ({ name: p.id, scope: p.scope, kind: 'plugin', owner: 'alfred-code', from: null })),
     ];
 }
 

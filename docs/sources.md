@@ -698,14 +698,19 @@ A throwaway `HOME` and `CLAUDE_CONFIG_DIR`, a directory marketplace `mk` with th
   `claude plugin disable pp@mk --scope local` run in `sub` writes the root's `.claude/settings.local.json`.
 - P5: in `sub`, the root's `settings.local.json` `false` over `sub`'s `settings.local.json` `true` - not loaded; the
   root's `true` over `sub`'s `settings.local.json` `false` and `settings.json` `false` - loaded.
+- P6: an install row whose own scope's file holds no key. `rr` (`--scope local`) with its `settings.local.json`
+  emptied: the project's `settings.json` `true` - loaded, `false` - not loaded, no key anywhere - not loaded (`plugin
+  list --json` reads `enabled: false`). `qq` (`--scope project`) with no key in the project's files: user `true` -
+  loaded, user `false` - not loaded, no key anywhere - not loaded. `pp` (`--scope user`) with user `false` and a
+  project's `settings.json` `true` - loaded there.
 - M8: a server in the session folder's own `.mcp.json`, by M7's rules: nothing set - `claude mcp list` '⏸ Pending
   approval'; `disabledMcpjsonServers` in `.claude/settings.local.json` - `claude mcp get` '✘ Rejected (see
   disabledMcpjsonServers in settings)'; `enableAllProjectMcpServers` in the user `settings.json` - started ('Failed to
   connect' for a server that exits at once).
 
 So a plugin loads by the first boolean `enabledPlugins[<id>]` in: the trust root's `settings.local.json` (the git root,
-else the folder), the session folder's `settings.local.json`, its `settings.json`, then the user settings - counting
-only files at or above the install scope (local, then project, then user). That is the file list the approvals above
+else the folder), the session folder's `settings.local.json`, its `settings.json`, then the user settings - whatever
+scope its install row is at (P6); no key anywhere - not loaded. The first three are the file list the approvals above
 read (M7). The inventory keeps it as `enabledHere` beside `enabled` (the install scope's own reading, which configure
-and update act on); only `windowsMcpServers` reads it, with the folder's own server's `approval` (M8). A side effect
-seen: a session in a project auto-created a local-scope install row for a plugin the marketplace lists.
+and update act on); only `windowsMcpServers` reads it, with the folder's own server's `approval` (M8), and counts one
+plugin id once, at its nearest install row - one id can hold rows at two scopes (`docs/plugin-cli-evidence.md` S28).
