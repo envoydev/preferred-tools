@@ -4,11 +4,14 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { world, writeJson, readJson, accountKey } = require('./helpers.js');
+const crypto = require('node:crypto');
+const { world, writeJson, readJson, accountKey, tempOf, files } = require('./helpers.js');
 const inventory = require('../scripts/inventory.js');
 const { plan } = require('../scripts/plan.js');
 const { apply } = require('../scripts/apply.js');
 const account = require('../scripts/account.js');
+const cli = require('../scripts/claude-cli.js');
+const { MARKER } = require('../scripts/kept.js');
 
 // the whole chain, as the walk runs it: inventory -> plan -> apply, against the fake claude on the world's PATH
 function walk(w, answers, { fail, planOpts = {} } = {})
@@ -319,6 +322,158 @@ test('the CLI form applies a written plan and exits 1 on a failure', () => {
         const withErrors = { ...p, errors: ['x'] };
         fs.writeFileSync(path.join(w.dir, 'bad.json'), JSON.stringify(withErrors));
         assert.strictEqual(spawnSync(process.execPath, [script, path.join(w.dir, 'bad.json')], { encoding: 'utf8', env: w.env }).status, 1);
+    }
+    finally { w.clean(); }
+});
+
+// ---- live values and the temp folder (no live credential in a file a command line names) -------------------------------
+
+const hex = (n) => crypto.randomBytes(n).toString('hex');
+const register = (w, name, entry, scope = 'local') => assert.strictEqual(cli.run(['mcp', 'add-json', name, JSON.stringify(entry), '-s', scope], { cwd: w.project, env: w.env }).status, 0);
+// the walk as the commands run it: the inventory as inventory.js writes it (every credential value kept), the plan from
+// it, then the apply, which puts the real values back from the registrations it reads
+function keptWalk(w, answers, { fail } = {})
+{
+    const env = { ...w.env };
+    if (fail) env.FAKE_CLAUDE_FAIL = fail;
+    const inv = inventory.keptOf(inventory.buildInventory({ project: w.project, env }));
+    const p = plan(inv, answers, { home: w.home, env });
+    const lines = [];
+    const report = apply(p, { env, tmp: path.join(w.dir, 'tmp'), log: (...a) => lines.push(a.join(' ')) });
+    return { p, report, text: lines.join('\n') };
+}
+
+test('a configure move and an in-place replace of an entry with live values write them at the target and no file under <tmp> holds them', () => {
+    const w = world();
+    try
+    {
+        const token = `sntryu_${hex(16)}`;
+        const key = `sk-live-${hex(16)}`;
+        const sentry = { command: 'npx', args: ['-y', '@sentry/mcp-server@0.42.0'], env: { SENTRY_ACCESS_TOKEN: token } };
+        register(w, 'sentry-live', sentry);
+        // appium with a key the user added to its env; a location change rewrites it in place
+        walk(w, { picks: { appium: { scope: 'user' } } });
+        const appium = accountDoc(w).mcpServers['appium-mcp'];
+        cli.run(['mcp', 'remove', 'appium-mcp', '-s', 'user'], { cwd: w.project, env: w.env });
+        register(w, 'appium-mcp', { ...appium, env: { ...appium.env, APPIUM_API_KEY: key } }, 'user');
+        const r = keptWalk(w, { change: { 'mcp:sentry-live~local': { name: 'sentry-moved' }, 'mcp:appium-mcp~user': { location: { side: 'account' } } } });
+        assert.deepStrictEqual(r.p.errors, []);
+        assert.deepStrictEqual(r.p.steps.filter((s) => s.op.startsWith('mcp-')).map((s) => s.op).sort(), ['mcp-move', 'mcp-replace']);
+        const planText = JSON.stringify(r.p);
+        assert.ok(planText.includes(MARKER) && !planText.includes(token) && !planText.includes(key), 'the plan carries the marker');
+        assert.strictEqual(r.report.failed, null, r.text);
+        const local = accountDoc(w).projects[accountKey(w.project)].mcpServers;
+        assert.deepStrictEqual(local['sentry-moved'], sentry, 'the real value at the target');
+        assert.strictEqual(local['sentry-live'], undefined);
+        const moved = accountDoc(w).mcpServers['appium-mcp'];
+        assert.strictEqual(moved.env.APPIUM_API_KEY, key, 'the in-place rewrite keeps the real key');
+        assert.notDeepStrictEqual(moved.env.SCREENSHOTS_DIR, appium.env.SCREENSHOTS_DIR, 'the location changed');
+        const tmp = files(path.join(w.dir, 'tmp'));
+        assert.ok(tmp.some((f) => f.endsWith('rollback.json')), 'the replace saved its rollback file');
+        for (const f of tmp) for (const v of [token, key]) assert.ok(!fs.readFileSync(f, 'utf8').includes(v), `a live value in ${path.basename(f)}`);
+        for (const v of [token, key]) assert.ok(!r.text.includes(v), 'nothing printed holds a live value');
+    }
+    finally { w.clean(); }
+});
+
+test('a failed replace prints a restore line with the marker, never the value', () => {
+    const w = world();
+    try
+    {
+        const key = `ctx7sk-${hex(8)}-${hex(8)}`;
+        register(w, 'context7', { type: 'http', url: 'https://mcp.context7.com/mcp', headers: { 'X-API-Key': key } });
+        const r = keptWalk(w, { change: { 'mcp:context7~local': { token: true } } }, { fail: 'add-json context7' });
+        assert.strictEqual(r.report.failed.op, 'mcp-replace');
+        assert.match(r.report.failed.detail, /RESTORE BY HAND: claude mcp add-json context7 '.*"X-API-Key":"\$\{PREFERRED_TOOLS_KEPT\}".*' -s local/);
+        assert.match(r.report.failed.detail, /put the real value back in place of \$\{PREFERRED_TOOLS_KEPT\}/);
+        assert.ok(!r.text.includes(key) && !r.report.failed.detail.includes(key));
+        for (const f of files(path.join(w.dir, 'tmp'))) assert.ok(!fs.readFileSync(f, 'utf8').includes(key));
+    }
+    finally { w.clean(); }
+});
+
+test('a registration changed since it was read is not written over', () => {
+    const w = world();
+    try
+    {
+        register(w, 'context7', { type: 'http', url: 'https://mcp.context7.com/mcp', headers: { 'X-API-Key': `ctx7sk-${hex(8)}-${hex(8)}` } });
+        const inv = inventory.keptOf(inventory.buildInventory({ project: w.project, env: w.env }));
+        const p = plan(inv, { change: { 'mcp:context7~local': { token: true } } }, { home: w.home, env: w.env });
+        // the key is taken out of the registration between the read and the apply
+        cli.run(['mcp', 'remove', 'context7', '-s', 'local'], { cwd: w.project, env: w.env });
+        register(w, 'context7', { type: 'http', url: 'https://mcp.context7.com/mcp', headers: { 'X-API-Key': '${CONTEXT7_API_KEY}' } });
+        const before = w.writes().length;
+        const report = apply(p, { env: w.env, tmp: path.join(w.dir, 'tmp'), log: () => {} });
+        assert.match(report.failed.detail, /'context7' changed since it was read - run the command again/);
+        assert.strictEqual(w.writes().length, before, 'no CLI write');
+    }
+    finally { w.clean(); }
+});
+
+test('apply removes <tmp> when no fetch follows', () => {
+    const w = world();
+    try
+    {
+        const t = tempOf(w);
+        const script = path.join(__dirname, '..', 'scripts', 'apply.js');
+        const run = (picks) =>
+        {
+            const dir = t.made();
+            const p = plan(inventory.buildInventory({ project: w.project, env: w.env }), { picks }, { home: w.home, env: w.env });
+            fs.writeFileSync(path.join(dir, 'plan.json'), JSON.stringify(p));
+            const r = spawnSync(process.execPath, [script, path.join(dir, 'plan.json'), '--tmp', dir], { encoding: 'utf8', env: t.env });
+            assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+            return { dir, r };
+        };
+        const hosted = run({ atlassian: { scope: 'project' } });
+        assert.ok(!fs.existsSync(hosted.dir), 'nothing handed on: the folder is gone');
+        const fetched = run({ serena: { scope: 'local' } });
+        assert.ok(fs.existsSync(path.join(fetched.dir, 'fetch.json')), 'a fetch file handed on keeps the folder for fetch.js');
+        assert.match(fetched.r.stdout, /Fetch next/);
+    }
+    finally { w.clean(); }
+});
+
+test('apply never removes a --tmp it did not make', () => {
+    const w = world();
+    try
+    {
+        const t = tempOf(w);
+        const script = path.join(__dirname, '..', 'scripts', 'apply.js');
+        // beside the temp folder, and in it under another name
+        for (const [dir, tool] of [[path.join(w.dir, 'mine'), 'atlassian'], [t.made('other-'), 'gitlab']])
+        {
+            const p = plan(inventory.buildInventory({ project: w.project, env: w.env }), { picks: { [tool]: { scope: 'project' } } }, { home: w.home, env: w.env });
+            fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(path.join(dir, 'plan.json'), JSON.stringify(p));
+            const r = spawnSync(process.execPath, [script, path.join(dir, 'plan.json'), '--tmp', dir], { encoding: 'utf8', env: t.env });
+            assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+            assert.ok(fs.existsSync(path.join(dir, 'plan.json')), `${path.basename(dir)} is left`);
+            assert.match(r.stdout, /left as it is/);
+        }
+    }
+    finally { w.clean(); }
+});
+
+test('tmpdir sweeps only its own folders older than 24 hours', () => {
+    const w = world();
+    try
+    {
+        const t = tempOf(w);
+        const old = t.made();
+        const fresh = t.made();
+        const other = t.made('other-');
+        const day = new Date(Date.now() - 25 * 3600 * 1000);
+        for (const d of [old, other]) fs.utimesSync(d, day, day);
+        const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'tmpdir.js')], { encoding: 'utf8', env: t.env });
+        assert.strictEqual(r.status, 0, r.stderr);
+        const made = r.stdout.trim();
+        assert.strictEqual(path.dirname(made), fs.realpathSync(t.root));
+        assert.match(path.basename(made), /^preferred-tools-/);
+        assert.ok(fs.existsSync(made));
+        assert.ok(!fs.existsSync(old), 'its own folder older than 24 hours is swept');
+        assert.ok(fs.existsSync(fresh), 'a newer one is left');
+        assert.ok(fs.existsSync(other), 'another program\'s folder is left');
     }
     finally { w.clean(); }
 });

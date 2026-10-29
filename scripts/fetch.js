@@ -21,6 +21,8 @@ const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const cli = require('./claude-cli.js');
 const account = require('./account.js');
+const kept = require('./kept.js');
+const tmpdir = require('./tmpdir.js');
 const { blockingStdio } = require('./json-file.js');
 
 const VERSION = 1;
@@ -95,10 +97,13 @@ function realStart(entry, { cwd, env, ms = START_MS })
 // -> the job apply.js hands over: { version, project, fetch: [fetch steps, each with the scope it was written at], check: [server names] }
 const job = (project, fetch, check) => ({ version: VERSION, project, fetch, check: [...new Set(check)] });
 
+// Each step's argv and env as kept.js keeps them, so the file a command line names holds no live credential: a download
+// needs none (a kept value expands to ''), and the first start reads the registration itself.
 function writeJob(file, j)
 {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, `${JSON.stringify(j, null, 2)}\n`);
+    const fetch = j.fetch.map((s) => { const k = kept.keep({ args: s.argv, env: s.env }, null); return { ...s, argv: k.args, env: k.env }; });
+    fs.writeFileSync(file, `${JSON.stringify({ ...j, fetch }, null, 2)}\n`);
     return file;
 }
 
@@ -177,7 +182,11 @@ async function main(argv)
     try { j = JSON.parse(fs.readFileSync(file, 'utf8')); }
     catch (e) { console.error(`fetch: cannot read ${file} (${e.message})`); return 2; }
     if (j.version !== VERSION || !Array.isArray(j.fetch) || !Array.isArray(j.check) || !j.project) { console.error(`fetch: ${file} is not a fetch file of version ${VERSION}`); return 2; }
-    return (await run(j, { log: (...a) => console.log(a.join('\n')) })).warnings.length ? 1 : 0;
+    const log = (...a) => console.log(a.join('\n'));
+    const res = await run(j, { log });
+    // the last script on the command's <tmp>: the folder the fetch file sits in goes with it
+    tmpdir.release(path.dirname(path.resolve(file)), log);
+    return res.warnings.length ? 1 : 0;
 }
 
 if (require.main === module) main(process.argv.slice(2)).then((code) => process.exit(code));

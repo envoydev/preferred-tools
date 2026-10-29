@@ -215,8 +215,9 @@ Two rules hold for every command and the skill:
    (the four engines); Machine and monitoring (appium, this OS's desktop control, sentry, claude-hud). On Linux the
    last group has three. An installed row's label says `(installed as <name>, <scope>)`.
 5. Ask once: 'Use the recommended settings for all (Recommended)' or 'Set each tool'. Set each, per tool:
-   - first, its own call for two-route rows only - route: 'Remote' or 'Local', recommended remote where it needs no
-     local runtime;
+   - first, its own call for two-route rows only - route: 'Hosted' or 'Local' (the `remote` route, worded 'Hosted' because
+     alfred-code's stop guard reads a bare 'remote' in an ask as git state), recommended hosted where it needs no local
+     runtime;
    - then one call of up to four questions, each with two or more options and the recommended one first. Its scope
      options follow from the route just answered (`project` offered only where 'Scopes and paths' allows it), and
      `plan.js` rejects a forbidden route and scope pair, with a test:

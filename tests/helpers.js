@@ -46,4 +46,23 @@ const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
 // typed, in `/`. fake-claude.js writes the same.
 const accountKey = (project) => (process.platform === 'win32' ? path.resolve(project).replace(/\\/g, '/') : fs.realpathSync.native(project));
 
-module.exports = { world, writeJson, readJson, accountKey, FAKE };
+// A temp folder of the world's own, for a script run as a child: TMPDIR (TEMP and TMP on Windows) point into it, so the
+// script's os.tmpdir() is there and nothing in the machine's temp folder is made, swept or removed. `made()` is a folder
+// as tmpdir.js makes one; `files(dir)` every file below a folder.
+function tempOf(w)
+{
+    const root = path.join(w.dir, 'temp');
+    fs.mkdirSync(root, { recursive: true });
+    const env = { ...w.env, TMPDIR: root, TEMP: root, TMP: root };
+    const made = (prefix = 'preferred-tools-') => fs.mkdtempSync(path.join(fs.realpathSync(root), prefix));
+    return { root, env, made };
+}
+function files(dir)
+{
+    const out = [];
+    const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).forEach((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : out.push(path.join(d, e.name))));
+    if (fs.existsSync(dir)) walk(dir);
+    return out;
+}
+
+module.exports = { world, writeJson, readJson, accountKey, tempOf, files, FAKE };

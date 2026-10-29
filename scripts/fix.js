@@ -18,6 +18,7 @@ const catalogLib = require('./catalog.js');
 const inventory = require('./inventory.js');
 const account = require('./account.js');
 const { apply } = require('./apply.js');
+const tmpdir = require('./tmpdir.js');
 const cli = require('./claude-cli.js');
 const { blockingStdio } = require('./json-file.js');
 const F = require('./fixes/index.js');
@@ -100,7 +101,7 @@ function questions(detected)
 
 function applyFixes(ctx, ids, { only, input = {}, tmp, log = console.log, runCli = cli.run } = {})
 {
-    const res = { applied: [], skipped: [], failed: null, remaining: [], steps: 0, fetchFile: null };
+    const res = { applied: [], skipped: [], failed: null, remaining: [], steps: 0, fetchFile: null, tmp: tmp || null };
     const known = new Set(ctx.catalog.fixes.map((f) => f.id));
     const unknown = ids.filter((id) => id !== 'all' && !known.has(id));
     if (unknown.length) { res.failed = `unknown fix id${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}`; log(res.failed); return res; }
@@ -143,7 +144,8 @@ function applyFixes(ctx, ids, { only, input = {}, tmp, log = console.log, runCli
             return f ? [s, f] : [s];
         });
         const plan = { version: 1, project: ctx.inv.project, os: ctx.platform, steps: withFetch, notes: [], errors: [], expect: steps.map((s) => ({ kind: 'mcp', name: s.name, scope: s.scope, route: ctx.inv.registrations.find((r) => r.name === s.name && r.scope === s.scope).route })) };
-        const report = apply(plan, { env: ctx.env, tmp: tmp || fs.mkdtempSync(path.join(os.tmpdir(), 'preferred-tools-fix-')), runCli, log });
+        res.tmp = tmp || fs.mkdtempSync(path.join(os.tmpdir(), 'preferred-tools-fix-'));
+        const report = apply(plan, { env: ctx.env, tmp: res.tmp, runCli, log });
         res.fetchFile = report.fetchFile;
         if (report.failed) { res.failed = report.failed.detail; return res; }
     }
@@ -212,7 +214,14 @@ function main(argv, { env = process.env, out = (s) => process.stdout.write(`${s}
     const inv = inventory.buildInventory({ project, env });
     if (!inv.cli.ok) { out('preferred-tools: the claude CLI is not on PATH - install Claude Code, then run this again.'); return 3; }
     const ctx = makeCtx({ inv, env, machine });
-    if (args.apply) return applyFixes(ctx, args.apply.split(',').filter(Boolean), { only: args.only, input: args.input, tmp: args.tmp, log: (...a) => out(a.join('\n')) }).failed ? 1 : 0;
+    if (args.apply)
+    {
+        const log = (...a) => out(a.join('\n'));
+        const res = applyFixes(ctx, args.apply.split(',').filter(Boolean), { only: args.only, input: args.input, tmp: args.tmp, log });
+        // the last script on <tmp> removes it, unless fetch.js takes it on
+        if (!res.fetchFile) tmpdir.release(res.tmp, log);
+        return res.failed ? 1 : 0;
+    }
     const detected = detectAll(ctx, { only: args.only });
     if (args.questions) out(JSON.stringify(questions(detected), null, 2));
     else out(args.json ? JSON.stringify(detected, null, 2) : render(detected));

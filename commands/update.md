@@ -68,7 +68,8 @@ a language server installs through npm, and the new MCP pins are downloaded afte
 offer with a known newer version; an unchecked plugin runs only when its own id is given. Each update is read back: a
 plugin from the plugin list, an MCP pin from the file the CLI wrote, a language server from `--version`. A failed MCP
 rewrite puts the old registration back and prints the line that does it by hand if that fails too (`RESTORE BY HAND`):
-give it to the user as written. Paste the output verbatim, then report each result as read back.
+give it to the user as written.
+A key in it shows as `${PREFERRED_TOOLS_KEPT}`, never its value: the user puts their key back there. Paste the output verbatim, then report each result as read back.
 
 A new pin is not in the runtime's cache yet, so an MCP update prints `Fetch next, in the background (...): <file>`. Run,
 with the Bash tool's `run_in_background`:

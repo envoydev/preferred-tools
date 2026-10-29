@@ -7,7 +7,7 @@ a short walk instead of a hunt through old notes.
 It installs nothing by itself. You drive it through four manual commands:
 
 - `/preferred-tools:install` - adds tools that are not installed in this project: pick them, then per tool the route
-  (remote or local, where the tool has both), the scope, the registration name and the data location. A tool you
+  (hosted or local, where the tool has both), the scope, the registration name and the data location. A tool you
   installed for every project can get this project's own copy; the account-wide one stays as it is. It shows one plan,
   applies it after one confirmation and reads the result back.
 - `/preferred-tools:configure` - changes or removes what is installed: pick a registration or plugin, then change its

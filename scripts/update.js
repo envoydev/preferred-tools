@@ -25,6 +25,7 @@ const registryLib = require('./registry.js');
 const E = require('./entries.js');
 const fetchLib = require('./fetch.js');
 const { apply } = require('./apply.js');
+const tmpdir = require('./tmpdir.js');
 const { blockingStdio } = require('./json-file.js');
 const { realMachine, clone, compareVersions, pinnedVersion } = require('./fixes/common.js');
 const { bareName } = inventory;
@@ -294,10 +295,11 @@ function updateMcp(ctx, offer, tmp, log)
 // -> { applied: [id], failed: [id], unknown: [id], fetchFile }
 function applyUpdates(ctx, ids, out, { tmp, log = console.log } = {})
 {
-    const res = { applied: [], failed: [], unknown: [], fetchFile: null };
+    const res = { applied: [], failed: [], unknown: [], fetchFile: null, dir: null };
     const known = [...out.offers, ...out.unchecked];
     const chosen = ids.includes('all') ? [...out.offers, ...ids.filter((i) => i !== 'all').map((i) => known.find((o) => o.id === i)).filter(Boolean)] : ids.map((i) => known.find((o) => o.id === i) || i);
     const dir = tmp || fs.mkdtempSync(path.join(os.tmpdir(), 'preferred-tools-'));
+    res.dir = dir;
     ctx.fetches = [];
     for (const c of chosen)
     {
@@ -348,7 +350,10 @@ async function main(argv, { env = process.env, out = (s) => process.stdout.write
     const found = await check(ctx);
     if (args.apply)
     {
-        const res = applyUpdates(ctx, args.apply.split(',').filter(Boolean), found, { tmp: args.tmp, log: (...a) => out(a.join('\n')) });
+        const log = (...a) => out(a.join('\n'));
+        const res = applyUpdates(ctx, args.apply.split(',').filter(Boolean), found, { tmp: args.tmp, log });
+        // the last script on <tmp> removes it, unless fetch.js takes it on; apply() per server never does
+        if (!res.fetchFile) tmpdir.release(res.dir, log);
         return res.failed.length || res.unknown.length ? 1 : 0;
     }
     if (args.questions) out(JSON.stringify(questions(found), null, 2));

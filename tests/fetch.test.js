@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { world, writeJson } = require('./helpers.js');
+const { world, writeJson, tempOf } = require('./helpers.js');
 const E = require('../scripts/entries.js');
 const fetchLib = require('../scripts/fetch.js');
 
@@ -115,6 +115,26 @@ test('a first start that never answers is stopped at its limit, with everything 
         const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
         for (let i = 0; i < 20 && alive(); i++) await new Promise((r) => setTimeout(r, 100));
         assert.strictEqual(alive(), false, 'the server\'s own child is gone too');
+    }
+    finally { w.clean(); }
+});
+
+test('fetch removes <tmp> when it ends', () => {
+    const w = world();
+    try
+    {
+        const t = tempOf(w);
+        const dir = t.made();
+        const file = fetchLib.writeJob(path.join(dir, 'fetch.json'), fetchLib.job(w.project, [], []));
+        const r = spawnSync(process.execPath, [SCRIPT, file], { encoding: 'utf8', env: t.env, timeout: 60000 });
+        assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+        assert.ok(!fs.existsSync(dir), 'the folder the command shared is gone');
+        // a fetch file in a folder this plugin did not make: left, and said
+        const mine = fetchLib.writeJob(path.join(w.dir, 'mine', 'fetch.json'), fetchLib.job(w.project, [], []));
+        const k = spawnSync(process.execPath, [SCRIPT, mine], { encoding: 'utf8', env: t.env, timeout: 60000 });
+        assert.strictEqual(k.status, 0, k.stdout + k.stderr);
+        assert.ok(fs.existsSync(mine));
+        assert.match(k.stdout, /left as it is/);
     }
     finally { w.clean(); }
 });

@@ -13,6 +13,7 @@ const path = require('node:path');
 const catalogLib = require('./catalog.js');
 const account = require('./account.js');
 const cli = require('./claude-cli.js');
+const kept = require('./kept.js');
 const { readState } = account;
 const { blockingStdio } = require('./json-file.js');
 
@@ -160,6 +161,14 @@ function buildInventory({ project, env = process.env, platform = process.platfor
     return out;
 }
 
+// The inventory as a file or a print holds it: every credential value as kept.js's marker, so no command line names a
+// file with a live one (alfred-code's guard refuses it) and nothing printed puts one in the chat. apply.js takes the
+// real values back from the registrations themselves.
+function keptOf(inv, catalog = catalogLib.load())
+{
+    return { ...inv, registrations: inv.registrations.map((r) => ({ ...r, entry: kept.keep(r.entry, r.rowId ? catalog.byId.get(r.rowId) : null) })) };
+}
+
 // What a row looks like installed: every registration or plugin that belongs to it, with its scope.
 function installedOf(inv, rowId)
 {
@@ -194,7 +203,7 @@ function main(argv)
         console.error('preferred-tools: the claude CLI is not on PATH - install Claude Code, then run this again.');
         return 3;
     }
-    const text = JSON.stringify(inv, null, 2);
+    const text = JSON.stringify(keptOf(inv), null, 2);
     if (outFile) fs.writeFileSync(outFile, text);
     else console.log(text);
     for (const u of inv.unreadable) console.error(`preferred-tools: ${u.file} is ${u.state}${u.error ? ` (${u.error})` : ''} - the ${u.scope} scope is treated as unreadable and nothing will be written there.`);
@@ -204,4 +213,4 @@ function main(argv)
 }
 
 if (require.main === module) process.exit(main(process.argv.slice(2)));
-module.exports = { launchTokens, bareName, matchEntry, matchesFingerprint, buildInventory, installedOf, keyOf, targetOf, pluginRows };
+module.exports = { launchTokens, bareName, matchEntry, matchesFingerprint, buildInventory, keptOf, installedOf, keyOf, targetOf, pluginRows };

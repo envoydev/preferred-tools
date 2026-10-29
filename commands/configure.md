@@ -94,7 +94,7 @@ order:
 
 | Answer | Entry |
 |---|---|
-| route 'Remote' / 'Local', when it is not `current.route` | `"route": "remote"` / `"local"` |
+| route 'Hosted' / 'Local', when it is not `current.route` | `"route": "remote"` / `"local"` |
 | scope, the label's first word, when it is not `current.scope` | `"scope": "local"` / `"project"` / `"user"` |
 | name 'Keep ...' | nothing |
 | name 'Use `x`' or Other | `"name": "x"` |
@@ -170,6 +170,7 @@ fetch below, so the apply ends well inside the limit and its report comes back i
 in `allowed-tools` - so a skipped ask still cannot change anything. It runs the calls in order, reads each back from the
 file the CLI wrote, and stops at the first failure, leaving what was applied in place and naming it. Paste the output
 verbatim. A failure prints the line that puts a registration back (`RESTORE BY HAND`): give it to the user as written.
+A key in it shows as `${PREFERRED_TOOLS_KEPT}`, never its value: the user puts their key back there.
 
 Then report each changed tool as the read-back printed it (name, scope, route). A moved data folder moves no data: the
 plan named the old folder, so name it again. Tokens: list the variable names to set, nothing else.

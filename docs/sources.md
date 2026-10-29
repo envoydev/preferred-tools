@@ -442,3 +442,11 @@ The rest of the CONTEXT lines only inform and are recorded as PASS: `docs-sessio
 UserPromptSubmit. `fix` and `update` passed whole at every release. NOT RUN in every install and configure session:
 `fetch.js "<file>"` (the replayed apply handed no fetch file on) and `hud-statusline.js --check` (claude-hud not
 picked).
+
+**After the fix (same day, same releases and folders).** Every file a command line names carries a credential value as
+`${PREFERRED_TOOLS_KEPT}` (`scripts/kept.js`), which the guard's `isPlaceholder` reads as no value, and `apply.js` takes
+the real one back from the registration in its own process; the route is worded 'hosted' in every ask. The full replay
+gave 1864 PASS, 0 `shell-guards.js` blocks, no Stop block and no rotation ask; its only FINDINGs were the remote-state
+note on configure's change pick ('remote route, pin ...'), and a configure replay after that word changed gave 631 PASS
+and 0 FINDING at every release. The NOT RUN lines are the same two as before (no fetch file handed on, claude-hud not
+picked).

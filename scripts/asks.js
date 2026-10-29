@@ -8,6 +8,9 @@ const { installedOf, keyOf, targetOf } = require('./inventory.js');
 const { pinOf } = require('./table.js');
 
 const REC = ' (Recommended)';
+// The `remote` route is worded 'hosted' in every ask: alfred-code's stop guard reads a bare 'remote' in an ask as git
+// state and sends Claude to fetch and re-ask (docs/sources.md, 'alfred-code hooks over the commands').
+const ROUTE_WORD = { remote: 'hosted', local: 'local' };
 const HEADER = { code: 'Code', docs: 'Docs, forges', browsers: 'Browsers', machine: 'Machine' };
 const SCOPE_TEXT = {
     local: 'this project, on this machine only (kept in your account file)',
@@ -107,7 +110,7 @@ function changeQuestions(inv, catalog)
     {
         if (h.kind === 'plugin') return `${h.version ? `version ${h.version}` : 'installed'}${h.enabled ? '' : ', disabled'}`;
         const pin = pinOf(row, h.route, h.entry);
-        return `${h.route} route${pin ? `, pin ${pin}` : ''}`;
+        return `${ROUTE_WORD[h.route] || h.route} route${pin ? `, pin ${pin}` : ''}`;
     };
     const items = installedItems(inv, catalog, describe);
     return {
@@ -123,10 +126,10 @@ function routeQuestion(row, current = null)
     if (ids.length < 2) return null;
     const first = current || row.recommendedRoute;
     const order = [first, ...ids.filter((i) => i !== first)];
-    const text = { remote: 'hosted by the vendor - no local runtime needed', local: 'runs on this machine' };
+    const text = { remote: 'run by the vendor - no local runtime needed', local: 'runs on this machine' };
     return {
-        id: `route-${row.id}`, header: 'Route', multiSelect: false, question: `${row.label}: remote or local?`,
-        options: order.map((r, i) => ({ label: `${r === 'remote' ? 'Remote' : 'Local'}${i === 0 ? REC : ''}`, description: text[r] })),
+        id: `route-${row.id}`, header: 'Route', multiSelect: false, question: `${row.label}: hosted or local?`,
+        options: order.map((r, i) => ({ label: `${ROUTE_WORD[r][0].toUpperCase()}${ROUTE_WORD[r].slice(1)}${i === 0 ? REC : ''}`, description: text[r] })),
     };
 }
 

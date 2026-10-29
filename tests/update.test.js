@@ -4,7 +4,8 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
-const { world, writeJson, readJson } = require('./helpers.js');
+const crypto = require('node:crypto');
+const { world, writeJson, readJson, tempOf } = require('./helpers.js');
 const inventory = require('../scripts/inventory.js');
 const { plan } = require('../scripts/plan.js');
 const { apply } = require('../scripts/apply.js');
@@ -344,4 +345,43 @@ test('arguments: exactly one mode, and a stray flag is refused', async () =>
         assert.match((await run(w, ['--nope'])).text, /unknown argument/);
     }
     finally { w.clean(); }
+});
+
+test('update --apply keeps <tmp> while a fetch file is handed on, and apply() called per server never removes it', async () =>
+{
+    const w = world();
+    // update.main runs in this process: its os.tmpdir() is pointed at the world's own temp folder for the test
+    const saved = { TMPDIR: process.env.TMPDIR, TEMP: process.env.TEMP, TMP: process.env.TMP };
+    try
+    {
+        const t = tempOf(w);
+        Object.assign(process.env, { TMPDIR: t.root, TEMP: t.root, TMP: t.root });
+        install(w, { picks: { sentry: { route: 'local', scope: 'local' }, serena: { scope: 'local' } } });
+        // a live token in the sentry registration, as a user may have written it there
+        const token = `sntryu_${crypto.randomBytes(16).toString('hex')}`;
+        const before = inventory.buildInventory({ project: w.project, env: w.env }).registrations.find((r) => r.rowId === 'sentry');
+        cli.run(['mcp', 'remove', before.name, '-s', 'local'], { cwd: w.project, env: w.env });
+        cli.run(['mcp', 'add-json', before.name, JSON.stringify({ ...before.entry, env: { ...before.entry.env, SENTRY_ACCESS_TOKEN: token } }), '-s', 'local'], { cwd: w.project, env: w.env });
+        const reg = fakeRegistry({ ...pypiSerena(['2.1.0', 60], ['2.2.0', 20]), 'npm:@sentry/mcp-server': [{ version: '0.42.0', time: ago(60) }, { version: '0.43.0', time: ago(20) }] });
+
+        const dir = t.made();
+        fs.writeFileSync(path.join(dir, 'inventory.json'), '{}');
+        const a = await run(w, ['--apply', `mcp:serena~local,mcp:${before.name}~local`, '--tmp', dir], { registry: reg });
+        assert.strictEqual(a.code, 0, a.text);
+        assert.ok(fs.existsSync(path.join(dir, 'inventory.json')), 'apply() per server never removes the shared folder');
+        const job = fs.readFileSync(path.join(dir, 'fetch.json'), 'utf8');
+        assert.deepStrictEqual(JSON.parse(job).fetch.map((s) => s.name).sort(), [before.name, 'serena'].sort());
+        assert.ok(!job.includes(token), 'the fetch file holds no live value');
+        assert.ok(!a.text.includes(token));
+
+        const none = t.made();
+        const b = await run(w, ['--apply', 'mcp:nothing~local', '--tmp', none], { registry: reg });
+        assert.strictEqual(b.code, 1);
+        assert.ok(!fs.existsSync(none), 'nothing handed on: the folder is removed');
+    }
+    finally
+    {
+        for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+        w.clean();
+    }
 });

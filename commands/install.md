@@ -87,7 +87,7 @@ project is never offered, so this adds only: nothing installed is changed.
 
 | Answer | Entry |
 |---|---|
-| route 'Remote' / 'Local' | `"route": "remote"` / `"local"` |
+| route 'Hosted' / 'Local' | `"route": "remote"` / `"local"` |
 | scope, the label's first word | `"scope": "local"` / `"project"` / `"user"` |
 | name 'Keep ...' | `"name": "keep"` |
 | name 'Use `x`' or Other | `"name": "x"` |
@@ -162,6 +162,7 @@ well inside the limit and its report comes back in this turn. Claude Code asks p
 skipped ask still cannot change anything. It runs the calls in order, reads each back from the file the CLI wrote, and
 stops at the first failure, leaving what was applied in place and naming it. Paste the output verbatim. A failure prints
 the line that puts a registration back (`RESTORE BY HAND`): give it to the user as written.
+A key in it shows as `${PREFERRED_TOOLS_KEPT}`, never its value: the user puts their key back there.
 
 Then report each picked tool as the read-back printed it (name, scope, route). Start step 8, and while it runs, continue
 with 'claude-hud' if the plan set `hudAfter`. Tokens: list the variable names to set, nothing else. Close with one line: a

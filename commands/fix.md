@@ -52,6 +52,7 @@ fix (a global npm install) runs after. Each fix is read back by running its dete
 Run it with the Bash tool's `timeout: 600000` (10 minutes, the most it allows by default); a global npm install is the slow part.
 Paste the output verbatim. Report each fix as 'fixed' or 'STILL FOUND', each skipped one with its reason, and a failure
 with the line it printed - a failed rewrite prints a `RESTORE BY HAND` line, give it to the user as written.
+A key in it shows as `${PREFERRED_TOOLS_KEPT}`, never its value: the user puts their key back there.
 
 A fix that changes what a server launches (a python request, a cut-off) prints `Fetch next, in the background (...):
 <file>`. Run, with the Bash tool's `run_in_background`, `node "${CLAUDE_PLUGIN_ROOT}/scripts/fetch.js" "<file>"`: it

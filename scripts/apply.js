@@ -13,6 +13,11 @@
 //
 // A plan's fetch steps are not run here. They go to <tmp>/fetch.json with the names of the servers written, for fetch.js:
 // a first download takes minutes, and a command cut off by its time limit must never leave half a plan applied.
+//
+// A plan read from the commands' files carries each credential value as kept.js's marker (inventory.js writes it so).
+// Before a replace or a move, the real values are taken back in this process from the registration as it is now, and a
+// registration that changed since it was read stops the step. No file under <tmp> and no printed line holds a live value:
+// rollback.json is kept, and a restore line shows the marker in place of the key.
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -22,10 +27,20 @@ const inventory = require('./inventory.js');
 const fetchLib = require('./fetch.js');
 const { argvOf, deepEqual } = require('./plan.js');
 const { blockingStdio } = require('./json-file.js');
+const kept = require('./kept.js');
+const catalogLib = require('./catalog.js');
+const tmpdir = require('./tmpdir.js');
 
 const SCRIPTS = __dirname;
 const quote = (s) => (/^[A-Za-z0-9_\-./:=@,+]+$/.test(s) ? s : `'${s.replace(/'/g, "'\\''")}'`);
 const restoreLine = (name, scope, entry) => `claude mcp add-json ${quote(name)} ${quote(JSON.stringify(entry))} -s ${scope}`;
+// the line that puts a registration back by hand, its credential values as the marker
+function restoreBy(ctx, step, name, scope, entry)
+{
+    const k = kept.keep(entry, rowOf(ctx, step));
+    return `${restoreLine(name, scope, k)}${kept.holdsKept(k) ? ` - put the real value back in place of ${kept.MARKER}` : ''}`;
+}
+const rowOf = (ctx, step) => (step.row ? ctx.catalog.byId.get(step.row) || null : null);
 
 const readRegistration = account.readRegistration;
 
@@ -55,6 +70,21 @@ function removeAndVerify(call, ctx, name, scope)
     return { ok: true, detail: `removed '${name}' from ${scope} scope` };
 }
 
+// A replace or a move read from a kept plan gets its real values back from the registration it was read from: the old
+// name and scope for a move, its own for a replace. -> { step } | { error }
+function restoreStep(step, ctx)
+{
+    if (!['mcp-add', 'mcp-replace', 'mcp-move'].includes(step.op) || !(kept.holdsKept(step.entry) || kept.holdsKept(step.old))) return { step };
+    if (step.op === 'mcp-add') return { error: `'${step.name}' holds a kept value and no registration to take it from - run the command again` };
+    const from = step.op === 'mcp-move' ? step.from : { name: step.name, scope: step.scope };
+    const changed = { error: `'${from.name}' changed since it was read - run the command again` };
+    const source = readRegistration(from.name, from.scope, ctx.project, ctx.env);
+    const row = rowOf(ctx, step);
+    if (!source || (step.old && !deepEqual(kept.keep(source, row), step.old))) return changed;
+    const entry = kept.restore(step.entry, source, row);
+    return entry.error ? changed : { step: { ...step, entry: entry.entry, old: step.old ? source : step.old } };
+}
+
 function pluginState(ctx, id, scope)
 {
     const inv = inventory.buildInventory({ project: ctx.project, env: ctx.env });
@@ -78,13 +108,13 @@ function runStep(step, ctx)
         case 'mcp-replace': {
             const file = path.join(ctx.tmp, 'rollback.json');
             fs.mkdirSync(ctx.tmp, { recursive: true });
-            fs.writeFileSync(file, JSON.stringify({ name: step.name, scope: step.scope, entry: step.old, project: ctx.project }, null, 2));
+            fs.writeFileSync(file, JSON.stringify({ name: step.name, scope: step.scope, entry: kept.keep(step.old, rowOf(ctx, step)), project: ctx.project }, null, 2));
             const rm = removeAndVerify(call, ctx, step.name, step.scope);
-            if (!rm.ok) return { ok: false, detail: `${rm.detail} - the old entry is untouched or restored by hand: ${restoreLine(step.name, step.scope, step.old)}` };
+            if (!rm.ok) return { ok: false, detail: `${rm.detail} - the old entry is untouched or restored by hand: ${restoreBy(ctx, step, step.name, step.scope, step.old)}` };
             const add = addAndVerify(call, ctx, step.name, step.scope, step.entry);
             if (add.ok) return { ok: true, detail: `rewrote '${step.name}' at ${step.scope} scope (old entry saved in ${file})` };
             const back = addAndVerify(call, ctx, step.name, step.scope, step.old);
-            return { ok: false, detail: `${add.detail}; ${back.ok ? 'the old entry was re-added' : `RESTORE BY HAND: ${restoreLine(step.name, step.scope, step.old)}`}` };
+            return { ok: false, detail: `${add.detail}; ${back.ok ? 'the old entry was re-added' : `RESTORE BY HAND: ${restoreBy(ctx, step, step.name, step.scope, step.old)}`}` };
         }
         case 'mcp-move': {
             const add = addAndVerify(call, ctx, step.to.name, step.to.scope, step.entry);
@@ -129,20 +159,22 @@ function runStep(step, ctx)
 function apply(plan, { env = process.env, tmp, runCli = cli.run, log = console.log, fetchFile } = {})
 {
     const project = plan.project;
-    const report = { applied: [], failed: null, notRun: [], readback: [], noop: false, toFetch: [], fetch: null, fetchFile: null };
+    const report = { applied: [], failed: null, notRun: [], readback: [], noop: false, toFetch: [], fetch: null, fetchFile: null, tmp: tmp || null };
     if (!plan.steps.length)
     {
         report.noop = true;
         log('Nothing to apply: every answer already matches what is installed. No claude call was made.');
         return report;
     }
-    const ctx = { project, env, tmp: tmp || fs.mkdtempSync(path.join(os.tmpdir(), 'preferred-tools-')), runCli };
+    const ctx = { project, env, tmp: tmp || fs.mkdtempSync(path.join(os.tmpdir(), 'preferred-tools-')), runCli, catalog: catalogLib.load() };
     ctx.call = makeRunner(ctx);
+    report.tmp = ctx.tmp;
     for (let i = 0; i < plan.steps.length; i++)
     {
         const step = plan.steps[i];
         if (step.op === 'fetch') { report.toFetch.push(step); log(`${i + 1}. later  ${step.why} (fetch.js, after the read-back)`); continue; }
-        const r = runStep(step, ctx);
+        const ready = restoreStep(step, ctx);
+        const r = ready.error ? { ok: false, detail: ready.error } : runStep(ready.step, ctx);
         if (r.ok) { report.applied.push({ i: i + 1, op: step.op, detail: r.detail }); log(`${i + 1}. ok     ${r.detail}`); continue; }
         report.failed = { i: i + 1, op: step.op, detail: r.detail };
         log(`${i + 1}. FAILED ${r.detail}`);
@@ -197,9 +229,12 @@ function main(argv)
     const plan = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (plan.errors && plan.errors.length) { console.error(`apply: the plan has errors - nothing applied:\n${plan.errors.map((e) => `  ! ${e}`).join('\n')}`); return 1; }
     const at = argv.indexOf('--tmp');
-    const report = apply(plan, { tmp: at >= 0 ? argv[at + 1] : undefined, log: (...a) => console.log(a.join('\n')) });
+    const log = (...a) => console.log(a.join('\n'));
+    const report = apply(plan, { tmp: at >= 0 ? argv[at + 1] : undefined, log });
+    // the last script on <tmp> removes it: this one, unless fetch.js takes it on
+    if (!report.fetchFile) tmpdir.release(report.tmp, log);
     return report.failed ? 1 : 0;
 }
 
 if (require.main === module) process.exit(main(process.argv.slice(2)));
-module.exports = { apply, runStep, readRegistration, restoreLine };
+module.exports = { apply, runStep, restoreStep, readRegistration, restoreLine };

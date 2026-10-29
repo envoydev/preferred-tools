@@ -5,6 +5,8 @@ const path = require('node:path');
 const catalogLib = require('../scripts/catalog.js');
 const { plan, render, argvOf } = require('../scripts/plan.js');
 const asks = require('../scripts/asks.js');
+const inventoryLib = require('../scripts/inventory.js');
+const { MARKER } = require('../scripts/kept.js');
 
 const catalog = catalogLib.load();
 const clone = () => JSON.parse(JSON.stringify({ ...catalog, reserved: [...catalog.reserved], byId: undefined }));
@@ -447,6 +449,43 @@ test('every question has 2 to 4 options, one Recommended and first, and a call h
     Object.values(asks.STATIC).map((q) => (typeof q === 'function' ? q(1, 2, 3) : q)).forEach(checkQuestion);
 });
 
+test('no ask names git or remote state: alfred-code\'s stop guard reads such a word as a repository measurement and sends Claude to git fetch', () => {
+    // alfred-code v3.2.1 stack/hooks/guard-stop-contract.js :2528 (REMOTE_STATE_RE) and :2871 (git state), as written there
+    const REMOTE_STATE_RE = /\b(?:merged?|merging|pull request|PRs?|remote|upstream|deploy(?:ed|ment)?|pipeline|CI|workflow run)\b/i;
+    const GIT_STATE_RE = /\b(commit|branch|pull request|\bPRs?\b|merge|rebase|stash|staged|unstaged|uncommitted|untracked|remote|upstream|deploy(ed|ment)?|pipeline|\bCI\b|workflow run|job)\b/i;
+    const texts = [];
+    const add = (q) => texts.push(q.question, ...q.options.flatMap((o) => [o.label, o.description || '']));
+    const collect = (node) =>
+    {
+        if (Array.isArray(node)) return node.forEach(collect);
+        if (!node || typeof node !== 'object') return undefined;
+        for (const [k, v] of Object.entries(node)) if (['question', 'label', 'description'].includes(k) && typeof v === 'string') texts.push(v); else collect(v);
+        return undefined;
+    };
+    for (const base of [MAC, LINUX, WIN])
+    {
+        const home = base.os === 'win32' ? 'C:\\Users\\me' : '/Users/me';
+        const rows = catalog.tools.filter((r) => r.os.includes(base.os));
+        // nothing installed, and every MCP row installed at each of its routes: install's picks, configure's change pick
+        // and each target's questions, the remove pick
+        const regs = rows.filter((r) => r.kind === 'mcp').flatMap((r) => Object.keys(r.routes).map((route) => installed(r.id, { route }, base, home)));
+        for (const i of [inv(base), inv(base, { registrations: regs })])
+            collect(asks.all(i, { rows: rows.map((r) => r.id), targets: i.registrations.map((r) => `mcp:${r.name}~${r.scope}`) }, catalog));
+        const i = inv(base);
+        for (const row of rows)
+        {
+            const ctx = { project: i.project, platform: i.os, arch: i.arch, home, env: {} };
+            for (const route of row.kind === 'mcp' ? Object.keys(row.routes) : [undefined]) asks.toolQuestions(row, i, { route, ctx, catalog }).forEach(add);
+        }
+    }
+    Object.values(asks.STATIC).map((q) => (typeof q === 'function' ? q(1, 2, 3) : q)).forEach(add);
+    const fs = require('node:fs');
+    const { parseAskBlocks } = require('./ask-blocks.js');
+    for (const f of fs.readdirSync(path.join(__dirname, '..', 'commands'))) parseAskBlocks(fs.readFileSync(path.join(__dirname, '..', 'commands', f), 'utf8')).forEach(add);
+    const hits = [...new Set(texts.filter((t) => REMOTE_STATE_RE.test(t) || GIT_STATE_RE.test(t)))];
+    assert.deepStrictEqual(hits, []);
+});
+
 test('the grouping: Code, Docs and forges, Browsers, Machine and monitoring; three on Linux, windows-control only on Windows', () => {
     const calls = (b) => asks.pickQuestions(inv(b), catalog)[0];
     assert.deepStrictEqual(calls(MAC).map((q) => q.options.length), [4, 4, 4, 4]);
@@ -592,7 +631,7 @@ test('configure questions start from what is installed: its route, scope, name, 
     assert.strictEqual(first('mcp:pw~local', 'scope'), 'local (Recommended)');
     assert.strictEqual(first('mcp:pw~local', 'name'), 'Keep `pw` (Recommended)');
     assert.strictEqual(first('mcp:pw~local', 'browser'), 'Keep `/opt/chrome` (Recommended)');
-    assert.strictEqual(q.targets['mcp:c7~project'].route.options[0].label, 'Remote (Recommended)');
+    assert.strictEqual(q.targets['mcp:c7~project'].route.options[0].label, 'Hosted (Recommended)');
     assert.strictEqual(first('mcp:c7~project', 'scope'), 'project (Recommended)');
     assert.match(q.targets['mcp:none~user'].error, /not a catalog tool installed here/);
     const local = asks.all(inv(MAC, { registrations: [reg('c7', 'local', { command: 'npx', args: ['-y', '@upstash/context7-mcp@2.0.0'] }, 'context7', 'local')] }), { targets: ['mcp:c7~local'] }, catalog);
@@ -695,4 +734,38 @@ test('location: alfred-code data on disk is a second answer, not the recommended
     assert.strictEqual(withData.options[1].label, "Use alfred-code's `.alfred/chrome-control`");
     assert.match(withData.options[1].description, /deleting it erases this tool's data/);
     assert.ok(!loc(() => false).options.some((o) => /alfred/.test(o.label)), 'no alfred-code folder, no answer for it');
+});
+
+test('plan.js from a kept inventory file leaves location keys as they are', () => {
+    // memory at user scope, renamed by configure from the inventory as inventory.js writes it
+    const live = `sk-live-${require('node:crypto').randomBytes(16).toString('hex')}`;
+    const db = '/h/.preferred-tools/memory/memory.db';
+    const r = reg('memory', 'user', { command: 'uvx', args: ['--python', '3.13', '--exclude-newer', '2026-10-20T23:59:59Z', '--from', 'mcp-memory-service[sqlite]==12.1.1', 'memory', 'server'], env: { MCP_MEMORY_STORAGE_BACKEND: 'sqlite_vec', MCP_MEMORY_SQLITE_PATH: db, MEMORY_API_TOKEN: live } }, 'memory', 'local');
+    const kept = inventoryLib.keptOf(inv(MAC, { registrations: [r] }), catalog);
+    assert.strictEqual(kept.registrations[0].entry.env.MEMORY_API_TOKEN, MARKER);
+    const p = plan(kept, changeOf(r, { name: 'mem' }), opts('/h'));
+    assert.deepStrictEqual(p.errors, []);
+    assert.deepStrictEqual(p.steps.map((s) => s.op), ['mcp-move']);
+    assert.strictEqual(p.steps[0].entry.env.MCP_MEMORY_SQLITE_PATH, db);
+    assert.strictEqual(p.steps[0].entry.env.MEMORY_API_TOKEN, MARKER, 'the value travels as the marker');
+    assert.ok(!JSON.stringify(p).includes(live));
+});
+
+test('configure plan.js from a kept inventory prints no live value', () => {
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const { spawnSync } = require('node:child_process');
+    const token = `sntryu_${require('node:crypto').randomBytes(16).toString('hex')}`;
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'pt-plan-'));
+    try
+    {
+        const r = reg('sentry-live', 'local', { command: 'npx', args: ['-y', '@sentry/mcp-server@0.42.0'], env: { SENTRY_ACCESS_TOKEN: token } }, 'sentry', 'local');
+        fs.writeFileSync(path.join(d, 'inv.json'), JSON.stringify(inventoryLib.keptOf(inv(MAC, { registrations: [r] }), catalog)));
+        fs.writeFileSync(path.join(d, 'ans.json'), JSON.stringify(changeOf(r, { name: 'sentry-moved' })));
+        const out = spawnSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'plan.js'), path.join(d, 'inv.json'), path.join(d, 'ans.json'), '--out', path.join(d, 'plan.json')], { encoding: 'utf8' });
+        assert.strictEqual(out.status, 0, out.stderr);
+        assert.match(out.stdout, /claude mcp add-json sentry-moved .*\$\{PREFERRED_TOOLS_KEPT\}/);
+        for (const where of [out.stdout, out.stderr, fs.readFileSync(path.join(d, 'plan.json'), 'utf8')]) assert.ok(!where.includes(token));
+    }
+    finally { fs.rmSync(d, { recursive: true, force: true }); }
 });

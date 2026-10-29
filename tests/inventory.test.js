@@ -261,3 +261,31 @@ test('the CLI form writes the JSON file and prints one line; a missing claude st
     }
     finally { w.clean(); }
 });
+
+test('the CLI form writes every credential value as the marker; nothing it prints holds one', () => {
+    const w = world();
+    try
+    {
+        const crypto = require('node:crypto');
+        const { MARKER } = require('../scripts/kept.js');
+        const token = `sntryu_${crypto.randomBytes(16).toString('hex')}`;
+        const key = `sk-live-${crypto.randomBytes(16).toString('hex')}`;
+        accountWith(w, { local: {
+            'sentry-live': { command: 'npx', args: ['-y', '@sentry/mcp-server@0.42.0'], env: { SENTRY_ACCESS_TOKEN: token } },
+            mine: { command: 'node', args: ['srv.js'], env: { API_KEY: key, MODE: 'x' } },
+        } });
+        const script = path.join(__dirname, '..', 'scripts', 'inventory.js');
+        const out = path.join(w.dir, 'inv.json');
+        const r = spawnSync(process.execPath, [script, '--project', w.project, '--json', out], { encoding: 'utf8', env: w.env });
+        assert.strictEqual(r.status, 0, r.stderr);
+        const printed = spawnSync(process.execPath, [script, '--project', w.project], { encoding: 'utf8', env: w.env });
+        const text = fs.readFileSync(out, 'utf8');
+        for (const v of [token, key]) for (const where of [text, r.stdout, r.stderr, printed.stdout]) assert.ok(!where.includes(v), 'no live value written or printed');
+        const regs = JSON.parse(text).registrations;
+        const sentry = regs.find((x) => x.name === 'sentry-live');
+        assert.strictEqual(sentry.entry.env.SENTRY_ACCESS_TOKEN, MARKER);
+        assert.strictEqual(sentry.rowId, 'sentry', 'still matched by what it launches');
+        assert.deepStrictEqual(regs.find((x) => x.name === 'mine').entry.env, { API_KEY: MARKER, MODE: 'x' });
+    }
+    finally { w.clean(); }
+});
