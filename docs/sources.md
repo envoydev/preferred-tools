@@ -714,3 +714,11 @@ scope its install row is at (P6); no key anywhere - not loaded. The first three 
 read (M7). The inventory keeps it as `enabledHere` beside `enabled` (the install scope's own reading, which configure
 and update act on); only `windowsMcpServers` reads it, with the folder's own server's `approval` (M8), and counts one
 plugin id once, at its nearest install row - one id can hold rows at two scopes (`docs/plugin-cli-evidence.md` S28).
+
+Measured 2026-10-30 on this change (0.1.5, after its review fix): macOS arm64, Claude Code 2.1.312 - `npm test` 296: 295
+pass, 1 skip; `npm run matrix` 63: 59 pass, 0 fail, 4 NOT RUN (the win32-only windows-control cases; github and sentry
+local need their keys). Windows 11 on ARM64, Claude Code 2.1.309, node 22.23.3, uv 0.13.4 - `npm test` 296: 289 pass, 0
+fail, 7 skip; `npm run matrix` 63: 56 pass, 0 fail, 7 NOT RUN (the macos-control cases; windows-control's start, no
+interactive desktop; sentry's key; github's docker; the two LSP binaries) - the same NOT RUN set as 0.1.4, by name.
+Linux NOT RUN (the 0.1.4 ruling carried over: the change is path joins and JSON reads, OS-independent). A2 (a pending
+project server beside a same-name user or parent server) NOT RUN: no catalog route writes a project-scope windows-mcp.
