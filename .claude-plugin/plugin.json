@@ -1,6 +1,6 @@
 {
   "name": "preferred-tools",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "The MCP servers and Claude Code plugins its owner has tested and likes, with their install, update, rename and fix procedures: /preferred-tools:install, /preferred-tools:configure, /preferred-tools:update and /preferred-tools:fix.",
   "author": { "name": "envoydev" },
   "homepage": "https://github.com/envoydev/preferred-tools",

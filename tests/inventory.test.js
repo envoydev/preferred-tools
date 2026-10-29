@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { world, writeJson } = require('./helpers.js');
+const { world, writeJson, accountKey } = require('./helpers.js');
 const inv = require('../scripts/inventory.js');
 const catalogLib = require('../scripts/catalog.js');
 const account = require('../scripts/account.js');
@@ -17,7 +17,7 @@ const build = (w, extra = {}) => inv.buildInventory({ project: w.project, env: w
 
 function accountWith(w, { user = {}, local = {} } = {})
 {
-    writeJson(account.accountFile(w.env), { mcpServers: user, projects: { [account.projectKey(w.project)]: { mcpServers: local } } });
+    writeJson(account.accountFile(w.env), { mcpServers: user, projects: { [accountKey(w.project)]: { mcpServers: local } } });
 }
 
 test('a registration is matched by what it launches, under any name', () => {
@@ -94,8 +94,27 @@ test('local entries of another project are not this project\'s', () => {
     const w = world();
     try
     {
-        writeJson(account.accountFile(w.env), { projects: { '/somewhere/else': { mcpServers: { serena: SERENA } }, [account.projectKey(w.project)]: { mcpServers: {} } } });
+        writeJson(account.accountFile(w.env), { projects: { '/somewhere/else': { mcpServers: { serena: SERENA } }, [accountKey(w.project)]: { mcpServers: {} } } });
         assert.strictEqual(build(w).registrations.length, 0);
+    }
+    finally { w.clean(); }
+});
+
+test('Windows: local servers are found under the key Claude Code writes - the cwd as typed, `/` for `\\`, its case kept', () => {
+    const w = world();
+    try
+    {
+        const local = (projects, project, platform = 'win32') =>
+        {
+            writeJson(account.accountFile(w.env), { projects });
+            return Object.keys(account.readAccount(w.env, project, platform).local);
+        };
+        const entry = (name) => ({ mcpServers: { [name]: SERENA } });
+        assert.deepStrictEqual(local({ 'C:/work/shop': entry('serena') }, 'C:\\work\\shop'), ['serena'], 'the slash form');
+        assert.deepStrictEqual(local({ 'C:/Work/Shop': entry('serena') }, 'c:\\work\\shop'), ['serena'], 'typed in another case, the same NTFS folder');
+        assert.deepStrictEqual(local({ 'C:/work/shop': entry('upper'), 'c:/work/shop': entry('lower') }, 'c:\\work\\shop'), ['lower'], 'the key typed as this cwd wins');
+        assert.deepStrictEqual(local({ 'C:/work/shop2': entry('serena') }, 'C:\\work\\shop'), [], 'a longer name is another folder');
+        assert.deepStrictEqual(local({ '/work/Shop': entry('serena') }, '/work/shop', 'linux'), [], 'Linux keys stay exact');
     }
     finally { w.clean(); }
 });

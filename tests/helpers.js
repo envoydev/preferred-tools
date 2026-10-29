@@ -42,5 +42,8 @@ function world(prefix = 'pt-')
 
 const writeJson = (file, value) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`); };
 const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
+// The account `projects` key the real CLI writes for a folder (docs/sources.md): its real path, or on Windows the cwd as
+// typed, in `/`. fake-claude.js writes the same.
+const accountKey = (project) => (process.platform === 'win32' ? path.resolve(project).replace(/\\/g, '/') : fs.realpathSync.native(project));
 
-module.exports = { world, writeJson, readJson, FAKE };
+module.exports = { world, writeJson, readJson, accountKey, FAKE };

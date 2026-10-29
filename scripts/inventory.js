@@ -122,7 +122,7 @@ function buildInventory({ project, env = process.env, platform = process.platfor
     };
 
     const mcp = readState(path.join(proj, '.mcp.json'));
-    const acct = account.readAccount(env, proj);
+    const acct = account.readAccount(env, proj, platform);
     out.sources = { project: { file: mcp.file, state: mcp.state }, account: { file: acct.file, state: acct.state }, local: { file: acct.file, state: acct.state }, user: { file: acct.file, state: acct.state } };
     for (const [scope, s] of [['project', mcp], ['local', acct], ['user', acct]])
         if (s.state === 'malformed' || s.state === 'unreadable') out.unreadable.push({ scope, file: s.file, state: s.state, error: s.error });

@@ -26,6 +26,8 @@ const accountFile = () => (process.env.CLAUDE_CONFIG_DIR ? path.join(process.env
 const readJson = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) { if (e.code === 'ENOENT') return d; throw e; } };
 const writeJson = (f, v) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, `${JSON.stringify(v, null, 2)}\n`); };
 const real = (p) => { try { return fs.realpathSync.native(p); } catch { return path.resolve(p); } };
+// the account `projects` key: the real path, or on Windows the cwd as typed, in `/` (docs/sources.md)
+const accountKey = (p) => (process.platform === 'win32' ? path.resolve(p).replace(/\\/g, '/') : real(p));
 
 const failList = (process.env.FAKE_CLAUDE_FAIL || '').split(',').filter(Boolean);
 if (failList.some((f) => argv.join(' ').includes(f))) die(`fake claude: injected failure for ${argv.join(' ')}`);
@@ -56,7 +58,7 @@ function serversRef(scope)
         return { doc, servers: doc.mcpServers, save: () => writeJson(f, doc) };
     }
     doc.projects = doc.projects || {};
-    const key = real(cwd);
+    const key = accountKey(cwd);
     doc.projects[key] = doc.projects[key] || { allowedTools: [], mcpServers: {} };
     doc.projects[key].mcpServers = doc.projects[key].mcpServers || {};
     return { doc, servers: doc.projects[key].mcpServers, save: () => writeJson(f, doc) };

@@ -1,7 +1,8 @@
 'use strict';
 // THE ACCOUNT DIR - one definition, used by every script. The dir is CLAUDE_CONFIG_DIR, else ~/.claude. The account
 // file is the one the CLI was MEASURED writing (Claude Code 2.1.311, docs/sources.md): $CLAUDE_CONFIG_DIR/.claude.json,
-// else ~/.claude.json. Its `projects` map is keyed by the project's REAL path (macOS /tmp is /private/tmp).
+// else ~/.claude.json. Its `projects` map is keyed by the project's REAL path on macOS and Linux (macOS /tmp is
+// /private/tmp), and by the cwd as typed, in `/`, on Windows (projectEntry).
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -41,16 +42,30 @@ function readState(file)
     catch (err) { return { file, state: 'malformed', doc: null, error: err.message }; }
 }
 
+// This project's `projects` entry. Claude Code keys it by the folder it started in, MEASURED (docs/sources.md): the
+// real path on macOS (the disk's case, whatever was typed) and Linux; on Windows the cwd as typed, `\` written as `/`,
+// the typed case kept. So on win32 the key typed as this cwd wins, then the real path's, then either in any case (NTFS
+// opens both); elsewhere a key matches exactly - macOS can be a case-sensitive volume.
+function projectEntry(projects, project, platform = process.platform)
+{
+    if (platform !== 'win32') return projects[projectKey(project)] || projects[path.resolve(project)];
+    let real = null;
+    try { real = fs.realpathSync.native(project); } catch { /* a folder not on disk has no real path */ }
+    const want = [path.win32.resolve(project), real].filter(Boolean).map((p) => p.replace(/\\/g, '/'));
+    const key = want.find((w) => Object.hasOwn(projects, w))
+        ?? Object.keys(projects).find((k) => want.some((w) => w.toLowerCase() === k.toLowerCase()));
+    return key === undefined ? undefined : projects[key];
+}
+
 // The account file, narrowed to what the inventory needs: user servers, and this project's local servers.
-function readAccount(env, project)
+function readAccount(env, project, platform = process.platform)
 {
     const file = accountFile(env);
     const s = readState(file);
     const doc = s.doc || {};
-    const key = projectKey(project);
     const projects = doc.projects && typeof doc.projects === 'object' ? doc.projects : {};
-    const mine = projects[key] || projects[path.resolve(project)] || {};
-    return { ...s, user: doc.mcpServers || {}, local: mine.mcpServers || {}, projectKey: key };
+    const mine = projectEntry(projects, project, platform) || {};
+    return { ...s, user: doc.mcpServers || {}, local: mine.mcpServers || {} };
 }
 
 // What the CLI wrote for one server at one scope, read from the file it wrote it to.

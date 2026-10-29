@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { world, writeJson, readJson } = require('./helpers.js');
+const { world, writeJson, readJson, accountKey } = require('./helpers.js');
 const inventory = require('../scripts/inventory.js');
 const { plan } = require('../scripts/plan.js');
 const { apply } = require('../scripts/apply.js');
@@ -32,7 +32,7 @@ test('a fresh install writes through the CLI at each scope, and every add is rea
         assert.deepStrictEqual(r.p.errors, []);
         assert.strictEqual(r.report.failed, null, r.text);
         // local: the account file's project entry; user: the top level; project: .mcp.json
-        const proj = accountDoc(w).projects[account.projectKey(w.project)].mcpServers;
+        const proj = accountDoc(w).projects[accountKey(w.project)].mcpServers;
         assert.deepStrictEqual(Object.keys(proj), ['serena']);
         assert.deepStrictEqual(Object.keys(accountDoc(w).mcpServers), ['playwright-chrome']);
         assert.deepStrictEqual(mcpJson(w), { mcpServers: { context7: { type: 'http', url: 'https://mcp.context7.com/mcp' } } });

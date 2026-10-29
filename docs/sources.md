@@ -103,6 +103,13 @@ Sources: `https://pypi.org/pypi/<package>/json` and `npm view <package> time --j
   creates `$CLAUDE_CONFIG_DIR/backups/.claude.json.backup.<ms>`. The real `~/.claude.json` kept its mtime. The project key
   is the real path (macOS `/tmp` resolves to `/private/tmp`), so `scripts/account.js` must `realpath` the project.
   The docs page does not say where `CLAUDE_CONFIG_DIR` puts the file; the measurement does.
+- The project key by OS - MEASURED. macOS, Claude Code 2.1.312, 2026-10-29: `add-json -s local` from a folder typed
+  `work/shop` whose disk name is `Work/Shop` stored the key as the real path in the disk's case, the same string
+  `fs.realpathSync.native` returns - so macOS needs no case fold, and a fold would be wrong on a case-sensitive volume.
+  Windows 11 VM, Claude Code 2.1.309, 2026-10-26 (alfred-code `docs/workspace-layering-evidence.md`, 'Release 2 - MCP
+  probes', A7 and A8): the key is the cwd AS TYPED, `\` written as `/`, the typed case kept - `C:\mcpw\keys\child` is
+  stored as `C:/mcpw/keys/child` and `C:\MCPW\KEYS\CHILD` as `C:/MCPW/KEYS/CHILD`. Node's realpath gives backslashes
+  there, so `account.js` `projectEntry` matches a win32 key by its `/` form, the typed cwd first, then any case.
 - Variable expansion in `.mcp.json` - CONFIRMED. Syntax `${VAR}` and `${VAR:-default}`, in `command`, `args`, `env`,
   `url`, `headers`. An unset variable with no default loads as the literal `${VAR}` text. MEASURED: `add-json` stores
   `${HOME}`, `${FOO:-bar}`, `${TOK}` literally, in `.mcp.json` and in the account file.
