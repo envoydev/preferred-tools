@@ -675,3 +675,37 @@ desktop; sentry's key; github's docker; the two LSP binaries). The matrix case '
 on both: two real registrations are reported once, blocked, asked nothing, and left byte-identical. Linux NOT RUN (the
 user's ruling: the row is win32-only and its logic is OS-independent). The live two-server state is NOT RUN: no
 interactive desktop on the test VM.
+
+## Claude Code - a plugin off for one project, and this folder's own .mcp.json approval (measured 2026-10-30, Claude Code 2.1.312, macOS arm64)
+
+A throwaway `HOME` and `CLAUDE_CONFIG_DIR`, a directory marketplace `mk` with three one-command plugins (`pp`, `qq`,
+`rr`). Each probe starts a logged-out session in the folder named (`claude -p hi --output-format stream-json
+--verbose`) and reads its `init` event's `plugins` for the plugin's name.
+
+- P1: `pp` installed `--scope user` (user `settings.json` `enabledPlugins` `true`); the project's
+  `.claude/settings.json` `{ "enabledPlugins": { "pp@mk": false } }` - not loaded, its command absent; the same in
+  `.claude/settings.local.json` - not loaded; the user setting stays `true`; `plugin list --json` there reads
+  `enabled: false`.
+- P2: the project's `settings.json` `false` and `settings.local.json` `true` - loaded.
+- P3: `claude plugin disable pp@mk --scope project` - 'Successfully disabled plugin: pp (scope: project)', the
+  project's `settings.json` `false`, user `true`; in a fresh project `--scope local` - its `settings.local.json`
+  `false`, user `true`, not loaded there. `qq` installed `--scope project` (`settings.json` `true`) with
+  `settings.local.json` `false` - not loaded; `rr` installed `--scope local` (`settings.local.json` `true`) with
+  `settings.json` `false` - loaded.
+- P4: a git repository with a folder `sub`, `pp` at user scope, the session started in `sub`: the repository root's
+  `.claude/settings.local.json` `false` - not loaded (in the root too); `sub/.claude/settings.local.json` `false` - not
+  loaded; the root's `.claude/settings.json` `false` - loaded; `sub/.claude/settings.json` `false` - not loaded.
+  `claude plugin disable pp@mk --scope local` run in `sub` writes the root's `.claude/settings.local.json`.
+- P5: in `sub`, the root's `settings.local.json` `false` over `sub`'s `settings.local.json` `true` - not loaded; the
+  root's `true` over `sub`'s `settings.local.json` `false` and `settings.json` `false` - loaded.
+- M8: a server in the session folder's own `.mcp.json`, by M7's rules: nothing set - `claude mcp list` '⏸ Pending
+  approval'; `disabledMcpjsonServers` in `.claude/settings.local.json` - `claude mcp get` '✘ Rejected (see
+  disabledMcpjsonServers in settings)'; `enableAllProjectMcpServers` in the user `settings.json` - started ('Failed to
+  connect' for a server that exits at once).
+
+So a plugin loads by the first boolean `enabledPlugins[<id>]` in: the trust root's `settings.local.json` (the git root,
+else the folder), the session folder's `settings.local.json`, its `settings.json`, then the user settings - counting
+only files at or above the install scope (local, then project, then user). That is the file list the approvals above
+read (M7). The inventory keeps it as `enabledHere` beside `enabled` (the install scope's own reading, which configure
+and update act on); only `windowsMcpServers` reads it, with the folder's own server's `approval` (M8). A side effect
+seen: a session in a project auto-created a local-scope install row for a plugin the marketplace lists.

@@ -228,6 +228,44 @@ test('plugins: catalog rows by exact id, enabled read from the settings file at 
     finally { w.clean(); }
 });
 
+// Whether a plugin runs HERE: the first boolean in the git root's settings.local.json, this folder's settings.local.json,
+// its settings.json, then the user settings, from the install scope up (docs/sources.md, P1-P5)
+const plugState = (w, ids) => writeJson(path.join(w.dir, 'state', 'plugins.json'), { marketplaces: [], installed: ids.map(([id, scope]) =>
+    ({ id, version: '1.0.0', scope, enabled: true, installPath: '/c', ...(scope === 'user' ? {} : { projectPath: account.projectKey(w.project) }) })) });
+const here = (i) => Object.fromEntries(i.plugins.map((p) => [p.id, [p.enabled, p.enabledHere]]));
+
+test('plugins: enabledHere reads the local files, then settings.json, then the install scope (P1-P3)', () => {
+    const w = world();
+    try
+    {
+        plugState(w, [['a@m', 'user'], ['b@m', 'user'], ['c@m', 'user'], ['d@m', 'project'], ['e@m', 'local']]);
+        writeJson(path.join(w.account, 'settings.json'), { enabledPlugins: { 'a@m': true, 'b@m': true, 'c@m': true } });
+        writeJson(path.join(w.project, '.claude', 'settings.json'), { enabledPlugins: { 'a@m': false, 'b@m': false, 'd@m': false, 'e@m': false } });
+        writeJson(path.join(w.project, '.claude', 'settings.local.json'), { enabledPlugins: { 'b@m': true, 'e@m': true } });
+        // [enabled at the install scope, enabledHere]: the first reading stays what configure and update act on
+        assert.deepStrictEqual(here(build(w)), { 'a@m': [true, false], 'b@m': [true, true], 'c@m': [true, true], 'd@m': [false, false], 'e@m': [true, true] });
+    }
+    finally { w.clean(); }
+});
+
+test("plugins: from a git subfolder, the git root's settings.local.json counts first (P4, P5)", () => {
+    const w = world();
+    try
+    {
+        spawnSync('git', ['init', '-q', w.project]);
+        const sub = path.join(w.project, 'sub');
+        plugState(w, [['a@m', 'user'], ['b@m', 'user'], ['c@m', 'user'], ['d@m', 'user']]);
+        writeJson(path.join(w.account, 'settings.json'), { enabledPlugins: { 'a@m': true, 'b@m': true, 'c@m': true, 'd@m': true } });
+        writeJson(path.join(w.project, '.claude', 'settings.local.json'), { enabledPlugins: { 'a@m': false, 'b@m': true } });
+        writeJson(path.join(w.project, '.claude', 'settings.json'), { enabledPlugins: { 'c@m': false } });
+        writeJson(path.join(sub, '.claude', 'settings.local.json'), { enabledPlugins: { 'a@m': true, 'b@m': false } });
+        writeJson(path.join(sub, '.claude', 'settings.json'), { enabledPlugins: { 'b@m': false, 'd@m': false } });
+        const i = inv.buildInventory({ project: sub, env: w.env, catalog });
+        assert.deepStrictEqual(Object.fromEntries(i.plugins.map((p) => [p.id, p.enabledHere])), { 'a@m': false, 'b@m': true, 'c@m': true, 'd@m': false });
+    }
+    finally { w.clean(); }
+});
+
 test('the inventory reads only: no write call reaches the CLI and no server starts', () => {
     const w = world();
     try
@@ -417,6 +455,23 @@ test('the approval of an inherited server follows the measured rules (M7)', () =
     finally { w.clean(); }
 });
 
+test("this folder's own .mcp.json server carries its approval, by the same rules (M8)", () => {
+    const w = world();
+    try
+    {
+        writeJson(path.join(w.project, '.mcp.json'), { mcpServers: { wd: SRV('wd') } });
+        const own = () => build(w).registrations.find((r) => r.scope === 'project' && r.name === 'wd').approval;
+        assert.strictEqual(own(), 'pending', 'nothing set');
+        const local = path.join(w.project, '.claude', 'settings.local.json');
+        writeJson(local, { disabledMcpjsonServers: ['wd'] });
+        assert.strictEqual(own(), 'rejected', "disabled in the folder's settings.local.json");
+        fs.rmSync(local);
+        writeJson(path.join(w.account, 'settings.json'), { enableAllProjectMcpServers: true });
+        assert.strictEqual(own(), 'approved', 'enableAllProjectMcpServers in the user settings');
+    }
+    finally { w.clean(); }
+});
+
 test('no parent file, no inherited entry', () => {
     const w = world();
     try
@@ -468,6 +523,7 @@ test('windowsMcpServers: one per name at its nearest scope, approved inherited o
         { name: 'windows-control', scope: 'local', entry: {}, rowId: null, route: null, own: true, alfredRetired: true },
         WM('inherited', 'wd-parent', { from: '/a', approval: 'approved', shadowed: null }),
         WM('inherited', 'wd-pending', { from: '/a', approval: 'pending', shadowed: null }),
+        WM('inherited', 'wd-rejected', { from: '/a', approval: 'rejected', shadowed: null }),
         WM('inherited', 'wd-shadowed', { from: '/b', approval: 'approved', shadowed: { scope: 'inherited', from: '/a' } }),
     ];
     const plugins = [PLUG('windows-control@envoydev', true), PLUG('windows-desktop@envoydev', false), PLUG('windows-desktop@other', true)];
@@ -484,4 +540,14 @@ test('windowsMcpServers: one per name at its nearest scope, approved inherited o
 test('windowsMcpServers: a plugin that cannot load is not counted - a dropped id says so only in its errors (S13, S25)', () => {
     const dropped = { ...PLUG('windows-control@envoydev', true), errors: ['plugin windows-control not found in marketplace envoydev'] };
     assert.deepStrictEqual(startsHere([WM('local', 'windows-desktop')], [dropped]), ['windows-desktop local catalog']);
+});
+
+test("windowsMcpServers: this folder's own server counts once approved, a plugin where it is on here (M8, P1-P5)", () => {
+    for (const approval of ['pending', 'rejected']) assert.deepStrictEqual(startsHere([WM('project', 'wd-p', { approval })]), [], approval);
+    assert.deepStrictEqual(startsHere([WM('project', 'wd-p', { approval: 'approved' })]), ['wd-p project catalog']);
+    assert.deepStrictEqual(startsHere([WM('project', 'wd-p')]), ['wd-p project catalog'], 'a hand-built inventory, as in 0.1.4');
+    // a pending one does not take its name's slot: the user-scope one of that name is what starts
+    assert.deepStrictEqual(startsHere([WM('project', 'wd', { approval: 'pending' }), WM('user', 'wd')]), ['wd user catalog']);
+    assert.deepStrictEqual(startsHere([], [{ ...PLUG('windows-control@envoydev', true), enabledHere: false }]), [], 'off for this project');
+    assert.deepStrictEqual(startsHere([], [{ ...PLUG('windows-control@envoydev', false), enabledHere: true }]), ['windows-control@envoydev user alfred-code'], 'on for this project only');
 });
