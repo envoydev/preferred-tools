@@ -221,7 +221,9 @@ test('a remove: the registration is gone from its file, the data folder stays, a
     // an earlier case may leave a serena at user scope in this shared account: the install adds beside it, never moves it
     const global = reg(p, 'serena', 'user');
     assert.strictEqual(h.run(p, { picks: { serena: { scope: 'local' }, context7: { route: 'remote', scope: 'project' } } }).report.failed, null);
-    const data = path.join(p, '.preferred-tools', 'serena');
+    // the folder the registration names: <project>/.preferred-tools/serena, or on Windows serena's absolute home
+    const data = reg(p, 'serena', 'local').entry.env.SERENA_HOME;
+    if (process.platform !== 'win32') assert.strictEqual(data, path.join(p, '.preferred-tools', 'serena'));
     assert.ok(fs.existsSync(data));
     const r = h.run(p, { picks: {}, remove: [{ kind: 'mcp', name: 'serena', scope: 'local' }] });
     assert.deepStrictEqual(r.plan.errors, []);

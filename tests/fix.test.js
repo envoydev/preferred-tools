@@ -360,7 +360,8 @@ test('apply: two fixes on one registration are ONE replace, from the entry as re
     const w = world();
     try
     {
-        const entry = fresh('serena');
+        // the entry as the installer writes it on this machine, so the same two fixes apply on every OS
+        const entry = fresh('serena', process.platform, process.arch);
         const theirs = {
             command: 'uvx',
             args: entry.args.filter((a, i, all) => a !== '--python' && all[i - 1] !== '--python').map((a) => (a === 'serena-agent@2.1.0' ? 'serena-agent@2.0.0' : a)).concat(['--verbose']),
@@ -376,7 +377,9 @@ test('apply: two fixes on one registration are ONE replace, from the entry as re
         const mine = w.calls().slice(before).filter((a) => a[0] === 'mcp' && ['add-json', 'remove'].includes(a[1]));
         assert.deepStrictEqual(mine.map((a) => [a[1], a[2]]), [['remove', 'serena'], ['add-json', 'serena']], 'one remove and one add, nothing else touched');
         const now = userEntry(w, 'serena');
-        assert.deepStrictEqual(now.args.slice(0, 2), ['--python', '3.13']);
+        // the row's minor, as this machine takes it: on Windows ARM64 the x64 build (windows-arm-python)
+        const c = ctxOf(w);
+        assert.deepStrictEqual(now.args.slice(0, 2), ['--python', E.pythonRequest({ python: '3.13' }, c, c.rules)]);
         assert.ok(now.args.includes('serena-agent@2.0.0') && now.args.includes('--verbose'));
         assert.strictEqual(now.env.SERENA_USAGE_REPORTING, 'false');
         assert.strictEqual(now.env.SERENA_HOME, entry.env.SERENA_HOME);

@@ -14,6 +14,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const cli = require('../../scripts/claude-cli.js');
 const account = require('../../scripts/account.js');
+const catalog = require('../../scripts/catalog.js').load();
 const { Harness } = require('../harness.js');
 const spec = require('./fresh-answers.json');
 
@@ -58,7 +59,10 @@ for (const c of spec.cases)
                 ? JSON.parse(fs.readFileSync(path.join(project, '.mcp.json'), 'utf8')).mcpServers
                 : (c.expect.scope === 'user' ? account.readAccount(h.env, project).user : account.readAccount(h.env, project).local);
             assert.deepStrictEqual(stored[step.name], step.entry);
-            if (c.expect.files) assert.strictEqual(fs.readFileSync(path.join(project, c.expect.files, '.gitignore'), 'utf8'), '*\n', 'the data folder keeps itself out of git');
+            // the data folder: in the project, or on Windows for a row whose home must be absolute (serena-windows-home), the
+            // default the plan offers there, <home>\.serena
+            const absolute = process.platform === 'win32' && catalog.byId.get(c.row).locations.windowsAbsolute;
+            if (c.expect.files) assert.strictEqual(fs.readFileSync(path.join(absolute ? path.join(h.home, '.serena') : path.join(project, c.expect.files), '.gitignore'), 'utf8'), '*\n', 'the data folder keeps itself out of git');
             if (c.expect.scope === 'project') assert.ok(!/(?:^|[^$])\/(?:Users|home)\//.test(JSON.stringify(stored)), 'the committed file holds no absolute local path');
         }
         else

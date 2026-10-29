@@ -39,7 +39,8 @@ test('a fresh install writes through the CLI at each scope, and every add is rea
         assert.deepStrictEqual(Object.keys(proj), ['serena']);
         assert.deepStrictEqual(Object.keys(accountDoc(w).mcpServers), ['playwright-chrome']);
         assert.deepStrictEqual(mcpJson(w), { mcpServers: { context7: { type: 'http', url: 'https://mcp.context7.com/mcp' } } });
-        assert.ok(proj.serena.env.SERENA_HOME.startsWith(w.project), 'an absolute path at local scope');
+        // under the project, or on Windows serena's own absolute home, <home>\.serena (serena-windows-home)
+        assert.ok(proj.serena.env.SERENA_HOME.startsWith(process.platform === 'win32' ? path.win32.join(w.home, '.serena') : w.project), 'an absolute path at local scope');
         // the argv the CLI saw
         const adds = w.calls().filter((a) => a[1] === 'add-json');
         assert.deepStrictEqual(adds.map((a) => [a[2], a[4], a[5]]), [['serena', '-s', 'local'], ['playwright-chrome', '-s', 'user'], ['context7', '-s', 'project']]);
@@ -53,8 +54,9 @@ test('a fresh install writes through the CLI at each scope, and every add is rea
         assert.deepStrictEqual(job.fetch.map((s) => s.name), ['serena', 'playwright-chrome']);
         assert.deepStrictEqual(job.check, ['serena', 'playwright-chrome', 'context7'], 'every server written, the hosted one too');
         assert.match(r.text, /Restart Claude Code/);
-        // the data folders got a .gitignore holding *
-        assert.strictEqual(fs.readFileSync(path.join(w.project, '.preferred-tools', 'serena', '.gitignore'), 'utf8'), '*\n');
+        // the data folders got a .gitignore holding * (serena's on Windows is <home>\.serena, serena-windows-home)
+        const serenaData = process.platform === 'win32' ? path.win32.join(w.home, '.serena') : path.join(w.project, '.preferred-tools', 'serena');
+        assert.strictEqual(fs.readFileSync(path.join(serenaData, '.gitignore'), 'utf8'), '*\n');
         assert.strictEqual(fs.readFileSync(path.join(w.project, '.preferred-tools', 'playwright-chrome', '.gitignore'), 'utf8'), '*\n');
         // the project's own .gitignore is never created or edited
         assert.ok(!fs.existsSync(path.join(w.project, '.gitignore')));
@@ -123,7 +125,8 @@ test('a same-name rewrite saves the old JSON first and re-adds it when the add f
     {
         walk(w, { picks: { 'playwright-chrome': { scope: 'user' } } });
         const old = accountDoc(w).mcpServers['playwright-chrome'];
-        const r = walk(w, { change: { 'mcp:playwright-chrome~user': { location: { side: 'account' } } } }, { fail: w.home });
+        // the home as the add-json argument spells it: a Windows path's backslashes are escaped in the JSON
+        const r = walk(w, { change: { 'mcp:playwright-chrome~user': { location: { side: 'account' } } } }, { fail: JSON.stringify(w.home).slice(1, -1) });
         // every add-json carrying the new location (under the account home) fails; the old one is under the project and succeeds
         assert.ok(r.report.failed, r.text);
         assert.strictEqual(r.report.failed.op, 'mcp-replace');
@@ -207,8 +210,8 @@ test('remove runs one remove per pick at the scope shown and reads the absence b
         assert.strictEqual(r.report.failed, null, r.text);
         assert.deepStrictEqual(accountDoc(w).mcpServers, {});
         assert.deepStrictEqual(Object.keys(mcpJson(w).mcpServers), ['context7'], 'what was not picked stays');
-        // the data folder stays: the report does not delete it
-        assert.ok(fs.existsSync(path.join(w.project, '.preferred-tools', 'serena')));
+        // the data folder stays: the report does not delete it (on Windows serena's home is <home>\.serena, serena-windows-home)
+        assert.ok(fs.existsSync(process.platform === 'win32' ? path.win32.join(w.home, '.serena') : path.join(w.project, '.preferred-tools', 'serena')));
     }
     finally { w.clean(); }
 });
@@ -251,7 +254,8 @@ test('a disabled plugin is enabled, not installed over; enable over enabled is s
     try
     {
         walk(w, { picks: { 'csharp-lsp': {} } });
-        spawnSync('claude', ['plugin', 'disable', 'csharp-lsp@claude-plugins-official', '--scope', 'project'], { cwd: w.project, env: w.env });
+        // through claude-cli.js, which reaches the shim on Windows too (a bare spawn finds only a .exe or .com)
+        cli.run(['plugin', 'disable', 'csharp-lsp@claude-plugins-official', '--scope', 'project'], { cwd: w.project, env: w.env });
         const before = w.calls().length;
         const r = walk(w, { picks: { 'csharp-lsp': {} } });
         assert.strictEqual(r.report.failed, null, r.text);
