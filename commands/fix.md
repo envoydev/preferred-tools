@@ -28,6 +28,9 @@ If it says 'No known problem found.', say so in one line and stop.
 Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/fix.js" --questions` (with the same `--only`). It prints the asks as data:
 `choose` and, for 'Pick which', `pick` - a list of calls, each at most four questions of at most four options.
 
+When `choose` is null, nothing found can be applied: every line is NOT APPLICABLE, and its reason is the advice. Say
+that nothing was changed and stop - there is nothing to ask.
+
 Ask `choose` as one AskUserQuestion, exactly as printed:
 
 - 'Apply all found (Recommended)' - every fix that can be applied. Go to step 3 with `all`.

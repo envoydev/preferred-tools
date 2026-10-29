@@ -56,7 +56,8 @@ test('every live fix row names a detector and a fix that exist, a tool the catal
         for (const k of ['symptom', 'verifiedOn', 'source']) assert.ok(f[k], `${f.id}: no ${k}`);
         if (f.hold) continue;
         assert.strictEqual(typeof F[f.detect], 'function', `${f.id}: no ${f.detect}`);
-        assert.strictEqual(typeof F[f.fix], 'function', `${f.id}: no ${f.fix}`);
+        if (f.advice) assert.strictEqual(f.fix, null, `${f.id}: an advice row has no fix`);
+        else assert.strictEqual(typeof F[f.fix], 'function', `${f.id}: no ${f.fix}`);
     }
     const held = detect(ctxFor({ platform: 'win32' })).held;
     assert.deepStrictEqual(ids(held), ['serena-windows-ts-shim']);
@@ -302,6 +303,34 @@ test('typescript-lsp-ts7: a global TypeScript 7 under the installed plugin is fo
     const r = F.typescriptLspTs7Fix(f, failing);
     assert.strictEqual(r.ok, false);
     assert.match(r.detail, /EACCES/);
+});
+
+// ---- windows-mcp-one-per-desktop ------------------------------------------------------------------------------------
+
+test('windows-mcp-one-per-desktop: two servers give one blocked finding naming both and how to drop each; one gives none; non-win32 gives none', () =>
+{
+    const wd = reg('windows-control', fresh('windows-control', 'win32'));
+    const alfred = { id: 'windows-control@envoydev', plugin: 'windows-control', marketplace: 'envoydev', scope: 'user', enabled: true, rowId: null, alfredRetired: true };
+    const two = (platform) => ctxFor({ platform, registrations: [wd], plugins: [alfred] });
+    const mine = (d) => d.found.filter((f) => f.id === 'windows-mcp-one-per-desktop');
+    const found = mine(detect(two('win32')));
+    assert.strictEqual(found.length, 1);
+    assert.match(found[0].found, /^2 windows-mcp servers start in this project: windows-desktop \(local\), windows-control@envoydev \(user\)/);
+    assert.match(found[0].blocked, /claude plugin disable windows-control@envoydev --scope user/);
+    assert.match(found[0].blocked, /\/preferred-tools:configure/);
+    assert.match(found[0].blocked, /a stuck one recovers only in a new Claude Code session/);
+    assert.strictEqual(mine(detect(two('win32'), 'windows-control')).length, 1, '--only by the tool finds it');
+    assert.deepStrictEqual(F.windowsMcpOneDetect(ctxFor({ platform: 'win32', registrations: [wd] })), []);
+    assert.deepStrictEqual(mine(detect(two('darwin'))), []);
+});
+
+test('questions: only NOT APPLICABLE findings give no apply ask', () =>
+{
+    const advice = { id: 'windows-mcp-one-per-desktop', name: 'windows-desktop', scope: 'local', kind: 'registration', found: 'x', blocked: 'y' };
+    assert.deepStrictEqual(fix.questions({ found: [advice], held: [] }), { choose: null, pick: [] });
+    assert.deepStrictEqual(fix.questions({ found: [], held: [] }), { choose: null, pick: [] });
+    const q = fix.questions({ found: [advice, { id: 'uvx-python', name: 'memory', scope: 'local', kind: 'registration', found: 'z' }], held: [] });
+    assert.strictEqual(q.choose.question, '1 known problem found. Apply?');
 });
 
 // ---- narrowing and rendering ----------------------------------------------------------------------------------------

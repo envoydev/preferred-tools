@@ -636,3 +636,30 @@ linear in the argument - then caret-escapes each cmd.exe metacharacter ``()[]%!^
 `escapeArgument` for a shim (https://github.com/moxystudio/node-cross-spawn/blob/master/lib/util/escape.js, read
 2026-10-29). All 14 measured values - a JSON quote, `%VAR%`, carets, `&` and `|`, runs of backslashes before a quote and
 the end, an empty argument, Unicode - came back unchanged (`tests/claude-cli.test.js`).
+
+## windows-mcp 0.8.8 - the sticky overlay failure (read 2026-10-29)
+
+The `windows-mcp-one-per-desktop` fix row (advice only) rests on the 0.8.8 wheel from
+https://pypi.org/project/windows-mcp/0.8.8/ (sha256 matching PyPI's; 0.8.8, uploaded 2026-10-10, is the newest release)
+and https://github.com/CursorTouch/Windows-MCP:
+
+- `windows_mcp/desktop/control_overlay.py` `change()` (`:237`) waits `timeout=3.0` (`:276`) for the overlay thread to
+  apply a state; on a miss it sets `self.error` (`:281`) under the comment 'Make the failure sticky so health checks can
+  never grant a new AI lease with an invisible indicator'. The overlay thread's own failure sets it too (`:375`).
+  Nothing clears it.
+- `is_healthy()` (`:469`) needs `indicator.error is None` (`:477`).
+- `windows_mcp/desktop/control.py` `_recover_after_rehook` (`:412`) leaves the `unavailable` state only when the health
+  probe passes (`:421`), as does the lease check (`:540`).
+- `windows_mcp/__main__.py` starts the overlay once in the server's lifespan and hands the controller its health probe
+  (`:336-337`); it stops it only at shutdown (`:348`).
+- No mutex or single-instance guard anywhere in the package.
+
+So one missed confirmation leaves that server process 'unavailable' for its life, while `/mcp` shows it connected
+(stdio); a new Claude Code session starts a new process. A second windows-mcp on the same desktop (each with its
+low-level input hooks and overlay window) is the likely trigger - not reproduced: the test VM's `prlctl exec` has no
+signed-in desktop.
+
+alfred-code launches windows-mcp from plugins: its v2.9.0 `.claude-plugin/marketplace.json` lists `windows-control`
+(mcpServers `windows-control`) and `windows-desktop` ('RETIRED in 2.4.0 - renamed windows-control', mcpServers
+`windows-desktop`), both through `desktop-launch.js` with `windows-mcp==0.8.8`; 3.4.0's lists neither.
+`inventory.windowsMcpServers` counts them, enabled, beside the registrations that start here (M2, M3, M7 above).

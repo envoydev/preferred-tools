@@ -78,6 +78,7 @@ function questions(detected)
 {
     const applicable = detected.found.filter((f) => !f.blocked);
     const ids = [...new Set(applicable.map((f) => f.id))];
+    if (!ids.length) return { choose: null, pick: [] }; // nothing can be applied: the NOT APPLICABLE lines are the advice
     const pick = [];
     for (let i = 0; i < ids.length; i += 4)
         pick.push({

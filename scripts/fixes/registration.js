@@ -8,6 +8,7 @@ const path = require('node:path');
 const E = require('../entries.js');
 const keys = require('../keys.js');
 const C = require('./common.js');
+const { windowsMcpServers, fromHere } = require('../inventory.js');
 
 const eachReg = (ctx, id, fn) => C.registrationsOf(ctx, id).map((reg) => fn(reg, C.routeOf(ctx, reg))).filter(Boolean);
 const PROJECT_ABS = 'the project scope is a committed file and cannot hold an absolute path - move the registration to local or user scope first (/preferred-tools:configure, Scope)';
@@ -215,7 +216,31 @@ function tokenSyncFix(entry, f, ctx)
     return keys.keysInto(entry, C.rowOf(ctx, f.row), f.route, f.scope, keyOpts(ctx, { name: f.name, scope: f.scope, entry })).entry;
 }
 
+// ---- windows-mcp-one-per-desktop ------------------------------------------------------------------------------------
+// Advice only (`fix: null`): windows-mcp 0.8.8 makes one missed overlay confirmation permanent for its process, and a
+// second server on the same desktop is the likely cause. The finding is always blocked: each server is dropped by its
+// owner's own command, and preferred-tools changes none of them.
+function windowsMcpDrop(s, ctx)
+{
+    if (s.kind === 'plugin') return `claude plugin disable ${s.name} --scope ${s.scope}`;
+    const how = s.owner === 'catalog' ? '/preferred-tools:configure (Remove)' : `claude mcp remove ${s.name} -s ${s.scope === 'inherited' ? 'project' : s.scope}`;
+    return s.scope === 'inherited' ? `${how}, run in ${fromHere(ctx.inv, s.from)}` : how;
+}
+
+function windowsMcpOneDetect(ctx)
+{
+    const servers = windowsMcpServers(ctx.inv);
+    if (servers.length < 2) return [];
+    const at = servers.find((s) => s.owner === 'catalog') || servers[0];
+    const list = servers.map((s) => `${s.name} (${s.scope})`).join(', ');
+    const drop = servers.map((s) => `${s.name} (${s.scope}): ${windowsMcpDrop(s, ctx)}`).join('; ');
+    // `row` set by hand: a server is not a registration row, and --only narrows by it
+    return [C.finding('windows-mcp-one-per-desktop', { ...at, rowId: 'windows-control' }, `${servers.length} windows-mcp servers start in this project: ${list}`,
+        { blocked: `keep one per Windows desktop - ${drop}; a stuck one recovers only in a new Claude Code session` })];
+}
+
 module.exports = {
+    windowsMcpOneDetect,
     serenaWindowsHomeDetect, serenaWindowsHomeFix, uvxPythonDetect, uvxPythonFix, windowsArmPythonDetect, windowsArmPythonFix,
     windowsNpxCmdDetect, windowsNpxCmdFix, playwrightWebmcpDetect, playwrightWebmcpFix, appiumSdkEnvDetect, appiumSdkEnvFix,
     serenaTelemetryDetect, serenaTelemetryFix, tokenSyncDetect, tokenSyncFix, androidSdk, javaHome,

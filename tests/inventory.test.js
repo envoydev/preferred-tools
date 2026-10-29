@@ -454,3 +454,29 @@ test('a subfolder session reads the project file and key M4 measured', () => {
         finally { w.clean(); }
     }
 });
+
+// ---- windows-mcp: the servers that start here ------------------------------------------------------------------------
+
+const WM = (scope, name, extra = {}) => ({ name, scope, entry: {}, rowId: 'windows-control', route: 'local', own: false, alfredRetired: false, ...extra });
+const PLUG = (id, enabled, scope = 'user') => { const [plugin, marketplace] = id.split('@'); return { id, plugin, marketplace, scope, enabled, rowId: null, alfredRetired: plugin === 'windows-control' }; };
+const startsHere = (registrations, plugins = []) => inv.windowsMcpServers({ registrations, plugins }).map((s) => `${s.name} ${s.scope} ${s.owner}`);
+
+test('windowsMcpServers: one per name at its nearest scope, approved inherited only, enabled alfred-code plugins only', () => {
+    const registrations = [
+        WM('user', 'windows-desktop'),
+        WM('local', 'windows-desktop'),
+        { name: 'windows-control', scope: 'local', entry: {}, rowId: null, route: null, own: true, alfredRetired: true },
+        WM('inherited', 'wd-parent', { from: '/a', approval: 'approved', shadowed: null }),
+        WM('inherited', 'wd-pending', { from: '/a', approval: 'pending', shadowed: null }),
+        WM('inherited', 'wd-shadowed', { from: '/b', approval: 'approved', shadowed: { scope: 'inherited', from: '/a' } }),
+    ];
+    const plugins = [PLUG('windows-control@envoydev', true), PLUG('windows-desktop@envoydev', false), PLUG('windows-desktop@other', true)];
+    assert.deepStrictEqual(startsHere(registrations, plugins),
+        ['windows-desktop local catalog', 'windows-control local alfred-code', 'wd-parent inherited catalog', 'windows-control@envoydev user alfred-code']);
+    // an approved parent's copy ranks above user scope (M2, M3): one server, the inherited one
+    assert.deepStrictEqual(startsHere([WM('user', 'wd-parent'), WM('inherited', 'wd-parent', { from: '/a', approval: 'approved', shadowed: null })]), ['wd-parent inherited catalog']);
+    // a nearer server of the same name that is not windows-mcp is the one that starts
+    assert.deepStrictEqual(startsHere([{ name: 'windows-desktop', scope: 'local', entry: {}, rowId: null, route: null, own: true, alfredRetired: false }, WM('user', 'windows-desktop')]), []);
+    // alfred-code's 2.4.0 plugin name launches it too
+    assert.deepStrictEqual(startsHere([], [PLUG('windows-desktop@envoydev', true, 'local')]), ['windows-desktop@envoydev local alfred-code']);
+});

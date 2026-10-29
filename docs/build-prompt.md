@@ -385,6 +385,7 @@ rows - each `source` line is the alfred-code file to read for the detail:
 | serena-telemetry | serena sends a usage ping at every start | `SERENA_USAGE_REPORTING=false` | `serena-launch.js` |
 | token-sync | a token server at local or user scope lacks the key its key file has, or holds an older one | write the key in from the key file (a user registration holding a key: only from `~/.preferred-tools/.secrets`) | `scripts/keys.js`, D7 |
 | typescript-lsp-ts7 | typescript-lsp shows no diagnostics (TypeScript 7 ships no `tsserver.js`) | `npm install -g typescript-language-server typescript@6` | alfred-code `meta/stack-manifest.json`, the typescript-lsp row |
+| windows-mcp-one-per-desktop | windows-desktop shows connected in `/mcp` but its desktop tools stay unavailable: windows-mcp 0.8.8 makes one missed overlay confirmation permanent for the process, and a second windows-mcp on the same desktop is the likely cause | advice only (`advice: true`, `fix: null`): two or more windows-mcp servers starting here are reported, each with how its owner drops it; nothing is changed, and a stuck one recovers in a new session | `docs/sources.md` 'windows-mcp 0.8.8 - the sticky overlay failure' |
 
 A new problem the user meets later becomes a new row, with its `verifiedOn`.
 

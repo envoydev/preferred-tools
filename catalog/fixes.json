@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "note": "Known problems and their recorded fixes. `detect` and `fix` name functions in scripts/fixes/. `verifiedOn` says where the fix was proved; a row not proved on this build says so. A new problem the user meets later becomes a new row.",
+  "note": "Known problems and their recorded fixes. `detect` and `fix` name functions in scripts/fixes/. `verifiedOn` says where the fix was proved; a row not proved on this build says so. A new problem the user meets later becomes a new row. A row with `advice: true` has `fix: null`: every finding it returns is blocked - shown, never applied.",
   "fixes": [
     {
       "id": "serena-windows-home",
@@ -181,6 +181,22 @@
       "fix": "typescriptLspTs7Fix",
       "verifiedOn": "typescript@7.0.2 package contents read 2026-10-27; typescript-language-server 6.0.2 README says typescript@6",
       "source": "docs/sources.md 'LSP plugins'"
+    },
+    {
+      "id": "windows-mcp-one-per-desktop",
+      "tool": [
+        "windows-control"
+      ],
+      "os": [
+        "win32"
+      ],
+      "kind": "registration",
+      "advice": true,
+      "symptom": "windows-desktop shows connected in /mcp but its desktop tools stay unavailable: windows-mcp 0.8.8 makes one missed overlay confirmation permanent for the server process, and a second windows-mcp on the same desktop is the likely cause",
+      "detect": "windowsMcpOneDetect",
+      "fix": null,
+      "verifiedOn": "windows-mcp 0.8.8 source read 2026-10-29; not reproduced (no interactive desktop on the test VM)",
+      "source": "docs/sources.md 'windows-mcp 0.8.8 - the sticky overlay failure'"
     }
   ]
 }
