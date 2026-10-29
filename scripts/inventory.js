@@ -252,7 +252,8 @@ function installedOf(inv, rowId)
 // (docs/sources.md 'windows-mcp 0.8.8 - the sticky overlay failure'). One per name, the nearest: local, project, a
 // parent's .mcp.json (approved and not shadowed - M7), then user (M2, M3). Counted: the windows-control row's
 // registrations, alfred-code's under its reserved name (its launcher hides the package), and alfred-code's enabled
-// plugins that launch it. -> [{ name, scope, kind, owner: 'catalog' | 'alfred-code', from }]
+// plugins that launch it and load - an id its marketplace dropped says so only in `errors` (plugin-cli-evidence S13,
+// S25). -> [{ name, scope, kind, owner: 'catalog' | 'alfred-code', from }]
 const WINDOWS_MCP_PLUGINS = ['windows-control', 'windows-desktop'];
 const NEAREST = { local: 0, project: 1, inherited: 2, user: 3 };
 function windowsMcpServers(inv)
@@ -263,7 +264,7 @@ function windowsMcpServers(inv)
     return [
         ...[...wins.values()].filter((r) => r.rowId === 'windows-control' || (r.alfredRetired && r.name === 'windows-control'))
             .map((r) => ({ name: r.name, scope: r.scope, kind: 'mcp', owner: r.alfredRetired ? 'alfred-code' : 'catalog', from: r.from || null })),
-        ...(inv.plugins || []).filter((p) => p.enabled && p.marketplace === 'envoydev' && WINDOWS_MCP_PLUGINS.includes(p.plugin))
+        ...(inv.plugins || []).filter((p) => p.enabled && !(p.errors || []).length && p.marketplace === 'envoydev' && WINDOWS_MCP_PLUGINS.includes(p.plugin))
             .map((p) => ({ name: p.id, scope: p.scope, kind: 'plugin', owner: 'alfred-code', from: null })),
     ];
 }

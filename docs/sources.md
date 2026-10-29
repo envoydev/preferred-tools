@@ -661,12 +661,15 @@ signed-in desktop.
 
 alfred-code launches windows-mcp from plugins: its v2.9.0 `.claude-plugin/marketplace.json` lists `windows-control`
 (mcpServers `windows-control`) and `windows-desktop` ('RETIRED in 2.4.0 - renamed windows-control', mcpServers
-`windows-desktop`), both through `desktop-launch.js` with `windows-mcp==0.8.8`; 3.4.0's lists neither.
-`inventory.windowsMcpServers` counts them, enabled, beside the registrations that start here (M2, M3, M7 above).
+`windows-desktop`), both through `desktop-launch.js` with `windows-mcp==0.8.8`; v2.10.0 is the last to list them,
+v2.11.0 lists neither, and preferred-tools is first listed in v3.0.0 - so no marketplace version lists both. A plugin
+whose id the marketplace dropped stops loading and says so only in `plugin list --json`'s `errors`
+(`docs/plugin-cli-evidence.md` S13, S25), so `inventory.windowsMcpServers` counts these plugins only enabled and with no
+`errors` (a stale marketplace clone still loads them), beside the registrations that start here (M2, M3, M7 above).
 
-Measured 2026-10-29 on this change (0.1.4): macOS arm64, Claude Code 2.1.312 - `npm test` 288: 287 pass, 1 skip;
+Measured 2026-10-29 on this change (0.1.4, after its review fix): macOS arm64, Claude Code 2.1.312 - `npm test` 289: 288 pass, 1 skip;
 `npm run matrix` 63: 59 pass, 0 fail, 4 NOT RUN (the win32-only windows-control cases; github and sentry local need
-their keys). Windows 11 on ARM64, Claude Code 2.1.309, node 22.23.3, uv 0.13.4 - `npm test` 288: 281 pass, 0 fail, 7
+their keys). Windows 11 on ARM64, Claude Code 2.1.309, node 22.23.3, uv 0.13.4 - `npm test` 289: 282 pass, 0 fail, 7
 skip; `npm run matrix` 63: 56 pass, 0 fail, 7 NOT RUN (the macos-control cases; windows-control's start, no interactive
 desktop; sentry's key; github's docker; the two LSP binaries). The matrix case 'fix windows-mcp-one-per-desktop' passes
 on both: two real registrations are reported once, blocked, asked nothing, and left byte-identical. Linux NOT RUN (the

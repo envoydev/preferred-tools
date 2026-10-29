@@ -480,3 +480,8 @@ test('windowsMcpServers: one per name at its nearest scope, approved inherited o
     // alfred-code's 2.4.0 plugin name launches it too
     assert.deepStrictEqual(startsHere([], [PLUG('windows-desktop@envoydev', true, 'local')]), ['windows-desktop@envoydev local alfred-code']);
 });
+
+test('windowsMcpServers: a plugin that cannot load is not counted - a dropped id says so only in its errors (S13, S25)', () => {
+    const dropped = { ...PLUG('windows-control@envoydev', true), errors: ['plugin windows-control not found in marketplace envoydev'] };
+    assert.deepStrictEqual(startsHere([WM('local', 'windows-desktop')], [dropped]), ['windows-desktop local catalog']);
+});
