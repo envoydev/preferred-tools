@@ -496,3 +496,68 @@ gave 1864 PASS, 0 `shell-guards.js` blocks, no Stop block and no rotation ask; i
 note on configure's change pick ('remote route, pin ...'), and a configure replay after that word changed gave 631 PASS
 and 0 FINDING at every release. The NOT RUN lines are the same two as before (no fetch file handed on, claude-hud not
 picked).
+
+## Claude Code - .mcp.json in parent folders (measured 2026-10-29, Claude Code 2.1.312, macOS arm64)
+
+The docs say only that a project `.mcp.json` sits 'at your project's root directory'
+(https://code.claude.com/docs/en/mcp, read 2026-10-29); they say nothing of parent folders or subfolders.
+`node tests/probes/mcp-tree.js` measures it with the real CLI in a throwaway home and account, logged out, no model:
+`HOME` is `<S>/<variant>/home`, a `.mcp.json` sits above `HOME` (`p-above`), in `HOME` (`p-home`), in `ws` (`p-ws`,
+`dup` tagged `ws`) and in `ws/api` (`p-api`, `dup` tagged `api`); `ws/api` and `ws/web` are git repos, and `ws` is one
+in variant A and not in variant B. Every server is `tests/fake-mcp-server.js`, which logs its tag and working folder when
+it starts. A session is a logged-out `claude -p hi`: the docs say `-p` 'loads project-scoped servers without asking'
+(same page), and its stdio servers start before the login stop - but only the first batch of
+`MCP_SERVER_CONNECTION_BATCH_SIZE` ('Maximum number of local MCP servers (stdio) to connect in parallel during startup
+(default: 3)', https://code.claude.com/docs/en/env-vars), so the probe sets it to 20. The probe refuses to run unless
+`claude auth status` says `"loggedIn": false`.
+
+RESULT lines (folders relative to `HOME`):
+
+- control: `-p` from `ws/api` started `[api, p-above, p-api, p-home, p-ws]`.
+- M1, the same in both variants: from `ws` and `ws/web` `mcp list` names and `-p` starts `p-above`, `p-home`, `p-ws`,
+  `dup` (`ws`); from `ws/api` and `ws/api/src` it adds `p-api` and `dup` is `api`. Every project server lists as
+  '⏸ Pending approval'. The servers start in the session's folder (`ws/api/src` from `ws/api/src`), not in the folder
+  of the file that names them.
+- M2: `dup` started from `ws/api` and `ws/api/src` is `api`; `claude mcp get dup` in `ws/api` shows the `api` entry,
+  'Project config (shared via .mcp.json)'.
+- M3: with `dup` added at local scope in `ws/web`, the local one starts there and lists '✔ Connected'; the `ws` one
+  does not start.
+- M4: from `ws/api/src`, `add-json -s project` writes a new `ws/api/src/.mcp.json`; `-s local` keys the entry
+  `ws/api`, the repo root, and `mcp list` shows it connected from `ws/api/src` and from `ws/api`. From `ws/web/sub`:
+  `ws/web/sub/.mcp.json` and the key `ws/web`; from `ws/notes` inside `ws`'s repo (variant A): `ws/notes/.mcp.json`
+  and the key `ws`. From `ws/notes` in no repo (variant B): `ws/notes/.mcp.json` and the key `ws/notes`, which `ws`
+  does not list.
+- M5: from a symlink to `ws/api`, the list and the starts are those of `ws/api`, the servers start in `ws/api`, and
+  `-s local` keys `ws/api`.
+- M6: `ws/.mcp.json` as `{ not json`: from `ws/api`, `mcp list` exits 0, prints '[Failed to parse] Project config
+  (shared via .mcp.json)', and lists and starts the other files' servers; only that file's are lost.
+- M7, `p-ws` from `ws/web` (a repo root), each state with `ws/web` trusted, then untrusted, through
+  `projects["<ws/web>"].hasTrustDialogAccepted`, the docs' manual route (https://code.claude.com/docs/en/permissions):
+  nothing set - pending both ways; `enabledMcpjsonServers` in the account file's `ws/web` entry, or in
+  `ws/web/.claude/settings.local.json` - connected trusted, pending untrusted; the same in `ws/.claude/settings.local.json`
+  - pending both ways (a parent folder's settings approve nothing); `disabledMcpjsonServers` in the account file's
+  `ws/web` entry or in `ws/web/.claude/settings.local.json` - rejected both ways, and `mcp list` leaves the server out
+  (`claude mcp get` says '✘ Rejected (see disabledMcpjsonServers in settings)'; the docs say list shows it);
+  `enableAllProjectMcpServers` in the user `settings.json` - connected both ways. `claude mcp reset-project-choices`
+  ('approvals and rejections stored for this project have been reset') cleared `enabledMcpjsonServers` from both the
+  account file's entry and `ws/web/.claude/settings.local.json`, so the interactive prompt's choices live there. The MCP
+  page agrees: in an untrusted folder only the user settings, managed settings and `--settings` approve, and 'A
+  `disabledMcpjsonServers` entry in any settings file still rejects the server'.
+
+The facts the inventory encodes:
+
+```text
+walk: filesystem-root
+nearest-wins: yes
+local-over-inherited: yes
+symlink: real
+subfolder-project-file: cwd
+subfolder-local-key: git-root (no repo: cwd)
+approval: rejected - disabledMcpjsonServers in the user settings, the folder's settings or its account entry (trusted or not)
+approval: approved - enableAllProjectMcpServers or enabledMcpjsonServers in the user settings (trusted or not)
+approval: approved - enabledMcpjsonServers or enableAllProjectMcpServers in the folder's settings or account entry, folder trusted
+approval: pending - otherwise, a parent folder's settings included
+(the folder is the repo root, or the session folder in no repo; trust is its account entry's hasTrustDialogAccepted)
+```
+
+Linux and Windows: NOT RUN yet; the same probe runs there before the release that relies on these facts.
