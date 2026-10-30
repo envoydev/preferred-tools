@@ -12,7 +12,9 @@ const E = require('../scripts/entries.js');
 const { Harness, isolationCheck } = require('./harness.js');
 
 const skip = cli.available() ? false : 'no claude CLI on PATH';
-const root = () => fs.mkdtempSync(path.join(os.tmpdir(), 'pt-harness-'));
+const roots = [];
+const root = () => { const r = fs.mkdtempSync(path.join(os.tmpdir(), 'pt-harness-')); roots.push(r); return r; };
+test.after(() => { for (const r of roots) fs.rmSync(r, { recursive: true, force: true }); });
 
 test('isolation: the CLI writes in the throwaway account and the real one is byte-identical', { skip }, () =>
 {

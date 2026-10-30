@@ -139,7 +139,9 @@ test('an update with a stale pin: the registry\'s newer, old-enough release is w
     const now = Date.parse('2026-10-27T12:00:00Z');
     const registry = { versionsOf: async () => [{ version: '1.0.0', time: now - 90 * DAY }, { version: '1.5.0', time: now - 30 * DAY }, { version: '1.6.0', time: now - 2 * DAY }] };
     const lines = [];
-    const code = await update.main(['--apply', 'mcp:serena~user', '--no-refresh', '--project', p], { env: h.env, out: (s) => lines.push(s), registry, now, machine: { which: () => null, run: () => ({ status: 1 }), nodeVersion: process.versions.node } });
+    // a fetch file is handed on, so update keeps its <tmp>: under the root, which test.after removes
+    const tmp = fs.mkdtempSync(path.join(root, 'update-'));
+    const code = await update.main(['--apply', 'mcp:serena~user', '--no-refresh', '--tmp', tmp, '--project', p], { env: h.env, out: (s) => lines.push(s), registry, now, machine: { which: () => null, run: () => ({ status: 1 }), nodeVersion: process.versions.node } });
     assert.strictEqual(code, 0, lines.join('\n'));
     const got = reg(p, 'serena', 'user');
     assert.strictEqual(pinnedVersion(got.entry, 'serena-agent'), '1.5.0', 'the 2-day-old 1.6.0 is held back');

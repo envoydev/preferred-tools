@@ -141,13 +141,17 @@ test('fetch removes <tmp> when it ends', () => {
 
 test('the fake server logs its tag and working folder when it starts, and only when asked', () => {
     const w = world();
-    const log = path.join(w.dir, 'starts.log');
-    const fake = path.join(__dirname, 'fake-mcp-server.js');
-    const init = `${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } })}\n`;
-    const r = spawnSync(process.execPath, [fake, 'answer', '--log', log, '--tag', 'p-api'], { cwd: w.dir, input: init, encoding: 'utf8', timeout: 5000 });
-    assert.match(r.stdout, /"serverInfo"/, 'it still answers initialize');
-    assert.strictEqual(r.status, 0, 'it exits when its stdin closes');
-    assert.deepStrictEqual(fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l)), [{ tag: 'p-api', cwd: fs.realpathSync(w.dir) }]);
-    spawnSync(process.execPath, [fake, 'answer'], { cwd: w.dir, input: init, encoding: 'utf8', timeout: 1500 });
-    assert.strictEqual(fs.readFileSync(log, 'utf8').trim().split('\n').length, 1, 'no --log, no line');
+    try
+    {
+        const log = path.join(w.dir, 'starts.log');
+        const fake = path.join(__dirname, 'fake-mcp-server.js');
+        const init = `${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } })}\n`;
+        const r = spawnSync(process.execPath, [fake, 'answer', '--log', log, '--tag', 'p-api'], { cwd: w.dir, input: init, encoding: 'utf8', timeout: 5000 });
+        assert.match(r.stdout, /"serverInfo"/, 'it still answers initialize');
+        assert.strictEqual(r.status, 0, 'it exits when its stdin closes');
+        assert.deepStrictEqual(fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l)), [{ tag: 'p-api', cwd: fs.realpathSync(w.dir) }]);
+        spawnSync(process.execPath, [fake, 'answer'], { cwd: w.dir, input: init, encoding: 'utf8', timeout: 1500 });
+        assert.strictEqual(fs.readFileSync(log, 'utf8').trim().split('\n').length, 1, 'no --log, no line');
+    }
+    finally { w.clean(); }
 });

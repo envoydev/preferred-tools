@@ -35,7 +35,9 @@ const install = (w, answers) =>
 async function run(w, argv, opts = {})
 {
     const lines = [];
-    const code = await update.main([...argv, '--project', w.project], { env: w.env, out: (s) => lines.push(s), machine: noLsp, now: NOW, registry: fakeRegistry({}), ...opts });
+    // an apply that hands a fetch file on keeps its <tmp> for the command's next step: inside the world, w.clean() takes it
+    const tmp = argv.includes('--apply') && !argv.includes('--tmp') ? ['--tmp', fs.mkdtempSync(path.join(w.dir, 'preferred-tools-'))] : [];
+    const code = await update.main([...argv, ...tmp, '--project', w.project], { env: w.env, out: (s) => lines.push(s), machine: noLsp, now: NOW, registry: fakeRegistry({}), ...opts });
     return { code, text: lines.join('\n') };
 }
 
