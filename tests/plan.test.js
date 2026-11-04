@@ -82,7 +82,7 @@ test('uvx rows get their own python: windows-control 3.14 (x64 build on ARM64), 
     const arm = addStep(plan(inv(WINARM), pickOne('windows-control'), opts('C:\\Users\\me'))).entry;
     assert.strictEqual(arm.args[1], 'cpython-3.14-windows-x86_64-none');
     const mem = addStep(plan(inv(MAC), pickOne('memory'), opts('/Users/me'))).entry;
-    assert.ok(mem.args.includes('mcp-memory-service[sqlite]==12.1.1'));
+    assert.ok(mem.args.includes('mcp-memory-service[sqlite]==12.4.0'));
     assert.ok(!mem.args.includes('--with'), 'numpy is a core dependency of the pin');
     assert.strictEqual(mem.env.MCP_MEMORY_SQLITE_PATH, '/Users/me/.preferred-tools/memory/memory.db');
 });
@@ -105,7 +105,7 @@ test('npx rows: pinned, with the cut-off in npm_config_before; native Windows ge
     assert.deepStrictEqual(win.args.slice(0, 3), ['/c', 'npx', '-y']);
     assert.strictEqual(win.env.npm_config_before, '2026-10-20T23:59:59Z');
     const ap = addStep(plan(inv(MAC), pickOne('appium'), opts('/Users/me'))).entry;
-    assert.deepStrictEqual(ap.args, ['-y', 'appium-mcp@1.97.1']);
+    assert.deepStrictEqual(ap.args, ['-y', 'appium-mcp@1.99.1']);
     assert.strictEqual(ap.env.SCREENSHOTS_DIR, '/work/shop/.preferred-tools/appium-mcp/screenshots');
     assert.strictEqual(ap.env.PAGE_SOURCES_DIR, '/work/shop/.preferred-tools/appium-mcp/page-sources');
     assert.strictEqual(ap.env.ALLOW_REMOTE_APP_URLS, 'false');
@@ -119,7 +119,7 @@ test('routes: context7, github and sentry each build both ways; the others have 
     const c7l = addStep(plan(inv(MAC), pickOne('context7', { route: 'local', token: true }), opts('/h'))).entry;
     assert.deepStrictEqual(c7l.args, ['-y', '@upstash/context7-mcp@4.4.4', '--api-key', '${CONTEXT7_API_KEY}']);
     const gh = addStep(plan(inv(MAC), pickOne('github', { route: 'local' }), opts('/h'))).entry;
-    assert.deepStrictEqual(gh.args, ['run', '-i', '--rm', '-e', 'GITHUB_PERSONAL_ACCESS_TOKEN', 'ghcr.io/github/github-mcp-server:v2.0.2', 'stdio']);
+    assert.deepStrictEqual(gh.args, ['run', '-i', '--rm', '-e', 'GITHUB_PERSONAL_ACCESS_TOKEN', 'ghcr.io/github/github-mcp-server:v2.0.3', 'stdio']);
     assert.deepStrictEqual(gh.env, { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_PERSONAL_ACCESS_TOKEN}' });
     const ghb = addStep(plan(inv(MAC), pickOne('github', { route: 'local' }), opts('/h', { machine: { docker: false } }))).entry;
     assert.deepStrictEqual([ghb.command, ghb.args], ['github-mcp-server', ['stdio']]);

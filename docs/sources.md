@@ -24,6 +24,38 @@ published on or before 2026-10-20.
 
 Sources: `https://pypi.org/pypi/<package>/json` and `npm view <package> time --json`, read 2026-10-27.
 
+## Pins - refresh on 2026-11-04
+
+`npm run refresh-pins -- --write` moved two package pins, and their cut-off to `2026-11-04T23:59:59Z`. The GitHub
+image tag was moved by hand, since the script does not look up Docker tags. With today 2026-11-04, a release counts
+only if published on or before 2026-10-28. Every other pin is unchanged.
+
+| Package | Was | Now (published) | Held back by the age gate |
+|---|---|---|---|
+| `mcp-memory-service` | 12.1.1 | 12.4.0 (2026-10-26) | 12.5.0 (2026-11-03) |
+| `appium-mcp` | 1.97.1 | 1.99.1 (2026-10-27) | 1.99.2 (2026-11-01), 1.99.3 (2026-11-04) |
+| `ghcr.io/github/github-mcp-server` | v2.0.2 | v2.0.3 (2026-10-21) | v2.1.0 (2026-11-03) |
+| `@upstash/context7-mcp` | 4.4.4 | 4.4.4 | 4.5.0 (2026-11-03) |
+| `@playwright/mcp` | 0.0.83 | 0.0.83 | 0.0.84 (2026-10-31) |
+| `macos-mcp` | 0.4.6 | 0.4.6 | 0.4.7 (2026-11-02) |
+
+- `mcp-memory-service` 12.4.0 - CONFIRMED from the wheel: extra `[sqlite]` exists, console script
+  `memory = mcp_memory_service.cli.main:main` with the click command `server`, and `MCP_MEMORY_STORAGE_BACKEND`,
+  `MCP_MEMORY_SQLITE_PATH` and `MCP_MEMORY_SQLITE_PRAGMAS` read in `mcp_memory_service/config/storage.py`; `numpy` and
+  `sqlite-vec` are still core dependencies; `requires_python` `>=3.10`. The release notes for 12.2.0 to 12.4.0
+  (https://github.com/doobidoo/mcp-memory-service/releases) say no migration and no re-embedding, and change no flag
+  or default the row sets.
+- `appium-mcp` 1.99.1 - CONFIRMED from the npm tarball: README and `dist` both name `SCREENSHOTS_DIR`,
+  `PAGE_SOURCES_DIR`, `NO_UI`, `REMOTE_SERVER_URL_ALLOW_REGEX` and `ALLOW_REMOTE_APP_URLS` (now in `dist` too, so the
+  setting takes effect at this pin); `engines.node` `>=22`. The release notes for 1.97.2 to 1.99.1
+  (https://github.com/appium/appium-mcp/releases) cover iOS simulator internals, a page-source format, embedded-UI
+  locators and a `videoScale` fix, with no changed flag or env. MEASURED: `npm audit` at the pin, by the walk's own two
+  commands in an empty scratch folder, reports `{info 0, low 1, moderate 24, high 15, critical 0, total 40}` over 1206
+  dependencies (was 3 critical and 17 high at 1.97.1).
+- `ghcr.io/github/github-mcp-server` v2.0.3 - CONFIRMED:
+  `docker manifest inspect ghcr.io/github/github-mcp-server:v2.0.3` succeeds; the release (https://github.com/github/github-mcp-server/releases/tag/v2.0.3) has the same binary asset
+  names and changes no flag or tool name (bug fixes, `list_label` cursor pagination, Go 1.27.3).
+
 ## GitHub MCP server - github/github-mcp-server
 
 - Remote URL `https://api.githubcopilot.com/mcp/` - CONFIRMED. README (https://github.com/github/github-mcp-server).
@@ -43,7 +75,7 @@ Sources: `https://pypi.org/pypi/<package>/json` and `npm view <package> time --j
   route (`GITHUB_OAUTH_CALLBACK_PORT`). The catalog's remote route uses the `${GITHUB_PERSONAL_ACCESS_TOKEN}` bearer
   form (no token in any file), the vendor's documented Claude Code form.
 - Latest release v2.0.3 published 2026-10-21T09:52:29Z (`gh release list -R github/github-mcp-server`): 6 days old, so
-  the age gate holds the pin at v2.0.2 (2026-10-08).
+  the age gate holds the pin at v2.0.2 (2026-10-08). Moved to v2.0.3 on 2026-11-04 (see 'Pins - refresh on 2026-11-04').
 
 ## GitLab - hosted MCP server
 
@@ -308,7 +340,8 @@ Docs: https://code.claude.com/docs/en/plugins/cli-reference.md and https://code.
   --ignore-scripts appium-mcp@1.97.1` then `npm audit --json` works and reports `metadata.vulnerabilities` of
   `{info 0, low 1, moderate 1, high 17, critical 3, total 22}` over 1191 dependencies (2026-10-27). Nothing was
   executed. The walk's pre-apply audit uses exactly these two commands in a temp folder.
-- Latest 1.99.1 (2026-10-27) is under the age gate; 1.97.1 (2026-10-12) is the pin.
+- Latest 1.99.1 (2026-10-27) is under the age gate; 1.97.1 (2026-10-12) is the pin. Moved to 1.99.1 on 2026-11-04
+  (see 'Pins - refresh on 2026-11-04').
 
 ## Desktop servers
 
@@ -329,7 +362,8 @@ Docs: https://code.claude.com/docs/en/plugins/cli-reference.md and https://code.
   memory server` - CONFIRMED. Env `MCP_MEMORY_STORAGE_BACKEND=sqlite_vec`, `MCP_MEMORY_SQLITE_PATH`,
   `MCP_MEMORY_SQLITE_PRAGMAS` (docs example `journal_mode=WAL,busy_timeout=15000`) - CONFIRMED.
 - CHANGED: `numpy>=1.24.0` and `sqlite-vec` are core dependencies in 12.1.1, so `--with numpy` is redundant. The catalog
-  drops it. 12.4.0's notes change none of the above.
+  drops it. 12.4.0's notes change none of the above. Moved to 12.4.0 on 2026-11-04 (see 'Pins - refresh on
+  2026-11-04').
 
 ## uv and npm
 

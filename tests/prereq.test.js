@@ -176,13 +176,13 @@ test('audit: the package is audited in a temp folder with --ignore-scripts and t
     });
     const pick = [{ row: 'appium', route: 'local' }];
     const res = prereq.check(pick, ctx(mk()), catalog, { withAudit: true });
-    assert.deepStrictEqual(res.tools[0].audit, { package: 'appium-mcp@1.97.1', ok: true, counts: { critical: 3, high: 17, moderate: 0, low: 2, total: 22 } });
+    assert.deepStrictEqual(res.tools[0].audit, { package: 'appium-mcp@1.99.1', ok: true, counts: { critical: 3, high: 17, moderate: 0, low: 2, total: 22 } });
     const install = seen.find((s) => /^npm install/.test(s.line));
     assert.match(install.line, /--package-lock-only --ignore-scripts/);
-    assert.strictEqual(install.before, '2026-10-20T23:59:59Z', 'resolved at the row\'s cut-off, as npx will');
-    assert.deepStrictEqual(install.pkg.dependencies, { 'appium-mcp': '1.97.1' });
+    assert.strictEqual(install.before, '2026-11-04T23:59:59Z', 'resolved at the row\'s cut-off, as npx will');
+    assert.deepStrictEqual(install.pkg.dependencies, { 'appium-mcp': '1.99.1' });
     assert.ok(!fs.existsSync(install.cwd), 'the temp folder is removed');
-    assert.match(prereq.render(res), /^appium: audit - appium-mcp@1\.97\.1 has 22 known vulnerabilities in its dependency tree \(3 critical, 17 high, 0 moderate, 2 low\)$/m);
+    assert.match(prereq.render(res), /^appium: audit - appium-mcp@1\.99\.1 has 22 known vulnerabilities in its dependency tree \(3 critical, 17 high, 0 moderate, 2 low\)$/m);
     // not asked for: not run, no npm call
     seen.length = 0;
     assert.strictEqual(prereq.check(pick, ctx(mk()), catalog).tools[0].audit, undefined);

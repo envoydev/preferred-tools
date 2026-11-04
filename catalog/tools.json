@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "note": "The 17 rows of preferred-tools. Facts are checked against the vendor docs in docs/sources.md (read 2026-10-27). Placeholders: {root} location root, {name} registration name, {host}, {value}. No secret in this file: a token is only ever a ${VAR} reference.",
+  "note": "The 17 rows of preferred-tools. Facts are checked against the vendor docs in docs/sources.md (read 2026-10-27; pins refreshed 2026-11-04). Placeholders: {root} location root, {name} registration name, {host}, {value}. No secret in this file: a token is only ever a ${VAR} reference.",
   "rules": {
     "ageGateDays": 7,
     "cutoff": "2026-10-20T23:59:59Z",
@@ -116,9 +116,9 @@
           "package": {
             "registry": "pypi",
             "name": "mcp-memory-service",
-            "version": "12.1.1",
+            "version": "12.4.0",
             "fromSpec": "mcp-memory-service[sqlite]=={version}",
-            "cutoff": "2026-10-20T23:59:59Z"
+            "cutoff": "2026-11-04T23:59:59Z"
           },
           "run": [
             "memory",
@@ -296,7 +296,7 @@
           "tokenVar": "GITHUB_PERSONAL_ACCESS_TOKEN",
           "image": {
             "name": "ghcr.io/github/github-mcp-server",
-            "tag": "v2.0.2"
+            "tag": "v2.0.3"
           },
           "run": [
             "stdio"
@@ -695,8 +695,8 @@
           "package": {
             "registry": "npm",
             "name": "appium-mcp",
-            "version": "1.97.1",
-            "cutoff": "2026-10-20T23:59:59Z"
+            "version": "1.99.1",
+            "cutoff": "2026-11-04T23:59:59Z"
           },
           "run": [],
           "env": {
