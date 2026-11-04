@@ -21,11 +21,11 @@ Adding, changing, renaming or removing anything the plugin ships. `.claude/CLAUD
 
 - The version lives in `.claude-plugin/plugin.json` and is mirrored in `package.json`; `npm run lint` fails on drift. Bump both on every user-visible change: a change without a bump is not delivered.
 - Never rename or drop the id `preferred-tools`: every install goes silent.
-- The `envoydev` marketplace in alfred-code lists the plugin with a GitHub source on `main`, so a merge to `main` with a new version is the release. A change to that entry follows alfred-code's own CLAUDE.md.
+- The `envoydev` marketplace in alfred-code lists the plugin as a GitHub source on this repo's `main` with no `sha` - `{ "source": "github", "repo": "envoydev/preferred-tools", "ref": "main" }` (the user's ruling, 2026-11-04); alfred-code's lint check 49 allows an unpinned entry only for an `envoydev/` repo on `main`. So a merge to `main` with a new version is the release, with no alfred-code change. A change to that entry follows alfred-code's own CLAUDE.md.
 
 ## Release
 
-- `main` is the default branch and work lands on a branch. Commit, push or merge only on the user's word, after the proof below, and report what was not run.
+- `main` is the default branch and stays release-only: with no pinned commit, a fresh install fetches whatever is on `main`, so work lands on a branch and reaches `main` only when it is ready to ship. Commit, push or merge only on the user's word, after the proof below, and report what was not run.
 
 ## Proof
 

@@ -6,7 +6,10 @@ The tools its owner has tested and likes to use, MCP servers and Claude Code plu
 plugin, `preferred-tools`. The plugin carries each tool's install, update, rename, relocation and fix procedure. It
 is listed in the `envoydev` marketplace, which lives in the alfred-code repo
 (`https://github.com/envoydev/alfred-code`, `.claude-plugin/marketplace.json`); users install it as
-`preferred-tools@envoydev`.
+`preferred-tools@envoydev`. The entry is a GitHub source on this repo's `main` with no `sha` (the user's ruling,
+2026-11-04; alfred-code's lint check 49 allows that only for an `envoydev/` repo on `main`): a fresh install fetches
+`main`'s tip, and a version bump merged to `main` is the release with no alfred-code change. So `main` stays
+release-only.
 
 - `/preferred-tools:install` - manual (`disable-model-invocation: true`); adds only tools not installed in this
   project: pick tools, then route, scope, name and location per tool. A tool installed for every project is offered as
