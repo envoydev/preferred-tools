@@ -33,10 +33,6 @@ names, else `docs/superpowers/<YYYY-MM-DD>-auto-run.md` under the project root.
 - Every ask that would go to the user takes its `(Recommended)` option, and the ledger gets
   `Ruling: <the ask> - <the option taken> - <cost if wrong>`.
 - An ask with no marked option takes the option you would recommend, ledgered the same way.
-- A guard's security ask - a credential shown, work discarded, a write outside the project, a desktop launch, a
-  protective guard switched off - is never auto-run's to allow, whichever option is marked: take its safe option,
-  keep going, and list the act under `Left for you` in the close. Why: an auto-answered allow would let the act
-  through with nobody watching (alfred-code's review fix pass, 2026-10-30).
 - The user's own words about how to run ('one by one without stopping') outrank a prompt file's or a plan's own
   'one task only': finish a task, write its ledger line, start the next in the same turn.
 
@@ -44,8 +40,15 @@ names, else `docs/superpowers/<YYYY-MM-DD>-auto-run.md` under the project root.
 
 - A push, a merge, a version bump, a billed run (named with its cost), anything irreversible or outward-facing (a
   publish, a deletion outside the scratchpad and the docs root with no backup, a message to another person), and a
-  security-sensitive action no guard asked about - unless the user's own words in this session already authorised
-  that exact act.
+  security-sensitive action - unless the user's own words in this session already authorised that exact act.
+  - A merge can be refused even then: Claude Code's auto permission mode denied a `gh pr merge` the user had asked
+    for (2026-11-04). When the run will end in a merge, ask for it before the user leaves - they merge it themselves
+    (`! gh pr merge <n> --merge`) or add a permission rule for it. Never route around a denial; what depends on the
+    merge, such as tags or a marketplace move, waits with it.
+- A guard's security ask - a credential shown, work discarded, a write outside the project, a protective guard
+  switched off - is never auto-run's to answer, whatever the user authorised around it: take its safe option and list
+  the act under `Left for you`. Only the user's own pick of its unsafe option opens it; a reply that merely implies it
+  does not (2026-11-04: a discard guard refused a receipt written on such a reply).
 - A plan so broken that every path forward is a guess.
 - The approval of a design - a graded spec or plan, or a bounded in-chat design (the user's ruling). Only words that
   name those approvals - 'approve the graded specs and plans yourself' - waive them, all kinds at once, never the
@@ -67,5 +70,5 @@ Changed: <files, and each commit with its subject>
 Checks: <each command run, with its result line>
 Decisions auto-mode made for you:
 - <the ask> - <the option taken>
-Left for you: <each outward act, each guard ask taken safe and the act it held back, each NOT RUN and why> | none
+Left for you: <each outward act, each NOT RUN and why> | none
 ```
