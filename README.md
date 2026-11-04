@@ -24,8 +24,9 @@ claude plugin marketplace add envoydev/alfred-code
 claude plugin install preferred-tools@envoydev
 ```
 
-The plugin is listed in the `envoydev` marketplace (the alfred-code repo, `.claude-plugin/marketplace.json`). Run the
-commands from the project you want the tools in, not from this repo. Updates are pulled: run
+The plugin is listed in the `envoydev` marketplace (the alfred-code repo, `.claude-plugin/marketplace.json`). Its entry
+follows this repo's `main` branch with no pinned commit (no `sha`), so a release is a version bump merged to `main`.
+Run the commands from the project you want the tools in, not from this repo. Updates are pulled: run
 `claude plugin marketplace update envoydev` and `claude plugin update preferred-tools@envoydev`.
 
 ## The catalog
