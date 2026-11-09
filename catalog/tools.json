@@ -48,7 +48,6 @@
           "runtime": "uvx",
           "python": "3.13",
           "with": [],
-          "projectScope": false,
           "package": {
             "registry": "pypi",
             "name": "serena-agent",
@@ -82,6 +81,7 @@
       },
       "locations": {
         "defaultSide": "project",
+        "relative": false,
         "alfred": ".alfred/serena/home",
         "windowsAbsolute": true,
         "derived": [
@@ -112,7 +112,6 @@
           "runtime": "uvx",
           "python": "3.13",
           "with": [],
-          "projectScope": false,
           "package": {
             "registry": "pypi",
             "name": "mcp-memory-service",
@@ -140,6 +139,7 @@
       },
       "locations": {
         "defaultSide": "account",
+        "relative": false,
         "alfred": "~/.alfred-memory",
         "derived": [
           {
@@ -211,7 +211,6 @@
       "recommendedRoute": "remote",
       "routes": {
         "remote": {
-          "projectScope": true,
           "type": "http",
           "url": "https://mcp.context7.com/mcp",
           "auth": "optional-token",
@@ -228,7 +227,6 @@
           "prereqs": []
         },
         "local": {
-          "projectScope": false,
           "runtime": "npx",
           "auth": "optional-token",
           "tokenVar": "CONTEXT7_API_KEY",
@@ -273,7 +271,6 @@
       "recommendedRoute": "remote",
       "routes": {
         "remote": {
-          "projectScope": true,
           "type": "http",
           "url": "https://api.githubcopilot.com/mcp/",
           "auth": "token",
@@ -290,7 +287,6 @@
           "prereqs": []
         },
         "local": {
-          "projectScope": false,
           "runtime": "docker",
           "auth": "token",
           "tokenVar": "GITHUB_PERSONAL_ACCESS_TOKEN",
@@ -349,7 +345,6 @@
       ],
       "routes": {
         "remote": {
-          "projectScope": true,
           "type": "http",
           "url": "https://{host}/api/v4/mcp",
           "auth": "oauth",
@@ -378,7 +373,6 @@
       "recommendedRoute": "remote",
       "routes": {
         "remote": {
-          "projectScope": true,
           "type": "http",
           "url": "https://mcp.atlassian.com/v2/mcp",
           "auth": "oauth",
@@ -408,7 +402,6 @@
       "recommendedRoute": "local",
       "routes": {
         "local": {
-          "projectScope": false,
           "runtime": "npx",
           "package": {
             "registry": "npm",
@@ -443,6 +436,7 @@
       },
       "locations": {
         "defaultSide": "project",
+        "relative": false,
         "alfred": ".alfred/chrome-control",
         "derived": [
           {
@@ -479,7 +473,6 @@
       "recommendedRoute": "local",
       "routes": {
         "local": {
-          "projectScope": false,
           "runtime": "npx",
           "package": {
             "registry": "npm",
@@ -514,6 +507,7 @@
       },
       "locations": {
         "defaultSide": "project",
+        "relative": false,
         "alfred": ".alfred/msedge-control",
         "derived": [
           {
@@ -550,7 +544,6 @@
       "recommendedRoute": "local",
       "routes": {
         "local": {
-          "projectScope": false,
           "runtime": "npx",
           "package": {
             "registry": "npm",
@@ -584,6 +577,7 @@
       },
       "locations": {
         "defaultSide": "project",
+        "relative": false,
         "alfred": ".alfred/firefox-control",
         "derived": [
           {
@@ -620,7 +614,6 @@
       "recommendedRoute": "local",
       "routes": {
         "local": {
-          "projectScope": false,
           "runtime": "npx",
           "package": {
             "registry": "npm",
@@ -654,6 +647,7 @@
       },
       "locations": {
         "defaultSide": "project",
+        "relative": false,
         "alfred": ".alfred/webkit-control",
         "derived": [
           {
@@ -690,7 +684,6 @@
       "recommendedRoute": "local",
       "routes": {
         "local": {
-          "projectScope": false,
           "runtime": "npx",
           "package": {
             "registry": "npm",
@@ -719,6 +712,7 @@
       },
       "locations": {
         "defaultSide": "project",
+        "relative": false,
         "alfred": ".alfred/mobile-control",
         "derived": [
           {
@@ -751,7 +745,6 @@
           "runtime": "uvx",
           "python": "3.13",
           "with": [],
-          "projectScope": false,
           "package": {
             "registry": "pypi",
             "name": "macos-mcp",
@@ -799,7 +792,6 @@
           "runtime": "uvx",
           "python": "3.14",
           "with": [],
-          "projectScope": false,
           "package": {
             "registry": "pypi",
             "name": "windows-mcp",
@@ -848,7 +840,6 @@
       "recommendedRoute": "remote",
       "routes": {
         "remote": {
-          "projectScope": true,
           "type": "http",
           "url": "https://mcp.sentry.dev/mcp",
           "auth": "oauth",
@@ -861,7 +852,6 @@
           "prereqs": []
         },
         "local": {
-          "projectScope": false,
           "runtime": "npx",
           "auth": "token",
           "tokenVar": "SENTRY_ACCESS_TOKEN",

@@ -51,7 +51,7 @@ test('every MCP route carries what its transport needs', () => {
         {
             const at = `${row.id}/${routeId}`;
             assert.ok(['local', 'remote'].includes(routeId), at);
-            assert.strictEqual(typeof route.projectScope, 'boolean', `${at}: projectScope`);
+            assert.ok(!('projectScope' in route), `${at}: no projectScope - every route may sit at every scope`);
             assert.ok(Array.isArray(route.fingerprints) && route.fingerprints.length, `${at}: fingerprints`);
             assert.ok(Array.isArray(route.prereqs), `${at}: prereqs`);
             if (routeId === 'remote')
@@ -59,13 +59,10 @@ test('every MCP route carries what its transport needs', () => {
                 assert.strictEqual(route.type, 'http', at);
                 assert.match(route.url, /^https:\/\//, at);
                 assert.ok(['oauth', 'token', 'optional-token'].includes(route.auth), `${at}: auth`);
-                // a remote entry holds no secret, so project scope is allowed
-                assert.strictEqual(route.projectScope, true, `${at}: remote routes may sit in the committed file`);
             }
             else
             {
                 assert.ok(['uvx', 'npx', 'docker'].includes(route.runtime), `${at}: runtime`);
-                assert.strictEqual(route.projectScope, false, `${at}: no local route is project-scoped before step 12 measures it`);
                 assert.ok(Array.isArray(route.run), `${at}: run`);
                 if (route.runtime === 'uvx')
                 {
@@ -105,6 +102,7 @@ test('every location root derives its paths from one root, in the row\'s locatio
     {
         const loc = row.locations;
         assert.ok(['project', 'account'].includes(loc.defaultSide), row.id);
+        assert.strictEqual(typeof loc.relative, 'boolean', `${row.id}: relative - proven by tests/probes/relative-root.js`);
         assert.ok(loc.alfred, `${row.id}: the alfred-code root it reads from original-mcps.json`);
         assert.ok(loc.derived.length >= 1 && loc.derived[0].sub !== undefined, row.id);
         for (const d of loc.derived) assert.ok(['arg', 'env'].includes(d.in) && d.key, row.id);

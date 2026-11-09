@@ -92,6 +92,18 @@ function logicalFromWritten(str, scope, ctx)
 function wantedRoot(row, pick, cur, name, scope, ctx, copy = false)
 {
     const loc = pick.location || { side: cur ? 'keep' : copy && row.locations.defaultSide === 'account' ? 'project' : 'default' };
+    const serenaWin = row.locations.windowsAbsolute && ctx.platform === 'win32';
+    // serena on Windows at project scope: the committed file names the profile's .serena as ${USERPROFILE}\.serena, the
+    // one absolute, space-free folder it can name without a machine path
+    if (serenaWin && scope === 'project')
+    {
+        const d = E.serenaWindowsHome(ctx);
+        if (d.needsInput) return { error: `at project scope serena on Windows takes only \${USERPROFILE}\\.serena, and ${d.needsInput}` };
+        const profileHome = E.formatRoot({ kind: 'home', rel: '.serena' }, 'local', ctx).value;
+        const keeps = loc.side === 'keep' && cur && cur.rootStr && [profileHome.toLowerCase(), '${userprofile}\\.serena'].includes(cur.rootStr.toLowerCase());
+        if (!['default', 'account'].includes(loc.side) && !keeps) return { error: 'at project scope serena on Windows takes only ${USERPROFILE}\\.serena - pick the account folder' };
+        return { root: { kind: 'home', rel: '.serena' }, existing: false, backslash: true };
+    }
     let root;
     let existing = false;
     if (loc.side === 'keep' && cur && cur.rootStr) root = logicalFromWritten(cur.rootStr, cur.scope, ctx);
@@ -118,8 +130,14 @@ function wantedRoot(row, pick, cur, name, scope, ctx, copy = false)
         const text = resolved.value && resolved.value.replace(/\//g, '\\');
         if (!text || !E.validWindowsSerenaHome(text))
             return { error: `serena's home on Windows must be absolute, in backslashes and space-free (fix row serena-windows-home); '${text || loc.path}' is not` };
-        if (scope === 'project') return { error: 'serena on Windows cannot be registered at project scope: its home must be absolute' };
         return { root: { kind: 'abs', path: text }, existing };
+    }
+    // project scope writes a relative folder, which lands wherever Claude starts: only for a row proven to follow it
+    if (scope === 'project' && root.kind === 'project' && row.locations.relative !== true)
+    {
+        if (pick.location || cur) return { error: 'project scope writes a folder relative to where Claude starts, which this tool is not proven to follow (locations.relative) - pick the account folder' };
+        root = E.otherPlace(row, name, 'account');
+        existing = false;
     }
     return { root, existing };
 }
@@ -137,8 +155,6 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     if (!route) return out.errors.push(`${row.id}: no ${routeId} route (routes: ${Object.keys(row.routes).join(', ')})`);
     const scope = pick.scope || (cur ? cur.scope : asks.recommendedScope(row, routeId));
     if (!SCOPES.includes(scope)) return out.errors.push(`${row.id}: unknown scope '${scope}'`);
-    if (scope === 'project' && !route.projectScope)
-        return out.errors.push(`${row.id}: the ${routeId} route cannot be registered at project scope (it needs ${routeId === 'local' ? "this machine's paths and runtime" : 'a secret'} that must not sit in the committed .mcp.json)`);
     const bad = inv.unreadable.find((u) => (u.scope === scope) || (scope !== 'project' && ['local', 'user'].includes(u.scope) && ['local', 'user'].includes(scope)));
     if (bad) return out.errors.push(`${row.id}: the ${scope} scope is unreadable (${bad.file} is ${bad.state}); nothing is written there`);
 
@@ -188,7 +204,7 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     {
         const w = wantedRoot(row, pick, cur, name, scope, ctx, !cur && here.length > 0);
         if (w.error) return out.errors.push(`${row.id}: ${w.error}`);
-        const f = E.formatRoot(w.root, scope, ctx);
+        const f = E.formatRoot(w.root, scope, ctx, { backslash: w.backslash });
         if (f.error) return out.errors.push(`${row.id}: ${f.error}`);
         rootStr = f.value;
         if (!w.existing) ensure = E.formatRoot(w.root, 'local', ctx).value;

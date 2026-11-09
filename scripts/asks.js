@@ -17,6 +17,11 @@ const SCOPE_TEXT = {
     project: "this project, for everyone who opens it (the committed .mcp.json - relative paths and ${VAR} only)",
     user: 'every project on this machine',
 };
+// project scope for a route that runs on this machine: what the committed file then carries
+const PROJECT_LOCAL_TEXT = "the committed .mcp.json - every session in this folder or below it; data folders follow the folder Claude starts in, a subfolder included; it holds this machine's launch (cmd /c on Windows, the x64 Python on Windows ARM64)";
+const scopeText = (s, row, routeId) => (s === 'project' && row.kind === 'mcp' && routeId === 'local' ? PROJECT_LOCAL_TEXT : SCOPE_TEXT[s]);
+// every scope question lists the recommended scope first, then the others in this order (the user's ruling, 2026-11-10)
+const SCOPE_ORDER = ['user', 'project', 'local'];
 
 // local for a local route (its paths and Python are this machine's); project for a remote route whose entry holds no secret
 const recommendedScope = (row, routeId) => (row.kind === 'plugin' ? row.recommendedScope : routeId === 'remote' ? 'project' : 'local');
@@ -142,26 +147,41 @@ function routeQuestion(row, current = null)
     };
 }
 
-const scopesFor = (row, routeId) => (row.kind === 'plugin' ? ['project', 'local', 'user'] : ['local', 'project', 'user'].filter((s) => s !== 'project' || row.routes[routeId].projectScope));
+// Every scope for every row (the user's ruling, 2026-11-10: 'It must give options as user/project/local'). The one left
+// out: project for serena on Windows when this machine's profile path has a space - its home must be absolute and
+// space-free, and the committed file can only name it as ${USERPROFILE}\.serena.
+function scopesFor(row, routeId, ctx = null)
+{
+    if (row.kind === 'plugin') return ['project', 'local', 'user'];
+    const serenaWin = row.locations && row.locations.windowsAbsolute && ctx && ctx.platform === 'win32';
+    return ['local', 'project', 'user'].filter((s) => s !== 'project' || !serenaWin || !E.serenaWindowsHome(ctx).needsInput);
+}
 
-// The one call of up to four questions for a tool: scope, name, location, and one tool-specific extra. `current` is the
-// registration configure changes; for an install, `copyOf` lists this row's registrations at other scopes (the copy for
-// every project), whose scopes are not offered again - with one scope left, the scope question is left out.
+// The scope question, or null when one scope is left. `current` is the registration configure changes; for an install,
+// `copyOf` lists this row's registrations at other scopes (the copy for every project), whose scopes are not offered again.
+function scopeQuestion(row, inv, { route, current = null, copyOf = [], ctx = null } = {})
+{
+    const routeId = route || (current && current.route) || row.recommendedRoute;
+    const rec = current ? current.scope : recommendedScope(row, routeId);
+    const all = scopesFor(row, routeId, ctx);
+    const free = all.filter((s) => !copyOf.some((c) => c.scope === s));
+    const scopes = free.length ? free : all;
+    const order = [rec, ...SCOPE_ORDER.filter((s) => s !== rec)].filter((s) => scopes.includes(s));
+    if (order.length < 2) return null;
+    return {
+        id: `scope-${row.id}`, header: 'Scope', multiSelect: false,
+        question: current ? `${row.label}: which scope? Another one moves '${current.name || row.label}' there; /preferred-tools:install adds a second copy instead.` : `${row.label}: which scope?`,
+        options: order.slice(0, 4).map((s, i) => ({ label: `${s}${i === 0 ? REC : ''}`, description: scopeText(s, row, routeId) })),
+    };
+}
+
+// The one call of up to four questions for a tool: scope, name, location, and one tool-specific extra.
 function toolQuestions(row, inv, { route, current = null, ctx = null, catalog, copyOf = [] } = {})
 {
     const routeId = route || (current && current.route) || row.recommendedRoute;
     const qs = [];
-    const rec = current ? current.scope : recommendedScope(row, routeId);
-    const all = scopesFor(row, routeId);
-    const free = all.filter((s) => !copyOf.some((c) => c.scope === s));
-    const scopes = free.length ? free : all;
-    const order = [rec, ...scopes.filter((s) => s !== rec)].filter((s) => scopes.includes(s));
-    if (order.length > 1)
-        qs.push({
-            id: `scope-${row.id}`, header: 'Scope', multiSelect: false,
-            question: current ? `${row.label}: which scope? Another one moves '${current.name || row.label}' there; /preferred-tools:install adds a second copy instead.` : `${row.label}: which scope?`,
-            options: order.slice(0, 4).map((s, i) => ({ label: `${s}${i === 0 ? REC : ''}`, description: SCOPE_TEXT[s] })),
-        });
+    const scope = scopeQuestion(row, inv, { route: routeId, current, copyOf, ctx });
+    if (scope) qs.push(scope);
     if (row.kind === 'plugin') return qs;
 
     const orig = row.name;
@@ -306,4 +326,4 @@ function all(inv, picks, catalog)
     return out;
 }
 
-module.exports = { REC, recommendedScope, pickQuestions, changeQuestions, routeQuestion, toolQuestions, removeQuestions, packed, STATIC, all, chunk, scopesFor };
+module.exports = { REC, recommendedScope, pickQuestions, changeQuestions, routeQuestion, toolQuestions, scopeQuestion, removeQuestions, packed, STATIC, all, chunk, scopesFor };

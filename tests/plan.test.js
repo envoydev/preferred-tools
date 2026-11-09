@@ -10,13 +10,15 @@ const { MARKER } = require('../scripts/kept.js');
 
 const catalog = catalogLib.load();
 const clone = () => JSON.parse(JSON.stringify({ ...catalog, reserved: [...catalog.reserved], byId: undefined }));
-// a catalog where the named local routes may sit in the committed .mcp.json (step 12 measures that per row)
-function withProjectScope(...ids)
+// a catalog where the named rows are proven to resolve a relative data folder against the folder they start in
+// (tests/probes/relative-root.js measures that per row)
+function withRelative(...ids)
 {
     const raw = clone();
-    for (const t of raw.tools) if (ids.includes(t.id)) for (const r of Object.values(t.routes)) r.projectScope = true;
+    for (const t of raw.tools) if (ids.includes(t.id)) t.locations.relative = true;
     return { ...raw, reserved: new Set(raw.reserved), byId: new Map(raw.tools.map((r) => [r.id, r])) };
 }
+const flag = (e, f) => e.args[e.args.indexOf(f) + 1];
 
 const MAC = { os: 'darwin', arch: 'arm64', project: '/work/shop' };
 const LINUX = { os: 'linux', arch: 'x64', project: '/work/shop' };
@@ -160,7 +162,7 @@ test('at local and user scope the token note names the key files the apply reads
     assert.ok(!user.steps.some((s) => s.op === 'ensure-ignore'));
 });
 
-test('scopes: local and user write absolute paths with ~ expanded; project is refused for a local route', () => {
+test('scopes: local and user write absolute paths with ~ expanded; project scope takes the account folder until a row is proven relative', () => {
     const user = addStep(plan(inv(MAC), pickOne('memory', { scope: 'user' }), opts('/Users/me'))).entry;
     assert.strictEqual(user.env.MCP_MEMORY_SQLITE_PATH, '/Users/me/.preferred-tools/memory/memory.db');
     assert.ok(!user.env.MCP_MEMORY_SQLITE_PATH.includes('~'));
@@ -170,12 +172,38 @@ test('scopes: local and user write absolute paths with ~ expanded; project is re
     const rel = addStep(plan(inv(MAC), pickOne('playwright-chrome', { location: { side: 'path', path: 'tools/pw' } }), opts('/Users/me'))).entry;
     assert.strictEqual(rel.args[rel.args.indexOf('--user-data-dir') + 1], '/work/shop/tools/pw');
     const p = plan(inv(MAC), pickOne('serena', { scope: 'project' }), opts('/Users/me'));
-    assert.match(p.errors[0], /cannot be registered at project scope/);
-    assert.strictEqual(p.steps.length, 0);
+    assert.deepStrictEqual(p.errors, []);
+    assert.strictEqual(addStep(p).entry.env.SERENA_HOME, '${HOME}/.preferred-tools/serena');
+});
+
+test('every MCP route offers user, project and local: recommended first, then user, project, local', () => {
+    const scopes = (id, route, base = MAC, home = '/Users/me') => asks.scopeQuestion(catalog.byId.get(id), inv(base), { route, ctx: { project: base.project, platform: base.os, home, env: {}, exists: () => false } }).options.map((o) => o.label.replace(' (Recommended)', ''));
+    assert.deepStrictEqual(scopes('serena', 'local'), ['local', 'user', 'project']);
+    assert.deepStrictEqual(scopes('context7', 'remote'), ['project', 'user', 'local']);
+    assert.deepStrictEqual(scopes('context7', 'local'), ['local', 'user', 'project']);
+    assert.deepStrictEqual(scopes('claude-hud'), ['user', 'project', 'local']);
+    assert.deepStrictEqual(scopes('typescript-lsp'), ['project', 'user', 'local']);
+    assert.deepStrictEqual(scopes('serena', 'local', WIN, 'C:\\Users\\me'), ['local', 'user', 'project']);
+    assert.deepStrictEqual(scopes('serena', 'local', WIN, 'C:\\Users\\Jo Doe'), ['local', 'user']);
+});
+
+test('project scope for a local route: the account folder until the row is proven relative, then relative', () => {
+    const plain = addStep(plan(inv(MAC), pickOne('playwright-chrome', { scope: 'project' }), opts('/Users/me'))).entry;
+    assert.strictEqual(flag(plain, '--user-data-dir'), '${HOME}/.preferred-tools/playwright-chrome');
+    const typed = plan(inv(MAC), pickOne('playwright-chrome', { scope: 'project', location: { side: 'project' } }), opts('/Users/me'));
+    assert.match(typed.errors.join(), /locations\.relative/);
+    const proven = addStep(plan(inv(MAC), pickOne('playwright-chrome', { scope: 'project' }), opts('/Users/me', { catalog: withRelative('playwright-chrome') }))).entry;
+    assert.strictEqual(flag(proven, '--user-data-dir'), '.preferred-tools/playwright-chrome');
+});
+
+test('serena on Windows at project scope writes ${USERPROFILE}\\.serena; a spaced profile is a plan error', () => {
+    const e = addStep(plan(inv(WIN), pickOne('serena', { scope: 'project' }), opts('C:\\Users\\me'))).entry;
+    assert.strictEqual(e.env.SERENA_HOME, '${USERPROFILE}\\.serena');
+    assert.match(plan(inv(WIN), pickOne('serena', { scope: 'project' }), opts('C:\\Users\\Jo Doe')).errors.join(), /space/);
 });
 
 test('project scope (a row measured safe): relative paths and ${VAR} only, never an absolute path', () => {
-    const cat = withProjectScope('playwright-chrome', 'memory');
+    const cat = withRelative('playwright-chrome', 'memory');
     const o = opts('/Users/me', { catalog: cat });
     const rel = addStep(plan(inv(MAC), pickOne('playwright-chrome', { scope: 'project' }), o)).entry;
     assert.strictEqual(rel.args[rel.args.indexOf('--user-data-dir') + 1], '.preferred-tools/playwright-chrome');
@@ -199,7 +227,10 @@ test('remote routes may sit at project scope', () => {
         assert.deepStrictEqual(p.errors, [], id);
         assert.strictEqual(addStep(p).scope, 'project');
     }
-    assert.match(plan(inv(MAC), pickOne('sentry', { route: 'local', scope: 'project' }), opts('/h')).errors[0], /cannot be registered at project scope/);
+    const local = plan(inv(MAC), pickOne('sentry', { route: 'local', scope: 'project' }), opts('/h'));
+    assert.deepStrictEqual(local.errors, []);
+    assert.strictEqual(addStep(local).scope, 'project');
+    assert.ok(JSON.stringify(addStep(local).entry).includes('${SENTRY_ACCESS_TOKEN}'), 'the committed entry keeps the reference');
 });
 
 test('locations: the plugin\'s own folder by default, even with alfred-code data on disk; memory defaults to the account folder', () => {
@@ -338,7 +369,7 @@ test('a scope change moves the registration and rewrites its paths for the new s
     const p = plan(inv(MAC, { registrations: [r] }), changeOf(r, { route: 'remote', scope: 'user' }), opts('/h'));
     assert.deepStrictEqual(p.steps.map((s) => s.op), ['mcp-move']);
     assert.deepStrictEqual([p.steps[0].from.scope, p.steps[0].to.scope], ['project', 'user']);
-    const cat = withProjectScope('playwright-chrome');
+    const cat = withRelative('playwright-chrome');
     const local = installed('playwright-chrome', { scope: 'local' });
     const toProject = plan(inv(MAC, { registrations: [local] }), changeOf(local, { scope: 'project' }), opts('/Users/me', { catalog: cat }));
     assert.deepStrictEqual(toProject.errors, []);
@@ -351,8 +382,10 @@ test('changing the route rebuilds from the catalog; changing only the key adds t
     const key = plan(inv(MAC, { registrations: [r] }), changeOf(r, { token: true }), opts('/h'));
     assert.deepStrictEqual(key.steps[0].entry.headers, { Authorization: 'Bearer ${CONTEXT7_API_KEY}' });
     assert.strictEqual(key.steps[0].op, 'mcp-replace');
-    // remote at project scope cannot become local there: the plan says so and writes nothing
-    assert.match(plan(inv(MAC, { registrations: [r] }), changeOf(r, { route: 'local' }), opts('/h')).errors[0], /cannot be registered at project scope/);
+    // remote at project scope becomes local there: the local launch replaces it in the committed file
+    const toLocal = plan(inv(MAC, { registrations: [r] }), changeOf(r, { route: 'local' }), opts('/h'));
+    assert.deepStrictEqual(toLocal.errors, []);
+    assert.deepStrictEqual([toLocal.steps[0].op, toLocal.steps[0].scope, toLocal.steps[0].entry.command], ['mcp-replace', 'project', 'npx']);
     const user = installed('context7', { route: 'remote', scope: 'user' });
     const local = plan(inv(MAC, { registrations: [user] }), changeOf(user, { route: 'local' }), opts('/h'));
     assert.strictEqual(local.steps[0].op, 'mcp-replace');
@@ -600,7 +633,8 @@ test('install questions for a copy: the taken scope is not offered, and an accou
     assert.ok(!offered.some((o) => o.label.startsWith('claude-hud')), 'installed at its recommended scope: configure\'s');
     const q = asks.all(i, { rows: ['memory', 'typescript-lsp'] }, catalog);
     const ids = q.tools.memory.questions.map((x) => x.id);
-    assert.ok(!ids.includes('scope-memory'), 'local is the one scope left: no scope question');
+    assert.deepStrictEqual(q.tools.memory.questions.find((x) => x.id === 'scope-memory').options.map((o) => o.label), ['local (Recommended)', 'project'], 'the copy\'s user scope is not offered again');
+    assert.ok(ids.includes('scope-memory'));
     assert.match(q.tools.memory.questions.find((x) => x.id === 'name-memory').options[0].description, /used instead of the copy for every project/);
     assert.match(q.tools.memory.questions.find((x) => x.id === 'location-memory').options[0].label, /^Use `\.preferred-tools\/memory` \(Recommended\)$/);
     assert.deepStrictEqual(q.tools['typescript-lsp'].questions[0].options.map((o) => o.label), ['project (Recommended)', 'local']);
@@ -652,23 +686,23 @@ test('configure questions start from what is installed: its route, scope, name, 
     for (const t of Object.values(q.targets).filter((x) => !x.error)) { t.questions.forEach(checkQuestion); if (t.route) checkQuestion(t.route); }
 });
 
-test('the scope question follows the route: project is offered only where the route allows it', () => {
+test('the scope question follows the route: its recommended scope first, then user, project, local', () => {
     const i = inv(MAC);
-    const scopes = (id, route) => asks.toolQuestions(catalog.byId.get(id), i, { route, ctx: { project: '/p', platform: 'darwin', home: '/h' }, catalog })[0].options.map((o) => o.label.replace(' (Recommended)', ''));
-    assert.deepStrictEqual(scopes('serena', 'local'), ['local', 'user']);
-    assert.deepStrictEqual(scopes('context7', 'remote'), ['project', 'local', 'user']);
-    assert.deepStrictEqual(scopes('context7', 'local'), ['local', 'user']);
+    const scopes = (id, route) => asks.toolQuestions(catalog.byId.get(id), i, { route, ctx: { project: '/p', platform: 'darwin', home: '/h', env: {} }, catalog })[0].options.map((o) => o.label.replace(' (Recommended)', ''));
+    assert.deepStrictEqual(scopes('serena', 'local'), ['local', 'user', 'project']);
+    assert.deepStrictEqual(scopes('context7', 'remote'), ['project', 'user', 'local']);
+    assert.deepStrictEqual(scopes('context7', 'local'), ['local', 'user', 'project']);
     assert.deepStrictEqual(scopes('claude-hud'), ['user', 'project', 'local']);
-    assert.deepStrictEqual(scopes('typescript-lsp'), ['project', 'local', 'user']);
+    assert.deepStrictEqual(scopes('typescript-lsp'), ['project', 'user', 'local']);
 });
 
-test('plan.js rejects a route and scope pair its question would not have offered', () => {
+test('plan.js plans every route at project scope', () => {
     for (const row of catalog.tools.filter((r) => r.kind === 'mcp'))
-        for (const [routeId, route] of Object.entries(row.routes))
+        for (const routeId of Object.keys(row.routes))
         {
             const p = plan(inv(row.os.includes('win32') && !row.os.includes('darwin') ? WIN : MAC), pickOne(row.id, { route: routeId, scope: 'project' }), opts('/h'));
-            if (route.projectScope) assert.deepStrictEqual(p.errors, [], `${row.id}/${routeId}`);
-            else assert.match(p.errors.join(), /cannot be registered at project scope/, `${row.id}/${routeId}`);
+            assert.deepStrictEqual(p.errors, [], `${row.id}/${routeId}`);
+            assert.strictEqual(addStep(p).scope, 'project', `${row.id}/${routeId}`);
         }
 });
 
@@ -716,11 +750,11 @@ test("hud: 'defer' plans the install and leaves the settings ask for after it; a
     assert.ok(!kept.hudAfter);
 });
 
-test('--questions takes the route answered so far: a remote context7 may sit in the committed file, a local one may not', () => {
+test('--questions takes the route answered so far: it decides the recommended scope', () => {
     const i = inv(MAC);
     const scopes = (route) => asks.all(i, { rows: ['context7'], routes: { context7: route } }, catalog).tools.context7.questions.find((q) => q.id === 'scope-context7').options.map((o) => o.label.replace(/ \(Recommended\)$/, ''));
-    assert.deepStrictEqual(scopes('remote'), ['project', 'local', 'user']);
-    assert.deepStrictEqual(scopes('local'), ['local', 'user']);
+    assert.deepStrictEqual(scopes('remote'), ['project', 'user', 'local']);
+    assert.deepStrictEqual(scopes('local'), ['local', 'user', 'project']);
     assert.strictEqual(asks.all(i, { rows: ['serena'] }, catalog).tools.serena.route, null, 'a one-route row has no route ask');
 });
 

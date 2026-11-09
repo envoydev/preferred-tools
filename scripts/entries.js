@@ -41,14 +41,15 @@ function parseRoot(text, ctx)
 const homeVar = (platform) => (platform === 'win32' ? '${USERPROFILE}' : '${HOME}');
 
 // The string written into the registration at a scope. `project` scope (the committed .mcp.json) gets relative paths and
-// ${VAR} only; `local` and `user` get absolute paths, with `~` expanded here, never left for the server.
-function formatRoot(root, scope, ctx)
+// ${VAR} only; `local` and `user` get absolute paths, with `~` expanded here, never left for the server. `backslash`:
+// serena's home on Windows, whose SERENA_HOME must be in backslashes even as ${USERPROFILE}\.serena.
+function formatRoot(root, scope, ctx, { backslash = false } = {})
 {
     const P = pathFor(ctx.platform);
     if (scope === 'project')
     {
         if (root.kind === 'abs') return { error: `the project scope is a committed file: ${root.path} is absolute. Use a path under the project, or the account folder (written as ${homeVar(ctx.platform)}/...)` };
-        if (root.kind === 'home') return { value: `${homeVar(ctx.platform)}/${root.rel}` };
+        if (root.kind === 'home') return { value: backslash ? `${homeVar(ctx.platform)}\\${root.rel.replace(/\//g, '\\')}` : `${homeVar(ctx.platform)}/${root.rel}` };
         return { value: root.rel };
     }
     if (root.kind === 'abs') return { value: P.normalize(root.path) };
