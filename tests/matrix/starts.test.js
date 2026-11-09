@@ -19,6 +19,7 @@ const cli = require('../../scripts/claude-cli.js');
 const catalogLib = require('../../scripts/catalog.js');
 const { plan } = require('../../scripts/plan.js');
 const { Harness } = require('../harness.js');
+const { TOKEN_VARS: TOKENS } = require('../helpers.js');
 
 const skipAll = cli.available() ? false : 'NOT RUN: no claude CLI on PATH';
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pt-start-'));
@@ -48,10 +49,12 @@ function initialize(entry, cwd)
 {
     return new Promise((resolve) =>
     {
-        const env = { ...h.env };
-        for (const [k, v] of Object.entries(entry.env || {})) env[k] = expand(v, h.env);
-        const args = (entry.args || []).map((a) => expand(a, h.env));
-        const child = spawn(expand(entry.command, h.env), args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
+        // the harness drops the key variables; a real-token case takes its own back from the shell
+        const source = { ...h.env, ...Object.fromEntries(TOKENS.filter((k) => process.env[k]).map((k) => [k, process.env[k]])) };
+        const env = { ...source };
+        for (const [k, v] of Object.entries(entry.env || {})) env[k] = expand(v, source);
+        const args = (entry.args || []).map((a) => expand(a, source));
+        const child = spawn(expand(entry.command, source), args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
         children.push(child);
         let out = '';
         let err = '';

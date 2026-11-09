@@ -73,6 +73,8 @@ class Harness
         for (const d of [this.home, this.account, this.projects]) fs.mkdirSync(d, { recursive: true });
         this.env = { ...process.env, HOME: this.home, USERPROFILE: this.home, CLAUDE_CONFIG_DIR: this.account };
         for (const k of Object.keys(this.env)) if (k.startsWith('FAKE_CLAUDE') || k.startsWith('FAKE_RUNTIME')) delete this.env[k];
+        // the key variables come from a case itself, never from the shell running the matrix (the plan's defaults read them)
+        for (const k of require('./helpers.js').TOKEN_VARS) delete this.env[k];
         this.before = snapshot();
     }
 

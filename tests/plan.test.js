@@ -141,12 +141,83 @@ test('routes: context7, github and sentry each build both ways; the others have 
 test('a token route registers the ${VAR} and the plan says whether it is set; no token value is ever in the plan', () => {
     const fake = ['gh', 'p_', 'FAKE0123456789abcdefFAKE0123456789'].join('');
     const p = plan(inv(MAC), pickOne('github', { route: 'remote' }), opts('/h', { env: { GITHUB_PERSONAL_ACCESS_TOKEN: fake } }));
-    assert.deepStrictEqual(p.tokens, [{ row: 'github', name: 'github', variable: 'GITHUB_PERSONAL_ACCESS_TOKEN', scope: 'project', set: true, files: [] }]);
+    assert.deepStrictEqual(p.tokens, [{ row: 'github', name: 'github', variable: 'GITHUB_PERSONAL_ACCESS_TOKEN', scope: 'project', set: true, files: [], found: null, near: [] }]);
     assert.ok(!JSON.stringify(p).includes(fake));
     assert.ok(!render(p).includes(fake));
-    assert.match(render(p), /GITHUB_PERSONAL_ACCESS_TOKEN\} - set in this shell/);
+    assert.match(render(p), /GITHUB_PERSONAL_ACCESS_TOKEN\} from the environment Claude Code starts with - set in this shell\. A Claude Code started from the dock/);
+    // not set here and in no key file: local scope, which writes the key in from a key file once there is one
     const unset = plan(inv(MAC), pickOne('github', { route: 'remote' }), opts('/h'));
-    assert.match(render(unset), /NOT set here/);
+    assert.strictEqual(addStep(unset).scope, 'local');
+    assert.match(render(unset), /In none of them\./);
+    assert.doesNotMatch(render(unset), /NOT set here/);
+});
+
+const G = 'GITHUB_PERSONAL_ACCESS_TOKEN';
+const S = 'SENTRY_ACCESS_TOKEN';
+// a key file of the test world's, written by name: the value is a fake that the assertions check never leaks
+const KEY_FILE = ['.preferred-tools', ['.', 'secrets'].join('')];
+const ALFRED_STORE = ['.alfred', ['.', 'secrets'].join('')];
+function putKeys(dir, parts, lines)
+{
+    const fs = require('node:fs');
+    const file = path.join(dir, ...parts);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.appendFileSync(file, `${lines.join('\n')}\n`);
+    return file;
+}
+
+test('a hosted token route: project when its variable is set in this shell, else local; a local token route stays local', () => {
+    const scopeOf = (id, route, env) => addStep(plan(inv(MAC), pickOne(id, { route }), opts('/Users/me', { env }))).scope;
+    assert.strictEqual(scopeOf('github', 'remote', { [G]: 'x' }), 'project');
+    assert.strictEqual(scopeOf('github', 'remote', {}), 'local');
+    assert.strictEqual(scopeOf('github', 'local', { [G]: 'x' }), 'local');
+    assert.strictEqual(scopeOf('sentry', 'local', { [S]: 'x' }), 'local');
+    assert.strictEqual(scopeOf('sentry', 'remote', {}), 'project', 'an OAuth route is unchanged');
+});
+
+test('context7 hosted: set - project with the key; in a key file only - local with the key; neither - project, no key', () => {
+    const { world } = require('./helpers.js');
+    const w = world();
+    try
+    {
+        putKeys(w.project, KEY_FILE, ['CONTEXT7_API_KEY=v-not-printed']);
+        const step = (env, project) => addStep(plan(inv({ ...MAC, project }), pickOne('context7', { route: 'remote' }), opts(w.home, { env })));
+        const set = step({ CONTEXT7_API_KEY: 'x' }, '/work/shop');
+        assert.deepStrictEqual([set.scope, Boolean(set.entry.headers)], ['project', true]);
+        const filed = step({}, w.project);
+        assert.deepStrictEqual([filed.scope, Boolean(filed.entry.headers)], ['local', true]);
+        const neither = step({}, '/work/shop');
+        assert.deepStrictEqual([neither.scope, neither.entry.headers], ['project', undefined]);
+        // the questions recommend the same: scope first, then 'Use ${CONTEXT7_API_KEY}' when there is a key to send
+        const ctx = { project: w.project, platform: 'darwin', home: w.home, env: {} };
+        const qs = asks.toolQuestions(catalog.byId.get('context7'), inv({ ...MAC, project: w.project }), { route: 'remote', ctx, catalog });
+        assert.strictEqual(qs.find((q) => q.id === 'scope-context7').options[0].label, 'local (Recommended)');
+        assert.strictEqual(qs.find((q) => q.id === 'token-context7').options[0].label, 'Use ${CONTEXT7_API_KEY} (Recommended)');
+    }
+    finally { w.clean(); }
+});
+
+test('the token line names where the name is, the near-miss, the three ways to reach the children, and no value', () => {
+    const { world } = require('./helpers.js');
+    const w = world();
+    try
+    {
+        const fakeValue = `v-${Date.now()}-not-printed`;
+        const store = putKeys(w.project, ALFRED_STORE, [`ACME_GITHUB_ACCESS_TOKEN=${fakeValue}`]);
+        const at = () => plan(inv({ ...MAC, project: w.project }, { alfredCodeEnabled: true }), pickOne('github', { route: 'remote', scope: 'project' }), opts(w.home));
+        const text = render(at());
+        assert.match(text, /NOT set in this shell\. It is in none of the key files/);
+        assert.match(text, /holds ACME_GITHUB_ACCESS_TOKEN, not GITHUB_PERSONAL_ACCESS_TOKEN: add the key under GITHUB_PERSONAL_ACCESS_TOKEN/);
+        assert.match(text, /serves only this folder/);
+        assert.match(text, /settings\.json "env" and keep one project-scope entry/);
+        assert.ok(!text.includes(fakeValue));
+        putKeys(w.project, ALFRED_STORE, [`${G}=${fakeValue}`]);
+        const found = render(at());
+        assert.ok(found.includes(`Its name is in ${store}, which project scope does not read.`), found);
+        assert.doesNotMatch(found, /holds ACME_GITHUB_ACCESS_TOKEN/, 'a near-miss is named only while the key is missing');
+        assert.ok(!found.includes(fakeValue));
+    }
+    finally { w.clean(); }
 });
 
 test('at local and user scope the token note names the key files the apply reads, in order, and never a value', () => {

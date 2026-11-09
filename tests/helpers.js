@@ -4,6 +4,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
+// every ${VAR} a catalog route reads its key from
+const TOKEN_VARS = [...new Set(require('../scripts/catalog.js').load().tools.flatMap((r) => Object.values(r.routes || {}).map((x) => x.tokenVar).filter(Boolean)))];
+
 const FAKE = path.join(__dirname, 'fake-claude.js');
 const RUNTIME = path.join(__dirname, 'fake-runtime.js');
 const SHIMMED = ['claude', 'npm', 'uvx', 'docker'];
@@ -39,6 +42,8 @@ function world(prefix = 'pt-')
     const log = path.join(dir, 'calls.jsonl');
     const fetchLog = path.join(dir, 'fetches.jsonl');
     const env = { ...process.env };
+    // the catalog's key variables come from the test itself, never from the shell that runs it (the plan's defaults read them)
+    for (const k of TOKEN_VARS) delete env[k];
     // Windows names it `Path`: one key only, so no child sees the PATH without `bin`
     for (const k of Object.keys(env)) if (k !== 'PATH' && k.toUpperCase() === 'PATH') delete env[k];
     Object.assign(env, {
@@ -79,4 +84,4 @@ function files(dir)
     return out;
 }
 
-module.exports = { world, writeJson, readJson, accountKey, tempOf, files, FAKE };
+module.exports = { world, writeJson, readJson, accountKey, tempOf, files, FAKE, TOKEN_VARS };

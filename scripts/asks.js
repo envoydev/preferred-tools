@@ -6,6 +6,7 @@ const path = require('node:path');
 const E = require('./entries.js');
 const { installedOf, keyOf, targetOf, fromHere, otherWindowsMcp } = require('./inventory.js');
 const { pinOf } = require('./table.js');
+const keys = require('./keys.js');
 
 const REC = ' (Recommended)';
 // The `remote` route is worded 'hosted' in every ask: alfred-code's stop guard reads a bare 'remote' in an ask as git
@@ -23,8 +24,35 @@ const scopeText = (s, row, routeId) => (s === 'project' && row.kind === 'mcp' &&
 // every scope question lists the recommended scope first, then the others in this order (the user's ruling, 2026-11-10)
 const SCOPE_ORDER = ['user', 'project', 'local'];
 
-// local for a local route (its paths and Python are this machine's); project for a remote route whose entry holds no secret
-const recommendedScope = (row, routeId) => (row.kind === 'plugin' ? row.recommendedScope : routeId === 'remote' ? 'project' : 'local');
+// Where a route's key is, by name only: { variable, set (in this shell), file (the key file holding it, or null), near
+// (other names in those files with the row id in them) } - or null for a route that takes no key. `ctx.keyHome`, when the
+// ctx has one, places the home key file (null: none read); else `ctx.home` does.
+function keyStateOf(row, routeId, ctx, alfredEnabled)
+{
+    const route = row.routes && row.routes[routeId];
+    if (!route || !route.tokenVar || !ctx) return null;
+    const variable = route.tokenVar;
+    const env = ctx.env || {};
+    const home = Object.hasOwn(ctx, 'keyHome') ? ctx.keyHome : ctx.home;
+    const p = keys.presence(ctx.project, 'local', [{ name: variable, word: row.id.toUpperCase().replace(/-/g, '_') }], { env, alfredEnabled, home });
+    return { variable, set: Boolean(env[variable]), file: p.found[variable], near: p.near[variable] };
+}
+
+// local for a local route (its paths and Python are this machine's); project for a hosted route - except a hosted route
+// that needs a key, which project scope reads only from the environment Claude Code starts with: there the key's state
+// decides (the user's ruling, 2026-11-10). A token route: project when set in this shell, else local, which writes the key
+// in from its key file. An optional key: set - project; only in a key file - local; neither - project, keyless.
+function recommendedScope(row, routeId, keyState = null)
+{
+    if (row.kind === 'plugin') return row.recommendedScope;
+    if (routeId !== 'remote') return 'local';
+    const auth = row.routes[routeId] && row.routes[routeId].auth;
+    if (!keyState || !['token', 'optional-token'].includes(auth)) return 'project';
+    if (keyState.set) return 'project';
+    return auth === 'token' || keyState.file ? 'local' : 'project';
+}
+// a key worth sending by default: set in this shell, or held in a key file the scope reads
+const keyToSend = (keyState) => Boolean(keyState && (keyState.set || keyState.file));
 
 function chunk(list, n)
 {
@@ -162,7 +190,7 @@ function scopesFor(row, routeId, ctx = null)
 function scopeQuestion(row, inv, { route, current = null, copyOf = [], ctx = null } = {})
 {
     const routeId = route || (current && current.route) || row.recommendedRoute;
-    const rec = current ? current.scope : recommendedScope(row, routeId);
+    const rec = current ? current.scope : recommendedScope(row, routeId, keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled));
     const all = scopesFor(row, routeId, ctx);
     const free = all.filter((s) => !copyOf.some((c) => c.scope === s));
     const scopes = free.length ? free : all;
@@ -235,7 +263,7 @@ function toolQuestions(row, inv, { route, current = null, ctx = null, catalog, c
             options: first([
                 { label: 'No key - low rate limits', description: 'works anonymously' },
                 { label: `Use \${${row.routes[routeId].tokenVar}}`, description: 'registers the variable reference; the value is never written' },
-            ], Boolean(sameRoute && current.token)),
+            ], current ? Boolean(sameRoute && current.token) : keyToSend(keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled))),
         });
     else if (row.params)
     {
@@ -295,13 +323,15 @@ const STATIC = {
 
 // picks: { rows: [<row id>], routes: { <row id>: route } } for install, { targets: [<key>], routes: { <key>: route } }
 // for configure. A target's questions start from what it has now: its route, scope, name and data folder are 'Keep'.
-function all(inv, picks, catalog)
+// `env` and `home`: what the key state reads (the shell's variables, the home key file). plan.js --questions passes the
+// real ones; a caller that passes none reads neither, so a test never depends on the shell that runs it.
+function all(inv, picks, catalog, { env = {}, home = null } = {})
 {
     const out = {
         static: { ...STATIC, hud: STATIC.hud(0, 0, 0), prereqMissing: STATIC.prereqMissing('<tool>', '<prerequisite>') },
         pick: pickQuestions(inv, catalog), change: changeQuestions(inv, catalog), remove: removeQuestions(inv, catalog), tools: {}, targets: {},
     };
-    const ctx = { project: inv.project, platform: inv.os, arch: inv.arch, home: require('./account.js').homeDir(process.env), env: process.env };
+    const ctx = { project: inv.project, platform: inv.os, arch: inv.arch, home: home || require('./account.js').homeDir(process.env), env, keyHome: home };
     const routes = (picks && picks.routes) || {};
     for (const id of (picks && picks.rows) || [])
     {
@@ -326,4 +356,4 @@ function all(inv, picks, catalog)
     return out;
 }
 
-module.exports = { REC, recommendedScope, pickQuestions, changeQuestions, routeQuestion, toolQuestions, scopeQuestion, removeQuestions, packed, STATIC, all, chunk, scopesFor };
+module.exports = { REC, recommendedScope, keyStateOf, keyToSend, pickQuestions, changeQuestions, routeQuestion, toolQuestions, scopeQuestion, removeQuestions, packed, STATIC, all, chunk, scopesFor };

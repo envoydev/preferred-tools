@@ -124,6 +124,50 @@ function filesFor(project, scope, opts)
     return sourcesOf(project, scope, opts).list.flatMap((s) => s.files);
 }
 
+// The same files as plain dotenv files, for a names-only look that never runs alfred-code's engine (plan.js is
+// pre-approved, so it must not require code the project ships). With the engine the chain follows the parent folders, so
+// this walks them - each folder's store, the first of its two names that is a file - which approximates alfred-code's
+// workspace links; without it the apply reads this folder's stores only, and so does this. Project scope reads no key
+// file: its list is the local one, the files a move to local would read. `home` null reads no home file.
+function plainFilesFor(project, scope, { env = process.env, alfredEnabled = false, home } = {})
+{
+    const homeKeys = home === null ? [] : [path.join(home === undefined ? account.homeDir(env) : home, KEY_FILE)];
+    const alfred = alfredPresent(project, alfredEnabled);
+    let chain = alfredStores(project);
+    if (isFile(engineOf(project)))
+    {
+        chain = [];
+        for (let dir = path.resolve(project); ; dir = path.dirname(dir))
+        {
+            const store = alfredStores(dir).find(isFile);
+            if (store) chain.push(store);
+            else if (dir === path.resolve(project)) chain.push(alfredStores(dir)[0]);
+            if (path.dirname(dir) === dir) break;
+        }
+    }
+    if (scope === 'user') return [...homeKeys, ...(alfred ? chain : [])];
+    return alfred ? chain : [projectFile(project), ...homeKeys];
+}
+
+// presence(project, scope, [{ name, word }], opts) -> { files, found: { NAME: file | null }, near: { NAME: [{ name, file }] } }
+// Which file holds each name with a value (the first, as the apply reads them), and the other names in those files that
+// contain `word` (the row id: GITHUB, SENTRY, CONTEXT7) - a key kept under a name the catalog does not use. Names and
+// paths only: every value is dropped here.
+function presence(project, scope, wants, opts = {})
+{
+    const files = plainFilesFor(project, scope, opts);
+    const names = files.map((file) => { const v = readDotenv(file); return { file, names: v ? Object.keys(v).filter((k) => v[k] !== '') : [] }; });
+    const found = {};
+    const near = {};
+    for (const { name, word } of wants)
+    {
+        const at = names.find((f) => f.names.includes(name));
+        found[name] = at ? at.file : null;
+        near[name] = names.flatMap((f) => f.names.filter((n) => n !== name && word && n.includes(word)).map((n) => ({ name: n, file: f.file })));
+    }
+    return { files, found, near };
+}
+
 // keysFor(project, scope, names, { env, alfredEnabled }) -> { source, files, found: { NAME: value }, from: { NAME: file },
 // missing, error? }. The nearest source's value of a key wins. A source that fails or is refused ends the read: what came
 // before it is kept, nothing after it is read. In-process only - the result is never printed.
@@ -207,4 +251,4 @@ function keysInto(entry, row, routeId, scope, { project, env = process.env, alfr
     return { entry: filled, note: `${v} for ${where} from ${k.from[v]}` };
 }
 
-module.exports = { readDotenv, alfredPresent, filesFor, keysFor, tokenFields, fillKeys, keysInto, homeFile, projectFile, PLACEHOLDER };
+module.exports = { readDotenv, alfredPresent, filesFor, plainFilesFor, presence, keysFor, tokenFields, fillKeys, keysInto, homeFile, projectFile, PLACEHOLDER };

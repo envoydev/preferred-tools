@@ -153,7 +153,9 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     const routeId = pick.route || (cur ? cur.route : row.recommendedRoute);
     const route = row.routes[routeId];
     if (!route) return out.errors.push(`${row.id}: no ${routeId} route (routes: ${Object.keys(row.routes).join(', ')})`);
-    const scope = pick.scope || (cur ? cur.scope : asks.recommendedScope(row, routeId));
+    // a fresh pick's defaults follow where its key is (names only, never a value): the scope that can read it, and the key sent
+    const keyState = cur ? null : asks.keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled);
+    const scope = pick.scope || (cur ? cur.scope : asks.recommendedScope(row, routeId, keyState));
     if (!SCOPES.includes(scope)) return out.errors.push(`${row.id}: unknown scope '${scope}'`);
     const bad = inv.unreadable.find((u) => (u.scope === scope) || (scope !== 'project' && ['local', 'user'].includes(u.scope) && ['local', 'user'].includes(scope)));
     if (bad) return out.errors.push(`${row.id}: the ${scope} scope is unreadable (${bad.file} is ${bad.state}); nothing is written there`);
@@ -196,7 +198,7 @@ function planMcp(row, pick, inv, ctx, catalog, out)
 
     // the answers that edit an entry
     const params = { host: row.params ? (pick.params && pick.params.host) || (cur && cur.host) || row.params[0].default : undefined, ...(pick.params || {}) };
-    const wantToken = pick.token === undefined ? Boolean(cur && cur.token) : Boolean(pick.token);
+    const wantToken = pick.token === undefined ? (cur ? Boolean(cur.token) : route.auth === 'optional-token' && asks.keyToSend(keyState)) : Boolean(pick.token);
     const wantExec = pick.executablePath === undefined ? (cur ? cur.executablePath : undefined) : (pick.executablePath || undefined);
     let rootStr;
     let ensure = null;
@@ -256,7 +258,12 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     {
         const needsVar = route.auth === 'token' || (route.auth === 'optional-token' && wantToken);
         const files = needsVar ? keys.filesFor(ctx.project, scope, { env: { ...ctx.env, HOME: ctx.home, USERPROFILE: ctx.home }, alfredEnabled: inv.alfredCodeEnabled }) : [];
-        if (needsVar) out.tokens.push({ row: row.id, name, variable: route.tokenVar, scope, set: Boolean(ctx.env[route.tokenVar]), files });
+        if (needsVar)
+        {
+            const word = row.id.toUpperCase().replace(/-/g, '_');
+            const seen = keys.presence(ctx.project, scope, [{ name: route.tokenVar, word }], { env: { ...ctx.env, HOME: ctx.home, USERPROFILE: ctx.home }, alfredEnabled: inv.alfredCodeEnabled, home: ctx.home });
+            out.tokens.push({ row: row.id, name, variable: route.tokenVar, scope, set: Boolean(ctx.env[route.tokenVar]), files, found: seen.found[route.tokenVar], near: seen.near[route.tokenVar] });
+        }
         const ignore = path.join(ctx.project, '.preferred-tools');
         if (files.includes(keys.projectFile(ctx.project)) && !(ctx.exists || fs.existsSync)(path.join(ignore, '.gitignore')) && !out.steps.some((s) => s.op === 'ensure-ignore'))
             out.steps.unshift({ op: 'ensure-ignore', path: ignore, why: 'key file: .preferred-tools/.gitignore holding *, so the .secrets beside it is never committed' });
@@ -401,6 +408,30 @@ function argvOf(step)
     }
 }
 
+// The plan's line for one key: where the registration reads it, where its name is (never a value), and - at project
+// scope, which reads only the environment Claude Code starts with - what serves the children of a workspace.
+function tokenLine(t)
+{
+    const parts = [];
+    if (t.scope === 'project')
+    {
+        parts.push(`Token: ${t.name} reads \${${t.variable}} from the environment Claude Code starts with - ${t.set ? 'set in this shell.' : 'NOT set in this shell.'}`);
+        if (t.set) parts.push('A Claude Code started from the dock or an IDE may not have it - the account settings.json "env" reaches every start.');
+        else
+        {
+            parts.push(t.found ? `Its name is in ${t.found}, which project scope does not read.` : 'It is in none of the key files local scope would read either.');
+            parts.push(`Choose local scope, which writes the key in from a key file but serves only this folder (a child that is its own project does not see it - install it there too); or user scope, which serves every project; or set ${t.variable} in the account settings.json "env" and keep one project-scope entry for the whole workspace.`);
+        }
+    }
+    else
+    {
+        parts.push(`Token: ${t.name} (${t.scope}) - the apply writes ${t.variable} into the registration from ${(t.files || []).join(', then ')}; a key in none of them stays \${${t.variable}}. The key is never printed.`);
+        parts.push(t.found ? `Found in ${t.found}.` : 'In none of them.');
+    }
+    if (!t.found && !t.set) for (const n of t.near || []) parts.push(`${n.file} holds ${n.name}, not ${t.variable}: add the key under ${t.variable}.`);
+    return parts.join(' ');
+}
+
 function render(p)
 {
     const lines = [];
@@ -417,9 +448,7 @@ function render(p)
         else if (s.op === 'fetch') lines.push(`   ${s.argv.map(shq).join(' ')}`, '   (after the apply, in the background: fills the cache only; if it fails the registration stays and the first start tries again)');
         else if (s.op === 'hud') lines.push(`   node scripts/hud-statusline.js ${s.mode === 'replace' ? '--replace' : s.mode === 'skip' ? '--statusline-only' : ''}`.trimEnd());
     });
-    if (p.tokens.length) lines.push('', ...p.tokens.map((t) => (t.scope === 'project' || !t.files
-        ? `Token: ${t.name} reads \${${t.variable}} - ${t.set ? 'set in this shell' : 'NOT set here'}; set it in your shell or in the account settings.json "env". Nothing is written for it.`
-        : `Token: ${t.name} (${t.scope}) - the apply writes ${t.variable} into the registration from ${t.files.join(', then ')}; a key in none of them stays \${${t.variable}}. The key is never printed.`)));
+    if (p.tokens.length) lines.push('', ...p.tokens.map(tokenLine));
     if (p.oauth.length) lines.push('', `OAuth: run /mcp once in a session to log in to ${p.oauth.map((o) => o.name).join(', ')}.`);
     if (p.dangerous.length) lines.push('', ...p.dangerous.map((d) => `Code-running tool on '${d.name}': ${d.tools.map((t) => `${t.tool} (${t.why})`).join('; ')}. This plugin adds no guard.`));
     if (p.notes.length) lines.push('', ...p.notes.map((n) => `Note: ${n}`));
@@ -435,7 +464,7 @@ function main(argv)
     {
         const inv = read(argv[1]);
         const picks = argv[2] ? read(argv[2]) : null;
-        console.log(JSON.stringify(asks.all(inv, picks, catalogLib.load()), null, 2));
+        console.log(JSON.stringify(asks.all(inv, picks, catalogLib.load(), { env: process.env, home: account.homeDir(process.env) }), null, 2));
         return 0;
     }
     const [invFile, ansFile] = argv;

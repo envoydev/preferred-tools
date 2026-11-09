@@ -241,3 +241,56 @@ test('fillKeys writes each token field the route defines: the ${VAR} form at pro
     assert.strictEqual(sentry.env[S], 'old', 'the entry given is not changed');
     assert.deepStrictEqual(keys.fillKeys(sentry, row('serena'), 'local', 'local', { [S]: v }), sentry, 'a route with no token');
 });
+
+// ---- presence: names only, from plain files, for the plan's token line (no engine run: plan.js is pre-approved) -------
+
+function presenceWorld(w)
+{
+    const ws = path.join(w.dir, 'ws');
+    const api = path.join(ws, 'api');
+    git(ws, '.alfred/');
+    git(api, '.alfred/');
+    const v = { v1: val(), v2: val(), v3: val() };
+    // the parent's store in UTF-16 with a BOM, the project's with an `export` line
+    const utf16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(dotenv({ ACME_GITHUB_ACCESS_TOKEN: v.v1, CONTEXT7_API_KEY: v.v2 }), 'utf16le')]);
+    put(path.join(ws, '.alfred', '.secrets'), utf16);
+    put(path.join(api, '.alfred', '.secrets'), `export ${S}=${v.v3}\n`);
+    const engine = path.join(api, '.claude', 'hooks', 'secret-chain.js');
+    const marker = path.join(w.dir, 'engine-ran');
+    put(engine, `require('fs').writeFileSync(${JSON.stringify(marker)}, 'x');\nmodule.exports = { chainOf: () => ({ values: {}, stores: [] }) };\n`);
+    return { ws, api, v, engine, marker };
+}
+
+test('presence: a name in this folder\'s or a parent\'s .alfred/.secrets, a near-miss, no value, no engine run', () => {
+    const w = world();
+    try
+    {
+        const { ws, api, v, engine, marker } = presenceWorld(w);
+        const p = keys.presence(api, 'local', [{ name: G, word: 'GITHUB' }, { name: 'CONTEXT7_API_KEY', word: 'CONTEXT7' }, { name: S, word: 'SENTRY' }], opts(w, true));
+        assert.deepStrictEqual(p.found, { [G]: null, CONTEXT7_API_KEY: path.join(ws, '.alfred', '.secrets'), [S]: path.join(api, '.alfred', '.secrets') });
+        assert.deepStrictEqual(p.near[G], [{ name: 'ACME_GITHUB_ACCESS_TOKEN', file: path.join(ws, '.alfred', '.secrets') }]);
+        for (const value of Object.values(v)) assert.ok(!JSON.stringify(p).includes(value), 'no value leaves presence');
+        assert.ok(!fs.existsSync(marker), 'the engine was not required');
+        // no engine (alfred-code before 3.x): the apply reads this folder's stores only, and so does presence
+        fs.rmSync(engine);
+        assert.strictEqual(keys.presence(api, 'local', [{ name: 'CONTEXT7_API_KEY', word: 'CONTEXT7' }], opts(w, true)).found.CONTEXT7_API_KEY, null);
+    }
+    finally { w.clean(); }
+});
+
+test('presence follows the scope: user reads the home file first; project reads the local list; alfred-code off reads preferred-tools\' files', () => {
+    const w = world();
+    try
+    {
+        const { api } = presenceWorld(w);
+        const homeFile = path.join(w.home, '.preferred-tools', '.secrets');
+        put(homeFile, dotenv({ [S]: val() }));
+        const wants = [{ name: S, word: 'SENTRY' }];
+        assert.strictEqual(keys.presence(api, 'user', wants, opts(w, true)).found[S], homeFile);
+        assert.strictEqual(keys.presence(api, 'local', wants, opts(w, true)).found[S], path.join(api, '.alfred', '.secrets'));
+        assert.deepStrictEqual(keys.presence(api, 'project', wants, opts(w, true)), keys.presence(api, 'local', wants, opts(w, true)));
+        assert.strictEqual(keys.presence(api, 'local', wants, opts(w, false)).found[S], homeFile, 'alfred-code off: .preferred-tools, then the home file');
+        assert.strictEqual(keys.presence(api, 'user', wants, { ...opts(w, true), home: null }).found[S], path.join(api, '.alfred', '.secrets'), 'home null: no home file read');
+    }
+    finally { w.clean(); }
+});
