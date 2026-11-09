@@ -1144,3 +1144,12 @@ test('every question has 2 to 4 options, one Recommended and first: each scope, 
                     }
                 }
 });
+
+test('project scope with a relative folder: the plan notes the other folders Claude may start in', () => {
+    const p = plan(inv(MAC), pickOne('playwright-chrome', { scope: 'project' }), opts('/Users/me', { catalog: withRelative('playwright-chrome') }));
+    assert.deepStrictEqual(p.errors, []);
+    assert.match(render(p), /Note: playwright-chrome: a session started in another folder - a child or a subfolder - creates \.preferred-tools\/playwright-chrome there; run \/preferred-tools:fix once in each such folder where alfred-code's \.alfred\/\.gitignore does not cover it/);
+    // the account folder, and local scope: an absolute folder, no note
+    assert.doesNotMatch(render(plan(inv(MAC), pickOne('playwright-chrome', { scope: 'project' }), opts('/Users/me'))), /a session started in another folder/);
+    assert.doesNotMatch(render(plan(inv(MAC), pickOne('playwright-chrome'), opts('/Users/me', { catalog: withRelative('playwright-chrome') }))), /a session started in another folder/);
+});

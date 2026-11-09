@@ -269,6 +269,58 @@ test('serena-telemetry: an absent variable is set to false; a value the user cho
     assert.deepStrictEqual(F.serenaTelemetryFix(bare).env, { SERENA_USAGE_REPORTING: 'false' });
 });
 
+// ---- data-folder-ignore ---------------------------------------------------------------------------------------------
+
+test('data-folder-ignore: a relative folder here with no ignore is found and fixed; its own .gitignore or alfred-code\'s covers it', () =>
+{
+    const fs = require('node:fs');
+    const w = world();
+    try
+    {
+        const pw = (root) => ({ command: 'npx', args: ['-y', '@playwright/mcp@0.0.83', '--browser', 'chrome', '--user-data-dir', root] });
+        // a parent's .mcp.json server: it starts here too, and this row reads it (the other rows never do)
+        const parent = (root, extra = {}) => ({ ...reg('playwright-chrome', pw(root), { scope: 'inherited' }), from: path.dirname(w.project), approval: 'pending', shadowed: null, ...extra });
+        const ctx = (registrations) => ctxFor({ platform: process.platform, project: w.project, registrations, machine: noMachine({ exists: (p) => fs.existsSync(p) }) });
+        const found = (registrations) => F.dataFolderIgnoreDetect(ctx(registrations));
+        const folder = path.join(w.project, '.preferred-tools', 'playwright-chrome');
+
+        const f = found([parent('.preferred-tools/playwright-chrome')]);
+        assert.deepStrictEqual(f.map((x) => [x.id, x.name, x.scope, x.proposal.path]), [['data-folder-ignore', 'playwright-chrome', 'inherited', folder]]);
+        assert.match(f[0].found, /\.preferred-tools\/playwright-chrome .*not git-ignored/);
+        // through the engine: a machine fix, offered
+        const d = fix.detectAll(ctx([parent('.preferred-tools/playwright-chrome')]), { only: 'data-folder-ignore' });
+        assert.deepStrictEqual(d.found.map((x) => [x.id, x.kind, Boolean(x.blocked)]), [['data-folder-ignore', 'machine', false]]);
+
+        const r = F.dataFolderIgnoreFix(f[0], ctx([]));
+        assert.strictEqual(r.ok, true, r.detail);
+        assert.strictEqual(fs.readFileSync(path.join(folder, '.gitignore'), 'utf8'), '*\n');
+        assert.deepStrictEqual(found([parent('.preferred-tools/playwright-chrome')]), [], 'read back: covered');
+        // a .gitignore already there is left as it is
+        fs.writeFileSync(path.join(folder, '.gitignore'), 'mine\n');
+        assert.strictEqual(F.dataFolderIgnoreFix(f[0], ctx([])).ok, true);
+        assert.strictEqual(fs.readFileSync(path.join(folder, '.gitignore'), 'utf8'), 'mine\n');
+
+        // .alfred/<name>: alfred-code's .alfred/.gitignore covers it, and only it
+        assert.deepStrictEqual(found([parent('.alfred/playwright-chrome')]).map((x) => x.proposal.path), [path.join(w.project, '.alfred', 'playwright-chrome')]);
+        fs.mkdirSync(path.join(w.project, '.alfred'));
+        fs.writeFileSync(path.join(w.project, '.alfred', '.gitignore'), '*\n');
+        assert.deepStrictEqual(found([parent('.alfred/playwright-chrome')]), []);
+        assert.strictEqual(found([parent('.preferred-tools/pw2')]).length, 1, "alfred-code's file does not cover .preferred-tools");
+
+        // what is not found: a parent's server rejected here or shadowed, an absolute, ${HOME} or ~ folder, a user's own server
+        assert.deepStrictEqual(found([parent('.preferred-tools/pw3', { approval: 'rejected' })]), []);
+        assert.deepStrictEqual(found([parent('.preferred-tools/pw3', { shadowed: { scope: 'project' } })]), []);
+        for (const root of [path.join(w.home, 'pw'), '${HOME}/.preferred-tools/pw', '~/.preferred-tools/pw']) assert.deepStrictEqual(found([parent(root)]), [], root);
+        assert.deepStrictEqual(found([{ ...parent('.preferred-tools/pw3'), own: true, rowId: null }]), []);
+        // this folder's own project-scope server; local and user scope write absolute folders, never relative ones
+        assert.strictEqual(found([reg('playwright-chrome', pw('.preferred-tools/pw3'), { scope: 'project' })]).length, 1);
+        assert.deepStrictEqual(found([reg('playwright-chrome', pw('.preferred-tools/pw3'), { scope: 'local' })]), []);
+        // two registrations naming one folder are one finding
+        assert.strictEqual(found([parent('.preferred-tools/pw3'), reg('playwright-chrome', pw('.preferred-tools/pw3'), { scope: 'project', name: 'pw' })]).length, 1);
+    }
+    finally { w.clean(); }
+});
+
 // ---- typescript-lsp-ts7 ---------------------------------------------------------------------------------------------
 
 test('typescript-lsp-ts7: a global TypeScript 7 under the installed plugin is found, fixed with typescript@6 and read back', () =>
@@ -351,7 +403,7 @@ test('questions: only NOT APPLICABLE findings give no apply ask', () =>
 
 // ---- narrowing and rendering ----------------------------------------------------------------------------------------
 
-test('fix detectors never return an inherited registration', () =>
+test('fix detectors never return an inherited registration (data-folder-ignore reads relative folders from the parents, in its own test)', () =>
 {
     const entry = fresh('serena');
     const stripped = { ...entry, env: { SERENA_HOME: entry.env.SERENA_HOME } };

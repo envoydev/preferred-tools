@@ -197,6 +197,29 @@
       "fix": null,
       "verifiedOn": "windows-mcp 0.8.8 source read 2026-10-29; not reproduced (no interactive desktop on the test VM)",
       "source": "docs/sources.md 'windows-mcp 0.8.8 - the sticky overlay failure'"
+    },
+    {
+      "id": "data-folder-ignore",
+      "tool": [
+        "serena",
+        "memory",
+        "playwright-chrome",
+        "playwright-msedge",
+        "playwright-firefox",
+        "playwright-webkit",
+        "appium"
+      ],
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "kind": "machine",
+      "symptom": "a tool's data folder in a folder Claude starts in is not git-ignored, so a browser profile or a database is one git add from a commit: a project-scope registration writes its folder relative, and a session started in a child or a subfolder creates it there",
+      "detect": "dataFolderIgnoreDetect",
+      "fix": "dataFolderIgnoreFix",
+      "verifiedOn": "this build: tests/fix.test.js data-folder-ignore (2026-11-10); a stdio server starts in the session's folder (tests/probes/mcp-tree.js)",
+      "source": "docs/build-prompt.md 'Locations' (a data folder in another folder Claude starts in); docs/sources.md 'Relative data folders - the probe'"
     }
   ]
 }

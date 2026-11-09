@@ -226,6 +226,9 @@ function planMcp(row, pick, inv, ctx, catalog, out)
         if (f.error) return out.errors.push(`${row.id}: ${f.error}`);
         rootStr = f.value;
         if (!w.existing) ensure = E.formatRoot(w.root, 'local', ctx).value;
+        // a relative folder in the committed file lands wherever Claude starts; the plan creates and ignores only this one
+        if (scope === 'project' && w.root.kind === 'project')
+            out.notes.push(`${row.id}: a session started in another folder - a child or a subfolder - creates ${rootStr} there; run /preferred-tools:fix once in each such folder where alfred-code's .alfred/.gitignore does not cover it`);
     }
 
     let entry;
