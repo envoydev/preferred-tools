@@ -965,3 +965,85 @@ test('a copy that keeps the name is not another windows-mcp', () => {
     assert.strictEqual(prefixed.length, 1);
     assert.match(prefixed[0], /, or windows-desktop \(user\), can leave/);
 });
+
+// ---- alfred-code's folder (D3) --------------------------------------------------------------------------------------
+const ALFRED = (p) => p === '/work/shop/.alfred/.gitignore';
+const ALFRED_WIN = (p) => p === 'C:\\work\\shop\\.alfred\\.gitignore';
+
+test('with alfred-code installed: .alfred/<name> at project and local, the account folder at user; memory keeps its account folder', () => {
+    const at = (id, scope, cat) => addStep(plan(inv(MAC, { alfredCodeEnabled: true }), pickOne(id, { scope }), opts('/Users/me', { exists: ALFRED, catalog: cat }))).entry;
+    assert.strictEqual(flag(at('playwright-chrome', 'local'), '--user-data-dir'), '/work/shop/.alfred/playwright-chrome');
+    assert.strictEqual(flag(at('playwright-chrome', 'project', withRelative('playwright-chrome')), '--user-data-dir'), '.alfred/playwright-chrome');
+    assert.strictEqual(flag(at('playwright-chrome', 'project'), '--user-data-dir'), '${HOME}/.preferred-tools/playwright-chrome', 'not proven relative: the account folder');
+    assert.strictEqual(flag(at('playwright-chrome', 'user'), '--user-data-dir'), '/Users/me/.preferred-tools/playwright-chrome');
+    assert.strictEqual(at('memory', 'local').env.MCP_MEMORY_SQLITE_PATH, '/Users/me/.preferred-tools/memory/memory.db');
+    assert.strictEqual(at('serena', 'local').env.SERENA_HOME, '/work/shop/.alfred/serena');
+    // 'Use the recommended settings for all': no scope, no location - local scope, then the D3 table
+    assert.strictEqual(flag(at('playwright-chrome', undefined), '--user-data-dir'), '/work/shop/.alfred/playwright-chrome');
+    // a custom name names the folder
+    const named = addStep(plan(inv(MAC, { alfredCodeEnabled: true }), pickOne('playwright-chrome', { name: 'shop-pw' }), opts('/Users/me', { exists: ALFRED }))).entry;
+    assert.strictEqual(flag(named, '--user-data-dir'), '/work/shop/.alfred/shop-pw');
+    // the plan creates the folder with its own .gitignore, inside .alfred too
+    const p = plan(inv(MAC, { alfredCodeEnabled: true }), pickOne('playwright-chrome'), opts('/Users/me', { exists: ALFRED }));
+    assert.ok(p.steps.some((s) => s.op === 'ensure-dir' && s.path === '/work/shop/.alfred/playwright-chrome'), JSON.stringify(p.steps.map((s) => s.op)));
+});
+
+test('without .alfred/.gitignore there is no alfred-data: today\'s folders, and an explicit pick is an error', () => {
+    for (const [enabled, exists] of [[true, () => false], [false, ALFRED]])
+    {
+        const p = plan(inv(MAC, { alfredCodeEnabled: enabled }), pickOne('playwright-chrome'), opts('/Users/me', { exists }));
+        assert.deepStrictEqual(p.errors, []);
+        assert.strictEqual(flag(addStep(p).entry, '--user-data-dir'), '/work/shop/.preferred-tools/playwright-chrome', `enabled ${enabled}`);
+        assert.strictEqual(flag(addStep(plan(inv(MAC, { alfredCodeEnabled: enabled }), pickOne('playwright-chrome', { scope: 'user' }), opts('/Users/me', { exists }))).entry, '--user-data-dir'), '/work/shop/.preferred-tools/playwright-chrome', 'user scope as today');
+        const picked = plan(inv(MAC, { alfredCodeEnabled: enabled }), pickOne('playwright-chrome', { location: { side: 'alfred-data' } }), opts('/Users/me', { exists }));
+        assert.match(picked.errors.join(' '), /alfred-code is not set up here \(no \.alfred\/\.gitignore\) - pick another folder/);
+        assert.strictEqual(picked.steps.length, 0);
+    }
+});
+
+test('the name guard: docs, state, statistics, workspace, flow and an .alfred/<name> file are refused', () => {
+    assert.deepStrictEqual(require('../scripts/entries.js').ALFRED_ENTRIES, ['docs', 'state', 'statistics', 'workspace', 'flow']);
+    for (const name of ['docs', 'state', 'statistics', 'workspace', 'flow'])
+    {
+        const picked = plan(inv(MAC, { alfredCodeEnabled: true }), pickOne('playwright-chrome', { name, location: { side: 'alfred-data' } }), opts('/Users/me', { exists: ALFRED }));
+        assert.match(picked.errors.join(' '), new RegExp(`'${name}' is one of alfred-code's own entries under \\.alfred`), name);
+        // no location picked: the guarded name is not recommended .alfred, it falls back to the plugin's folder
+        const recommended = plan(inv(MAC, { alfredCodeEnabled: true }), pickOne('playwright-chrome', { name }), opts('/Users/me', { exists: ALFRED }));
+        assert.deepStrictEqual(recommended.errors, [], name);
+        assert.strictEqual(flag(addStep(recommended).entry, '--user-data-dir'), `/work/shop/.preferred-tools/${name}`, name);
+    }
+    const file = (p) => ALFRED(p) || p === '/work/shop/.alfred/shop-pw';
+    const asFile = plan(inv(MAC, { alfredCodeEnabled: true }), pickOne('playwright-chrome', { name: 'shop-pw', location: { side: 'alfred-data' } }), opts('/Users/me', { exists: file, isDir: () => false }));
+    assert.match(asFile.errors.join(' '), /\.alfred\/shop-pw exists and is not a folder/);
+    const asDir = plan(inv(MAC, { alfredCodeEnabled: true }), pickOne('playwright-chrome', { name: 'shop-pw', location: { side: 'alfred-data' } }), opts('/Users/me', { exists: file, isDir: () => true }));
+    assert.deepStrictEqual(asDir.errors, []);
+    assert.strictEqual(flag(addStep(asDir).entry, '--user-data-dir'), '/work/shop/.alfred/shop-pw');
+});
+
+test('serena on Windows with alfred-code: local takes <project>\\.alfred\\serena; a spaced project path keeps <profile>\\.serena', () => {
+    const home = (base, pick, exists) => {
+        const p = plan(inv(base, { alfredCodeEnabled: true }), pickOne('serena', pick), opts('C:\\Users\\me', { exists }));
+        assert.deepStrictEqual(p.errors, [], JSON.stringify(pick));
+        return addStep(p).entry.env.SERENA_HOME;
+    };
+    assert.strictEqual(home(WIN, {}, ALFRED_WIN), 'C:\\work\\shop\\.alfred\\serena');
+    assert.strictEqual(home(WIN, { scope: 'user' }, ALFRED_WIN), 'C:\\Users\\me\\.serena');
+    assert.strictEqual(home(WIN, { scope: 'project' }, ALFRED_WIN), '${USERPROFILE}\\.serena');
+    assert.strictEqual(home(WIN, { location: { side: 'account' } }, ALFRED_WIN), 'C:\\Users\\me\\.serena', "serena's account folder on Windows is the profile's .serena");
+    const spaced = { ...WIN, project: 'C:\\my work\\shop' };
+    assert.strictEqual(home(spaced, {}, (p) => p === 'C:\\my work\\shop\\.alfred\\.gitignore'), 'C:\\Users\\me\\.serena');
+    const picked = plan(inv(spaced, { alfredCodeEnabled: true }), pickOne('serena', { location: { side: 'alfred-data' } }), opts('C:\\Users\\me', { exists: (p) => p === 'C:\\my work\\shop\\.alfred\\.gitignore' }));
+    assert.match(picked.errors.join(' '), /space-free/);
+});
+
+test('configure: a local .alfred folder moved to project scope is written relative when proven, else refused', () => {
+    const local = installed('playwright-chrome', { scope: 'local', location: { side: 'path', path: '/work/shop/.alfred/playwright-chrome' } });
+    assert.strictEqual(flag(local.entry, '--user-data-dir'), '/work/shop/.alfred/playwright-chrome');
+    const i = inv(MAC, { registrations: [local], alfredCodeEnabled: true });
+    const proven = plan(i, changeOf(local, { scope: 'project' }), opts('/Users/me', { exists: ALFRED, catalog: withRelative('playwright-chrome') }));
+    assert.deepStrictEqual(proven.errors, []);
+    assert.strictEqual(flag(proven.steps.find((s) => s.op === 'mcp-move').entry, '--user-data-dir'), '.alfred/playwright-chrome');
+    const unproven = plan(i, changeOf(local, { scope: 'project' }), opts('/Users/me', { exists: ALFRED }));
+    assert.match(unproven.errors.join(' '), /not proven to follow \(locations\.relative\) - pick the account folder/);
+    assert.strictEqual(unproven.steps.length, 0);
+});

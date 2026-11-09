@@ -101,6 +101,50 @@ function alfredRoot(row, ctx)
     return exists(abs) ? old : null;
 }
 
+// ---- alfred-code's folder -------------------------------------------------------------------------------------------
+// alfred-code's own entries under .alfred, never a data folder (3.9.2 stack/hooks/layout.js: the docs root, state and
+// statistics, the workspace link file, and flow, a 2.x folder its migration still reads).
+const ALFRED_ENTRIES = ['docs', 'state', 'statistics', 'workspace', 'flow'];
+
+// alfred-code is set up in this project: enabled for it AND <project>/.alfred/.gitignore is there, the file that keeps
+// its data out of git. keys.alfredPresent asks a different question (is its key chain here).
+function alfredData(ctx, enabled)
+{
+    if (!enabled) return false;
+    const exists = ctx.exists || ((p) => fs.existsSync(p));
+    return Boolean(exists(pathFor(ctx.platform).join(ctx.project, '.alfred', '.gitignore')));
+}
+
+// Why .alfred/<name> cannot hold this tool's data, or null.
+function alfredNameProblem(name, ctx)
+{
+    if (ALFRED_ENTRIES.includes(name)) return `'${name}' is one of alfred-code's own entries under .alfred (${ALFRED_ENTRIES.join(', ')}) - pick another name or folder`;
+    const at = pathFor(ctx.platform).join(ctx.project, '.alfred', name);
+    const exists = ctx.exists || ((p) => fs.existsSync(p));
+    if (!exists(at)) return null;
+    // a path that cannot be read is not reported as a file
+    const isDir = ctx.isDir || ((p) => { try { return fs.statSync(p).isDirectory(); } catch { return true; } });
+    return isDir(at) ? null : `.alfred/${name} exists and is not a folder - pick another name or folder`;
+}
+
+// The location side recommended for a row at a scope (spec D3). `alfredHere`: alfredData(...) for this project.
+// `copy`: an install beside a registration of the same row at another scope.
+function recommendedSide(row, scope, ctx, { alfredHere = false, copy = false } = {})
+{
+    const loc = row.locations;
+    if (loc.windowsAbsolute && ctx.platform === 'win32')
+    {
+        if (scope !== 'local' || !alfredHere) return 'default';
+        return validWindowsSerenaHome(path.win32.join(ctx.project, '.alfred', 'serena')) ? 'alfred-data' : 'default';
+    }
+    if (scope === 'user' && alfredHere) return 'account';
+    if (scope === 'project' && loc.relative !== true) return 'account';
+    // a row whose data defaults to the account folder gives this project's copy its own data, not the account-wide one's
+    if (copy && loc.defaultSide === 'account') return 'project';
+    if (scope !== 'user' && alfredHere && loc.defaultSide !== 'account') return 'alfred-data';
+    return 'default';
+}
+
 function otherPlace(row, name, side)
 {
     return side === 'account' ? { kind: 'home', rel: `.preferred-tools/${name}` } : { kind: 'project', rel: `.preferred-tools/${name}` };
@@ -273,4 +317,5 @@ function fetchOf(name, entry, rowId)
 module.exports = {
     pathFor, slashes, isWindowsArm, pythonRequest, parseRoot, formatRoot, withSub, homeVar, serenaWindowsHome, validWindowsSerenaHome,
     defaultRoot, alfredRoot, otherSide, otherPlace, rootOfEntry, applyRoot, buildEntry, nameProblem, subst, fetchStep,
+    ALFRED_ENTRIES, alfredData, alfredNameProblem, recommendedSide,
 };

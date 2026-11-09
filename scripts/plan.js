@@ -41,10 +41,13 @@ const flagValue = (args, flag) => { const i = (args || []).indexOf(flag); return
 
 function makeCtx(inv, opts = {})
 {
-    return {
+    const ctx = {
         platform: inv.os, arch: inv.arch, project: inv.project, env: opts.env || process.env,
-        home: opts.home || account.homeDir(opts.env || process.env), exists: opts.exists, machine: opts.machine || {},
+        home: opts.home || account.homeDir(opts.env || process.env), exists: opts.exists, isDir: opts.isDir, machine: opts.machine || {},
     };
+    // alfred-code set up in this project (its .alfred/.gitignore): its folder is recommended for the data (D3)
+    ctx.alfredHere = E.alfredData(ctx, inv.alfredCodeEnabled);
+    return ctx;
 }
 
 // ---- one MCP pick ---------------------------------------------------------------------------------------------------
@@ -87,11 +90,19 @@ function logicalFromWritten(str, scope, ctx)
     return root;
 }
 
-// `copy`: an install beside a registration of the same row at another scope. A row whose data defaults to the account
-// folder then defaults to the project folder, so this project's copy has its own data, not the account-wide one's.
+// The side a pick with no location takes: D3's table (E.recommendedSide), never .alfred/<name> for a name alfred-code
+// keeps for itself or one taken by a file there.
+function recommendedSideFor(row, name, scope, ctx, copy)
+{
+    const side = E.recommendedSide(row, scope, ctx, { alfredHere: ctx.alfredHere, copy });
+    if (side === 'alfred-data' && E.alfredNameProblem(name, ctx)) return E.recommendedSide(row, scope, ctx, { alfredHere: false, copy });
+    return side;
+}
+
+// `copy`: an install beside a registration of the same row at another scope (see E.recommendedSide).
 function wantedRoot(row, pick, cur, name, scope, ctx, copy = false)
 {
-    const loc = pick.location || { side: cur ? 'keep' : copy && row.locations.defaultSide === 'account' ? 'project' : 'default' };
+    const loc = pick.location || { side: cur ? 'keep' : recommendedSideFor(row, name, scope, ctx, copy) };
     const serenaWin = row.locations.windowsAbsolute && ctx.platform === 'win32';
     // serena on Windows at project scope: the committed file names the profile's .serena as ${USERPROFILE}\.serena, the
     // one absolute, space-free folder it can name without a machine path
@@ -108,8 +119,16 @@ function wantedRoot(row, pick, cur, name, scope, ctx, copy = false)
     let existing = false;
     if (loc.side === 'keep' && cur && cur.rootStr) root = logicalFromWritten(cur.rootStr, cur.scope, ctx);
     else if (loc.side === 'project') root = E.otherPlace(row, name, 'project');
-    else if (loc.side === 'account') root = E.otherPlace(row, name, 'account');
+    // serena's account folder on Windows is the profile's .serena (the default branch below)
+    else if (loc.side === 'account' && !serenaWin) root = E.otherPlace(row, name, 'account');
     else if (loc.side === 'path') root = E.parseRoot(loc.path, ctx);
+    else if (loc.side === 'alfred-data')
+    {
+        if (!ctx.alfredHere) return { error: 'alfred-code is not set up here (no .alfred/.gitignore) - pick another folder' };
+        const problem = E.alfredNameProblem(name, ctx);
+        if (problem) return { error: problem };
+        root = { kind: 'project', rel: `.alfred/${name}` };
+    }
     else if (loc.side === 'alfred')
     {
         // only on the user's pick: the folder is alfred-code's, so deleting it erases this tool's data
@@ -132,13 +151,10 @@ function wantedRoot(row, pick, cur, name, scope, ctx, copy = false)
             return { error: `serena's home on Windows must be absolute, in backslashes and space-free (fix row serena-windows-home); '${text || loc.path}' is not` };
         return { root: { kind: 'abs', path: text }, existing };
     }
-    // project scope writes a relative folder, which lands wherever Claude starts: only for a row proven to follow it
+    // project scope writes a relative folder, which lands wherever Claude starts: only for a row proven to follow it (a
+    // pick with no location is never here - its recommended side there is the account folder)
     if (scope === 'project' && root.kind === 'project' && row.locations.relative !== true)
-    {
-        if (pick.location || cur) return { error: 'project scope writes a folder relative to where Claude starts, which this tool is not proven to follow (locations.relative) - pick the account folder' };
-        root = E.otherPlace(row, name, 'account');
-        existing = false;
-    }
+        return { error: 'project scope writes a folder relative to where Claude starts, which this tool is not proven to follow (locations.relative) - pick the account folder' };
     return { root, existing };
 }
 
