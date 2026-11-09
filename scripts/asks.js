@@ -2,6 +2,7 @@
 // EVERY QUESTION THE WALK ASKS, as data. A question is { id, header, question, multiSelect, options: [{ label, description }] }:
 // 2 to 4 options, exactly one marked '(Recommended)' and listed first on a single-select; a call carries 1 to 4 questions.
 // 'Other' is added by AskUserQuestion itself and never listed here.
+const fs = require('node:fs');
 const path = require('node:path');
 const E = require('./entries.js');
 const { installedOf, keyOf, targetOf, fromHere, otherWindowsMcp } = require('./inventory.js');
@@ -185,16 +186,23 @@ function scopesFor(row, routeId, ctx = null)
     return ['local', 'project', 'user'].filter((s) => s !== 'project' || !serenaWin || !E.serenaWindowsHome(ctx).needsInput);
 }
 
-// The scope question, or null when one scope is left. `current` is the registration configure changes; for an install,
+// The scopes offered, the recommended one first. `current` is the registration configure changes; for an install,
 // `copyOf` lists this row's registrations at other scopes (the copy for every project), whose scopes are not offered again.
-function scopeQuestion(row, inv, { route, current = null, copyOf = [], ctx = null } = {})
+function scopeOrder(row, inv, { route, current = null, copyOf = [], ctx = null } = {})
 {
     const routeId = route || (current && current.route) || row.recommendedRoute;
     const rec = current ? current.scope : recommendedScope(row, routeId, keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled));
     const all = scopesFor(row, routeId, ctx);
     const free = all.filter((s) => !copyOf.some((c) => c.scope === s));
     const scopes = free.length ? free : all;
-    const order = [rec, ...SCOPE_ORDER.filter((s) => s !== rec)].filter((s) => scopes.includes(s));
+    return [rec, ...SCOPE_ORDER.filter((s) => s !== rec)].filter((s) => scopes.includes(s));
+}
+
+// The scope question, or null when one scope is left.
+function scopeQuestion(row, inv, { route, current = null, copyOf = [], ctx = null } = {})
+{
+    const routeId = route || (current && current.route) || row.recommendedRoute;
+    const order = scopeOrder(row, inv, { route: routeId, current, copyOf, ctx });
     if (order.length < 2) return null;
     return {
         id: `scope-${row.id}`, header: 'Scope', multiSelect: false,
@@ -203,46 +211,150 @@ function scopeQuestion(row, inv, { route, current = null, copyOf = [], ctx = nul
     };
 }
 
-// The one call of up to four questions for a tool: scope, name, location, and one tool-specific extra.
-function toolQuestions(row, inv, { route, current = null, ctx = null, catalog, copyOf = [] } = {})
+// a per-project registration name: the project folder's name before the tool's
+const perProjectName = (row, ctx) => (ctx ? `${path.basename(ctx.project).replace(/[^A-Za-z0-9_-]+/g, '-')}-${row.name}`.slice(0, 64) : `project-${row.name}`);
+
+// The registration name a `names` answer stands for: 'keep' (or none) - the name it has now, else the original;
+// 'prefixed' - the per-project name; else the name itself.
+function nameFor(row, name, current, ctx)
+{
+    if (!name || name === 'keep') return current ? current.name : row.name;
+    return name === 'prefixed' ? perProjectName(row, ctx) : name;
+}
+
+function nameQuestion(row, inv, { current = null, copyOf = [], ctx = null } = {})
+{
+    const orig = row.name;
+    const shadows = copyOf.find((c) => c.name === orig);
+    const options = current && current.name !== orig
+        ? [{ label: `Keep \`${current.name}\`${REC}`, description: 'the name it has now' }, { label: `Use \`${orig}\``, description: 'the original name' }]
+        : [{ label: `Keep \`${orig}\`${REC}`, description: shadows ? `the original name; in this project it is used instead of ${shadows.scope === 'inherited' ? `the one inherited from ${fromHere(inv, shadows.from)}` : 'the copy for every project'}` : 'the original name' }, { label: `Use \`${perProjectName(row, ctx)}\``, description: 'a per-project name' }];
+    return { id: `name-${row.id}`, header: 'Name', multiSelect: false, question: `${row.label}: registration name?`, options };
+}
+
+// ---- the location question (spec D4) --------------------------------------------------------------------------------
+// A label names the place in words, fixed text, so the walk never reads a path out of it; the description gives the
+// exact folder on this machine and what follows from it. [label at local and user scope, label at project scope]
+const SIDE_LABEL = {
+    'alfred-data': ["alfred-code's folder in this project", '.alfred in the folder Claude starts in'],
+    project: ["This project's own folder", '.preferred-tools in the folder Claude starts in'],
+    account: ['Your account folder', 'Your account folder'],
+    alfred: ['alfred-code 2.x data', 'alfred-code 2.x data'],
+    keep: ['The folder it uses now', 'The folder it uses now'],
+};
+const SIDE_TAIL = {
+    'alfred-data': 'kept out of git by alfred-code; deleting .alfred erases this data',
+    project: "the plugin's own folder, with its .gitignore",
+    account: 'one folder for every project on this machine',
+    alfred: "carries over the data alfred-code 2.x left there; the folder is alfred-code's, so deleting it erases this tool's data",
+};
+// serena's home holds its language servers (docs/build-prompt.md, the serena-windows-home row): a home per project
+// downloads them once per project
+const SERENA_PER_PROJECT = 'its language servers (about 327MB) download once per project';
+
+// The folder a root lands in, as the description says it: absolute at local and user scope; at project scope the written
+// form and what it is from here.
+function placeText(root, scope, ctx, backslash = false)
+{
+    const abs = E.formatRoot(root, 'local', ctx).value;
+    if (scope !== 'project') return abs;
+    const written = E.formatRoot(root, 'project', ctx, { backslash }).value;
+    if (root.kind === 'home') return `\`${written}\` - on this machine ${abs}`;
+    return `\`${written}\` - from ${ctx.project}: ${abs}; from a child or a subfolder: its own`;
+}
+
+// The location question for a row with a data folder, at a known scope and registration name (the folder is named
+// after it). -> { question (or null when one place is left), answers: { <label as shown>: <location entry> }, only: the
+// one location left when no question is asked }. The options: the folder it uses now (configure), alfred-code's folder,
+// the project's own, the account folder, alfred-code 2.x data (install), 'Another space-free folder' (serena on
+// Windows) - each only where it can be written at this scope - with the recommended one (E.recommendedSide) first.
+function locationQuestion(row, inv, { scope, name = null, current = null, copyOf = [], ctx })
+{
+    const loc = row.locations;
+    const folder = name || (current ? current.name : row.name);
+    const serenaWin = Boolean(loc.windowsAbsolute && ctx.platform === 'win32');
+    // the committed file names serena's Windows home only as ${USERPROFILE}\.serena (plan.js wantedRoot)
+    if (serenaWin && scope === 'project') return { question: null, answers: {}, only: { side: 'default' } };
+    // project scope writes a folder under the project relative, so only for a row proven to follow its start folder
+    const writable = (root) => scope !== 'project' || root.kind === 'home' || (root.kind === 'project' && loc.relative === true);
+    const winValid = (root) => !serenaWin || E.validWindowsSerenaHome(E.formatRoot(root, 'local', ctx).value);
+    const alfredHere = E.alfredData(ctx, inv.alfredCodeEnabled) && !E.alfredNameProblem(folder, ctx);
+
+    const places = [];
+    const alfredData = { kind: 'project', rel: `.alfred/${folder}` };
+    if (alfredHere && writable(alfredData) && winValid(alfredData)) places.push({ side: 'alfred-data', root: alfredData });
+    const own = E.otherPlace(row, folder, 'project');
+    if (!serenaWin && writable(own)) places.push({ side: 'project', root: own });
+    if (!serenaWin) places.push({ side: 'account', root: E.otherPlace(row, folder, 'account') });
+    else
+    {
+        // serena's account folder on Windows is the profile's .serena, plan.js's default for it
+        const profile = E.serenaWindowsHome(ctx);
+        if (!profile.needsInput) places.push({ side: 'account', root: profile.root, answer: { side: 'default' } });
+    }
+    const old = !current && !serenaWin ? E.alfredRoot(row, ctx) : null;
+    if (old && writable(old)) places.push({ side: 'alfred', root: old });
+
+    // configure: the folder it uses now, when it can stay at this scope; a place that is the same folder is not repeated
+    let keep = null;
+    if (current && current.rootStr)
+    {
+        const root = require('./plan.js').logicalFromWritten(current.rootStr, current.scope, ctx);
+        if (current.scope === scope || writable(root)) keep = { side: 'keep', root };
+    }
+    const at = (p) => E.formatRoot(p.root, scope, ctx, { backslash: serenaWin }).value;
+    const listed = keep ? [keep, ...places.filter((p) => at(p) !== at(keep))] : places;
+    if (serenaWin)
+    {
+        const profile = E.serenaWindowsHome(ctx);
+        listed.push(profile.needsInput ? { side: 'path', label: 'Another folder', description: `${profile.needsInput} - under Other` } : { side: 'path', label: 'Another space-free folder', description: 'type the path under Other' });
+    }
+
+    let rec = 'keep';
+    if (!keep)
+    {
+        const side = E.recommendedSide(row, scope, ctx, { alfredHere, copy: !current && copyOf.length > 0 });
+        rec = side === 'default' ? (serenaWin ? 'account' : loc.defaultSide) : side;
+    }
+    const first = listed.find((p) => p.side === rec) || listed[0];
+    const order = [first, ...listed.filter((p) => p !== first)].slice(0, 4);
+    const label = (p) => p.label || SIDE_LABEL[p.side][scope === 'project' ? 1 : 0];
+    const describe = (p) =>
+    {
+        if (p.description) return p.description;
+        const text = placeText(p.root, scope, ctx, serenaWin);
+        if (p.side === 'keep') return text;
+        const tail = row.id === 'serena' && ['alfred-data', 'project'].includes(p.side) ? `${SIDE_TAIL[p.side]}; ${SERENA_PER_PROJECT}` : SIDE_TAIL[p.side];
+        return `${text} - ${tail}`;
+    };
+    const options = order.map((p, i) => ({ label: `${label(p)}${i === 0 ? REC : ''}`, description: describe(p) }));
+    const answers = Object.fromEntries(order.map((p, i) => [options[i].label, p]).filter(([, p]) => p.side !== 'path').map(([l, p]) => [l, p.answer || { side: p.side }]));
+    // one place left: nothing to ask (serena on Windows with a spaced profile and no other folder still asks for one)
+    if (order.length < 2 && first && first.side !== 'path') return { question: null, answers: {}, only: first.answer || { side: first.side } };
+    if (!order.length) return { question: null, answers: {}, only: null };
+    return { question: { id: `location-${row.id}`, header: 'Location', multiSelect: false, question: `${row.label}: where does its data live?`, options }, answers, only: null };
+}
+
+// The questions for one tool. A row with a data folder asks scope and name `first`, in a call of their own, because its
+// folder is named after the registration and depends on the scope; then `questions` holds the location (built for
+// `scope` and `name`, else the recommended scope and the name it has now or the original) and one tool-specific extra,
+// and `answers` maps each location label to its entry. Any other row has `first` null and asks scope, name and its extra
+// in one call, as before.
+function toolAsk(row, inv, { route, scope = null, name = null, current = null, ctx = null, catalog, copyOf = [] } = {})
 {
     const routeId = route || (current && current.route) || row.recommendedRoute;
-    const qs = [];
-    const scope = scopeQuestion(row, inv, { route: routeId, current, copyOf, ctx });
-    if (scope) qs.push(scope);
-    if (row.kind === 'plugin') return qs;
-
-    const orig = row.name;
-    const proj = ctx ? `${path.basename(ctx.project).replace(/[^A-Za-z0-9_-]+/g, '-')}-${orig}`.slice(0, 64) : `project-${orig}`;
-    const shadows = copyOf.find((c) => c.name === orig);
-    const nameOpts = current && current.name !== orig
-        ? [{ label: `Keep \`${current.name}\`${REC}`, description: 'the name it has now' }, { label: `Use \`${orig}\``, description: 'the original name' }]
-        : [{ label: `Keep \`${orig}\`${REC}`, description: shadows ? `the original name; in this project it is used instead of ${shadows.scope === 'inherited' ? `the one inherited from ${fromHere(inv, shadows.from)}` : 'the copy for every project'}` : 'the original name' }, { label: `Use \`${proj}\``, description: 'a per-project name' }];
-    qs.push({ id: `name-${row.id}`, header: 'Name', multiSelect: false, question: `${row.label}: registration name?`, options: nameOpts });
-
-    if (row.locations && ctx)
+    const scopeQ = scopeQuestion(row, inv, { route: routeId, current, copyOf, ctx });
+    if (row.kind === 'plugin') return { first: null, questions: scopeQ ? [scopeQ] : [], answers: {} };
+    const nameQ = nameQuestion(row, inv, { current, copyOf, ctx });
+    const located = Boolean(row.locations && ctx);
+    const qs = located ? [] : [scopeQ, nameQ].filter(Boolean);
+    let answers = {};
+    if (located)
     {
-        const d = E.defaultRoot(row, current ? current.name : orig, ctx);
-        const other = E.otherSide(row, current ? current.name : orig);
-        const show = (r) => (r.kind === 'home' ? `~/${r.rel}` : r.kind === 'project' ? r.rel : r.path);
-        const opts = [];
-        const winAbs = row.locations.windowsAbsolute && ctx.platform === 'win32';
-        if (d.needsInput) opts.push({ label: `Another folder${REC}`, description: d.needsInput });
-        else if (!current && copyOf.length && row.locations.defaultSide === 'account' && !winAbs)
-        {
-            // a project's own copy gets its own data by default (plan.js wantedRoot does the same)
-            opts.push({ label: `Use \`${show(E.otherPlace(row, orig, 'project'))}\`${REC}`, description: "the project folder - its own data, starting empty; the copy for every project's data is not seen in this project" });
-            opts.push({ label: `Keep \`${show(d.root)}\``, description: 'the default folder - shares the data of the copy for every project' });
-        }
-        else
-        {
-            const keep = current && current.rootStr ? current.rootStr : show(d.root);
-            opts.push({ label: `Keep \`${keep}\`${REC}`, description: current && current.rootStr ? 'the folder it uses now' : 'the default data folder' });
-            if (!current && d.alfred && !winAbs) opts.push({ label: `Use alfred-code's \`${show(d.alfred)}\``, description: "carries over the data alfred-code's server left there - the folder is alfred-code's, so deleting it erases this tool's data" });
-            if (winAbs) opts.push({ label: 'Another space-free folder', description: 'type an absolute path without spaces under Other' });
-            else opts.push({ label: `Use \`${show(other)}\``, description: other.kind === 'home' ? 'the account folder, shared across projects' : 'the project folder' });
-        }
-        qs.push({ id: `location-${row.id}`, header: 'Location', multiSelect: false, question: `${row.label}: where does its data live?`, options: opts });
+        const at = scope || scopeOrder(row, inv, { route: routeId, current, copyOf, ctx })[0] || (current && current.scope);
+        const l = locationQuestion(row, inv, { scope: at, name: nameFor(row, name, current, ctx), current, copyOf, ctx });
+        if (l.question) qs.push(l.question);
+        answers = l.answers;
     }
     // what the registration has now goes first, so a configure walk recommends keeping it
     const first = (opts, keepFirst) => (keepFirst ? [opts[1], opts[0]] : opts).map((o, i) => ({ ...o, label: `${o.label}${i === 0 ? REC : ''}` }));
@@ -275,8 +387,11 @@ function toolQuestions(row, inv, { route, current = null, ctx = null, catalog, c
                 : first([{ label: row.params[0].default, description: 'the hosted service' }, { label: 'A self-managed host', description: 'type the host name under Other' }]),
         });
     }
-    return qs;
+    return { first: located ? [scopeQ, nameQ].filter(Boolean) : null, questions: qs, answers };
 }
+
+// The questions toolAsk gives after `first`: for a row without a data folder, its whole call.
+const toolQuestions = (row, inv, opts = {}) => toolAsk(row, inv, opts).questions;
 
 // Remove: one option per registration or plugin (a row at two scopes is two options), grouped; the description is the
 // exact command, which the walk reads the target from.
@@ -322,23 +437,28 @@ const STATIC = {
 };
 
 // picks: { rows: [<row id>], routes: { <row id>: route } } for install, { targets: [<key>], routes: { <key>: route } }
-// for configure. A target's questions start from what it has now: its route, scope, name and data folder are 'Keep'.
-// `env` and `home`: what the key state reads (the shell's variables, the home key file). plan.js --questions passes the
-// real ones; a caller that passes none reads neither, so a test never depends on the shell that runs it.
+// for configure; both may carry `scopes` ({ <row id or key>: scope }) and `names` ({ <row id or key>: 'keep' | <name> }),
+// the answers to `first`, which place the data folder. A target's questions start from what it has now: its route,
+// scope, name and data folder are 'Keep'. `env` and `home`: what the key state reads (the shell's variables, the home
+// key file). plan.js --questions passes the real ones; a caller that passes none reads neither, so a test never depends
+// on the shell that runs it.
 function all(inv, picks, catalog, { env = {}, home = null } = {})
 {
     const out = {
         static: { ...STATIC, hud: STATIC.hud(0, 0, 0), prereqMissing: STATIC.prereqMissing('<tool>', '<prerequisite>') },
         pick: pickQuestions(inv, catalog), change: changeQuestions(inv, catalog), remove: removeQuestions(inv, catalog), tools: {}, targets: {},
     };
-    const ctx = { project: inv.project, platform: inv.os, arch: inv.arch, home: home || require('./account.js').homeDir(process.env), env, keyHome: home };
+    // `exists` reads the disk: alfred-code's .alfred/.gitignore and its 2.x data decide which folders are offered
+    const ctx = { project: inv.project, platform: inv.os, arch: inv.arch, home: home || require('./account.js').homeDir(process.env), env, keyHome: home, exists: (p) => fs.existsSync(p) };
     const routes = (picks && picks.routes) || {};
+    const scopes = (picks && picks.scopes) || {};
+    const names = (picks && picks.names) || {};
     for (const id of (picks && picks.rows) || [])
     {
         const row = catalog.byId.get(id);
         if (!row) continue;
         // install only adds, so its questions never start from an installed registration
-        out.tools[id] = { route: row.kind === 'mcp' ? routeQuestion(row) : null, questions: toolQuestions(row, inv, { route: routes[id], ctx, catalog, copyOf: installedOf(inv, id) }) };
+        out.tools[id] = { route: row.kind === 'mcp' ? routeQuestion(row) : null, ...toolAsk(row, inv, { route: routes[id], scope: scopes[id], name: names[id], ctx, catalog, copyOf: installedOf(inv, id) }) };
     }
     for (const key of (picks && picks.targets) || [])
     {
@@ -350,10 +470,10 @@ function all(inv, picks, catalog, { env = {}, home = null } = {})
         out.targets[key] = {
             row: row.id, kind: t.kind, current: { name: t.item.name || t.item.id, scope: t.item.scope, route: current.route || null },
             route: t.kind === 'mcp' ? routeQuestion(row, current.route) : null,
-            questions: toolQuestions(row, inv, { route: routes[key], current, ctx, catalog }),
+            ...toolAsk(row, inv, { route: routes[key], scope: scopes[key], name: names[key], current, ctx, catalog }),
         };
     }
     return out;
 }
 
-module.exports = { REC, recommendedScope, keyStateOf, keyToSend, pickQuestions, changeQuestions, routeQuestion, toolQuestions, scopeQuestion, removeQuestions, packed, STATIC, all, chunk, scopesFor };
+module.exports = { REC, recommendedScope, keyStateOf, keyToSend, pickQuestions, changeQuestions, routeQuestion, toolQuestions, toolAsk, scopeQuestion, nameQuestion, locationQuestion, removeQuestions, packed, STATIC, all, chunk, scopesFor };

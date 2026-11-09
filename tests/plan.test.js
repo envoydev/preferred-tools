@@ -703,13 +703,15 @@ test('install questions for a copy: the taken scope is not offered, and an accou
     assert.ok(offered.some((o) => o.label === 'typescript-lsp (installed for every project)'), 'a plugin at user scope below its recommended project scope');
     assert.ok(!offered.some((o) => o.label.startsWith('claude-hud')), 'installed at its recommended scope: configure\'s');
     const q = asks.all(i, { rows: ['memory', 'typescript-lsp'] }, catalog);
-    const ids = q.tools.memory.questions.map((x) => x.id);
-    assert.deepStrictEqual(q.tools.memory.questions.find((x) => x.id === 'scope-memory').options.map((o) => o.label), ['local (Recommended)', 'project'], 'the copy\'s user scope is not offered again');
-    assert.ok(ids.includes('scope-memory'));
-    assert.match(q.tools.memory.questions.find((x) => x.id === 'name-memory').options[0].description, /used instead of the copy for every project/);
-    assert.match(q.tools.memory.questions.find((x) => x.id === 'location-memory').options[0].label, /^Use `\.preferred-tools\/memory` \(Recommended\)$/);
+    // memory has a data folder: its scope and name come first, in a call of their own
+    assert.deepStrictEqual(q.tools.memory.first.map((x) => x.id), ['scope-memory', 'name-memory']);
+    assert.deepStrictEqual(q.tools.memory.first.find((x) => x.id === 'scope-memory').options.map((o) => o.label), ['local (Recommended)', 'project'], 'the copy\'s user scope is not offered again');
+    assert.match(q.tools.memory.first.find((x) => x.id === 'name-memory').options[0].description, /used instead of the copy for every project/);
+    const loc = q.tools.memory.questions.find((x) => x.id === 'location-memory');
+    assert.strictEqual(loc.options[0].label, "This project's own folder (Recommended)");
+    assert.match(loc.options[0].description, /^\/work\/shop\/\.preferred-tools\/memory /);
     assert.deepStrictEqual(q.tools['typescript-lsp'].questions[0].options.map((o) => o.label), ['project (Recommended)', 'local']);
-    for (const t of Object.values(q.tools)) t.questions.forEach(checkQuestion);
+    for (const t of Object.values(q.tools)) [...(t.first || []), ...t.questions].forEach(checkQuestion);
 });
 
 test('configure: one of two registrations of a row is changed by its key, the other is left and not noted', () => {
@@ -744,22 +746,24 @@ test('configure questions start from what is installed: its route, scope, name, 
     const c7 = { type: 'http', url: 'https://mcp.context7.com/mcp' };
     const i = inv(MAC, { registrations: [reg('pw', 'local', play, 'playwright-chrome', 'local'), reg('c7', 'project', c7, 'context7', 'remote')] });
     const q = asks.all(i, { targets: ['mcp:pw~local', 'mcp:c7~project', 'mcp:none~user'] }, catalog);
-    const first = (key, id) => q.targets[key].questions.find((x) => x.id.startsWith(id)).options[0].label;
+    const first = (key, id) => [...(q.targets[key].first || []), ...q.targets[key].questions].find((x) => x.id.startsWith(id)).options[0].label;
     assert.strictEqual(q.targets['mcp:pw~local'].row, 'playwright-chrome');
     assert.strictEqual(first('mcp:pw~local', 'scope'), 'local (Recommended)');
     assert.strictEqual(first('mcp:pw~local', 'name'), 'Keep `pw` (Recommended)');
+    assert.strictEqual(first('mcp:pw~local', 'location'), 'The folder it uses now (Recommended)');
+    assert.strictEqual(q.targets['mcp:pw~local'].questions.find((x) => x.id.startsWith('location')).options[0].description, '/work/shop/.preferred-tools/pw/profile', 'the folder as registered');
     assert.strictEqual(first('mcp:pw~local', 'browser'), 'Keep `/opt/chrome` (Recommended)');
     assert.strictEqual(q.targets['mcp:c7~project'].route.options[0].label, 'Hosted (Recommended)');
     assert.strictEqual(first('mcp:c7~project', 'scope'), 'project (Recommended)');
     assert.match(q.targets['mcp:none~user'].error, /not a catalog tool installed here/);
     const local = asks.all(inv(MAC, { registrations: [reg('c7', 'local', { command: 'npx', args: ['-y', '@upstash/context7-mcp@2.0.0'] }, 'context7', 'local')] }), { targets: ['mcp:c7~local'] }, catalog);
     assert.strictEqual(local.targets['mcp:c7~local'].route.options[0].label, 'Local (Recommended)', 'the route it has now is recommended, not the catalog\'s');
-    for (const t of Object.values(q.targets).filter((x) => !x.error)) { t.questions.forEach(checkQuestion); if (t.route) checkQuestion(t.route); }
+    for (const t of Object.values(q.targets).filter((x) => !x.error)) { [...(t.first || []), ...t.questions].forEach(checkQuestion); if (t.route) checkQuestion(t.route); }
 });
 
 test('the scope question follows the route: its recommended scope first, then user, project, local', () => {
     const i = inv(MAC);
-    const scopes = (id, route) => asks.toolQuestions(catalog.byId.get(id), i, { route, ctx: { project: '/p', platform: 'darwin', home: '/h', env: {} }, catalog })[0].options.map((o) => o.label.replace(' (Recommended)', ''));
+    const scopes = (id, route) => asks.scopeQuestion(catalog.byId.get(id), i, { route, ctx: { project: '/p', platform: 'darwin', home: '/h', env: {} } }).options.map((o) => o.label.replace(' (Recommended)', ''));
     assert.deepStrictEqual(scopes('serena', 'local'), ['local', 'user', 'project']);
     assert.deepStrictEqual(scopes('context7', 'remote'), ['project', 'user', 'local']);
     assert.deepStrictEqual(scopes('context7', 'local'), ['local', 'user', 'project']);
@@ -848,9 +852,9 @@ test('location: alfred-code data on disk is a second answer, not the recommended
     const loc = (exists) => asks.toolQuestions(catalog.byId.get('playwright-chrome'), inv(MAC), { route: 'local', ctx: ctx(exists), catalog }).find((q) => q.id === 'location-playwright-chrome');
     const withData = loc((p) => p === '/work/shop/.alfred/chrome-control');
     checkQuestion(withData);
-    assert.match(withData.options[0].label, /^Keep `\.preferred-tools\/playwright-chrome` \(Recommended\)$/);
-    assert.strictEqual(withData.options[1].label, "Use alfred-code's `.alfred/chrome-control`");
-    assert.match(withData.options[1].description, /deleting it erases this tool's data/);
+    assert.strictEqual(withData.options[0].label, "This project's own folder (Recommended)");
+    const old = withData.options.find((o) => o.label === 'alfred-code 2.x data');
+    assert.match(old.description, /^\/work\/shop\/\.alfred\/chrome-control - carries over the data alfred-code 2\.x left there; the folder is alfred-code's, so deleting it erases this tool's data$/);
     assert.ok(!loc(() => false).options.some((o) => /alfred/.test(o.label)), 'no alfred-code folder, no answer for it');
 });
 
@@ -1046,4 +1050,97 @@ test('configure: a local .alfred folder moved to project scope is written relati
     const unproven = plan(i, changeOf(local, { scope: 'project' }), opts('/Users/me', { exists: ALFRED }));
     assert.match(unproven.errors.join(' '), /not proven to follow \(locations\.relative\) - pick the account folder/);
     assert.strictEqual(unproven.steps.length, 0);
+});
+
+// ---- the location question (D4) and scope and name first (D5) -----------------------------------------------------
+test('location labels name the place; descriptions give the exact folder; the answers map covers every label', () => {
+    const q = (scope, alfred, cat = catalog) => asks.locationQuestion(cat.byId.get('playwright-chrome'), inv(WIN, { alfredCodeEnabled: alfred }), { scope, ctx: { project: WIN.project, platform: 'win32', home: 'C:\\Users\\mac', env: {}, exists: (p) => alfred && p === 'C:\\work\\shop\\.alfred\\.gitignore' } });
+    const local = q('local', true);
+    assert.deepStrictEqual(local.question.options.map((o) => o.label), ["alfred-code's folder in this project (Recommended)", "This project's own folder", 'Your account folder']);
+    assert.strictEqual(local.question.options[0].description, 'C:\\work\\shop\\.alfred\\playwright-chrome - kept out of git by alfred-code; deleting .alfred erases this data');
+    assert.strictEqual(local.question.options[1].description, "C:\\work\\shop\\.preferred-tools\\playwright-chrome - the plugin's own folder, with its .gitignore");
+    assert.strictEqual(local.question.options[2].description, 'C:\\Users\\mac\\.preferred-tools\\playwright-chrome - one folder for every project on this machine');
+    assert.deepStrictEqual(Object.values(local.answers), [{ side: 'alfred-data' }, { side: 'project' }, { side: 'account' }]);
+    assert.deepStrictEqual(Object.keys(local.answers), local.question.options.map((o) => o.label));
+    const project = q('project', true, withRelative('playwright-chrome'));
+    assert.deepStrictEqual(project.question.options.map((o) => o.label), ['.alfred in the folder Claude starts in (Recommended)', '.preferred-tools in the folder Claude starts in', 'Your account folder']);
+    assert.match(project.question.options[0].description, /^`\.alfred\/playwright-chrome` - from C:\\work\\shop: C:\\work\\shop\\\.alfred\\playwright-chrome; from a child or a subfolder: its own - kept out of git/);
+    assert.match(project.question.options[2].description, /^`\$\{USERPROFILE\}\/\.preferred-tools\/playwright-chrome` - on this machine C:\\Users\\mac\\\.preferred-tools\\playwright-chrome/);
+    const unproven = q('project', true);
+    assert.strictEqual(unproven.question, null);
+    assert.deepStrictEqual(unproven.only, { side: 'account' });
+    // no alfred-code: the plugin's folder is recommended at local and user scope, as today
+    assert.deepStrictEqual(q('user', false).question.options.map((o) => o.label), ["This project's own folder (Recommended)", 'Your account folder']);
+    // with alfred-code, user scope recommends the account folder
+    assert.deepStrictEqual(q('user', true).question.options.map((o) => o.label), ['Your account folder (Recommended)', "alfred-code's folder in this project", "This project's own folder"]);
+    // serena: a folder in each project downloads its language servers once per project
+    const serena = asks.locationQuestion(catalog.byId.get('serena'), inv(MAC, { alfredCodeEnabled: true }), { scope: 'local', ctx: { project: '/work/shop', platform: 'darwin', home: '/Users/me', env: {}, exists: ALFRED } });
+    assert.match(serena.question.options[0].description, /^\/work\/shop\/\.alfred\/serena - kept out of git by alfred-code; deleting \.alfred erases this data; its language servers \(about 327MB\) download once per project$/);
+    // the name guard: a name alfred-code keeps for itself has no .alfred option
+    const docs = asks.locationQuestion(catalog.byId.get('playwright-chrome'), inv(MAC, { alfredCodeEnabled: true }), { scope: 'local', name: 'docs', ctx: { project: '/work/shop', platform: 'darwin', home: '/Users/me', env: {}, exists: ALFRED } });
+    assert.ok(!Object.values(docs.answers).some((a) => a.side === 'alfred-data'), JSON.stringify(docs.answers));
+});
+
+test('serena on Windows: alfred-data when the folder is space-free, the profile .serena as the account folder, Another space-free folder', () => {
+    const q = (project, scope) => asks.locationQuestion(catalog.byId.get('serena'), inv({ ...WIN, project }, { alfredCodeEnabled: true }), { scope, ctx: { project, platform: 'win32', home: 'C:\\Users\\me', env: {}, exists: (p) => p === `${project}\\.alfred\\.gitignore` } });
+    const local = q('C:\\work\\shop', 'local');
+    assert.deepStrictEqual(local.question.options.map((o) => o.label), ["alfred-code's folder in this project (Recommended)", 'Your account folder', 'Another space-free folder']);
+    assert.match(local.question.options[1].description, /^C:\\Users\\me\\\.serena - one folder for every project/);
+    assert.deepStrictEqual(Object.values(local.answers), [{ side: 'alfred-data' }, { side: 'default' }]);
+    const spaced = q('C:\\my work\\shop', 'local');
+    assert.deepStrictEqual(spaced.question.options.map((o) => o.label), ['Your account folder (Recommended)', 'Another space-free folder']);
+    assert.deepStrictEqual(q('C:\\work\\shop', 'project'), { question: null, answers: {}, only: { side: 'default' } });
+});
+
+test('--questions: a location row asks scope and name first; the location follows them; no scopes or names - the recommended scope and the original name', () => {
+    const first = asks.all(inv(MAC), { rows: ['playwright-chrome'] }, catalog).tools['playwright-chrome'];
+    assert.deepStrictEqual(first.first.map((q) => q.id), ['scope-playwright-chrome', 'name-playwright-chrome']);
+    assert.ok(!first.questions.some((q) => /^(scope|name)-/.test(q.id)));
+    assert.match(first.questions.find((q) => q.id === 'location-playwright-chrome').options[0].description, /\/work\/shop\/\.preferred-tools\/playwright-chrome/); // Review Focus 1
+    assert.deepStrictEqual(Object.values(first.answers), [{ side: 'project' }, { side: 'account' }]);
+    const named = asks.all(inv(MAC), { rows: ['playwright-chrome'], scopes: { 'playwright-chrome': 'user' }, names: { 'playwright-chrome': 'shop-playwright-chrome' } }, catalog).tools['playwright-chrome'];
+    assert.match(named.questions.find((q) => q.id === 'location-playwright-chrome').options[0].description, /\.preferred-tools[\\/]shop-playwright-chrome/);
+    const kept = asks.all(inv(MAC), { rows: ['playwright-chrome'], names: { 'playwright-chrome': 'keep' } }, catalog).tools['playwright-chrome'];
+    assert.match(kept.questions.find((q) => q.id === 'location-playwright-chrome').options[0].description, /\.preferred-tools\/playwright-chrome /);
+    const c7 = asks.all(inv(MAC), { rows: ['context7'] }, catalog).tools.context7;
+    assert.strictEqual(c7.first, null);
+    assert.deepStrictEqual(c7.answers, {});
+    assert.ok(c7.questions.some((q) => q.id === 'scope-context7'), 'a row without a folder keeps scope in its one call');
+    // configure: the same order for a target
+    const play = { command: 'npx', args: ['-y', '@playwright/mcp@0.0.83', '--browser', 'chrome', '--user-data-dir', '/work/shop/.preferred-tools/pw'] };
+    const t = asks.all(inv(MAC, { registrations: [reg('pw', 'local', play, 'playwright-chrome', 'local')] }), { targets: ['mcp:pw~local'], scopes: { 'mcp:pw~local': 'user' } }, catalog).targets['mcp:pw~local'];
+    assert.deepStrictEqual(t.first.map((q) => q.id), ['scope-playwright-chrome', 'name-playwright-chrome']);
+    const loc = t.questions.find((q) => q.id === 'location-playwright-chrome');
+    assert.strictEqual(loc.options[0].label, 'The folder it uses now (Recommended)');
+    assert.strictEqual(t.answers['The folder it uses now (Recommended)'].side, 'keep');
+});
+
+test('every question has 2 to 4 options, one Recommended and first: each scope, with and without alfred-code, relative or not', () => {
+    const located = catalog.tools.filter((r) => r.locations).map((r) => r.id);
+    for (const base of [MAC, LINUX, WIN, WINARM])
+        for (const alfred of [false, true])
+            for (const old of [false, true])
+                for (const cat of [catalog, withRelative(...located)])
+                {
+                    const i = inv(base, { alfredCodeEnabled: alfred });
+                    const P = base.os === 'win32' ? path.win32 : path.posix;
+                    const gi = P.join(base.project, '.alfred', '.gitignore');
+                    // old: alfred-code 2.x data on disk as well (its folders are under .alfred and ~)
+                    const exists = (p) => p === gi || (old && /alfred/.test(p) && !p.endsWith('.gitignore'));
+                    const ctx = { project: base.project, platform: base.os, arch: base.arch, home: base.os === 'win32' ? 'C:\\Users\\me' : '/Users/me', env: {}, exists, isDir: () => true };
+                    for (const row of cat.tools.filter((r) => r.os.includes(base.os) && r.locations))
+                        for (const scope of asks.scopesFor(row, row.recommendedRoute, ctx))
+                        {
+                            const l = asks.locationQuestion(row, i, { scope, ctx });
+                            const at = `${base.os} ${row.id} ${scope} alfred:${alfred} 2.x:${old}`;
+                            if (!l.question) { assert.ok(l.only, at); continue; }
+                            checkQuestion(l.question);
+                            for (const o of l.question.options) assert.ok(l.answers[o.label] || /^Another/.test(o.label), `${at}: '${o.label}' has no answer`);
+                        }
+                    for (const row of cat.tools.filter((r) => r.os.includes(base.os)))
+                    {
+                        const s = asks.scopeQuestion(row, i, { ctx });
+                        if (s) checkQuestion(s);
+                    }
+                }
 });

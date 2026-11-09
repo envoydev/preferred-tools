@@ -493,4 +493,4 @@ function main(argv)
 }
 
 if (require.main === module) process.exit(main(process.argv.slice(2)));
-module.exports = { plan, render, argvOf, currentOf, makeCtx, deepEqual, projectName };
+module.exports = { plan, render, argvOf, currentOf, logicalFromWritten, makeCtx, deepEqual, projectName };

@@ -93,7 +93,10 @@ order:
 
 1. A target whose `route` is not null: ask that one question first. Record the answer under `routes.<key>` in
    `picks.json` and run the command again, because the scope options depend on the route.
-2. Ask `targets.<key>.questions` as one call, as printed. Write the answers into `<tmp>/answers.json` as
+2. A target whose `targets.<key>.first` is not null (it has a data folder): ask those questions - scope and name - as
+   one call. Record the scope under `scopes.<key>` and the name under `names.<key>` in `picks.json` ('Keep ...' is
+   `"keep"`) and in the answers below, and run the command again, because the folder depends on both.
+3. Ask `targets.<key>.questions` as one call, as printed. Write the answers into `<tmp>/answers.json` as
    `{"change": {<key>: {"row": <targets.<key>.row>, ...}}}`, mapped as below, and leave out every answer that keeps what
    the tool has now - the plan reads a missing key as 'keep':
 
@@ -103,9 +106,9 @@ order:
 | scope, the label's first word, when it is not `current.scope` | `"scope": "local"` / `"project"` / `"user"` |
 | name 'Keep ...' | nothing |
 | name 'Use `x`' or Other | `"name": "x"` |
-| location 'Keep ...' | nothing |
-| location 'Use `x`' | `{"side": "project"}` or `{"side": "account"}`, as its description says |
-| location Other, or 'Another folder' | `{"side": "path", "path": "<typed>"}` |
+| location 'The folder it uses now' | nothing |
+| location, another label | `"location":` the entry `targets.<key>.answers` gives for the label picked |
+| location Other, or 'Another ...folder' | `"location": {"side": "path", "path": "<typed>"}` |
 | browser 'A browser binary I name', or Other | `"executablePath": "<typed>"` |
 | browser 'Default for this engine', when it is not first | `"executablePath": ""` (drops `--executable-path`) |
 | API key 'Use `${VAR}`' / 'No key', when it is not first | `"token": true` / `"token": false` |

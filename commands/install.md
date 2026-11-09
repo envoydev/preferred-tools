@@ -85,7 +85,10 @@ project is never offered, so this adds only: nothing installed is changed.
 
 1. A tool whose `tools.<id>.route` is not null: ask that one question first. Record the route, write it into
    `routes` in `picks.json`, and run the command again, because the scope options depend on the route.
-2. Ask `tools.<id>.questions` as one call, as printed. Map the answers into that tool's entry in `<tmp>/answers.json`
+2. A tool whose `tools.<id>.first` is not null (it has a data folder): ask those questions - scope and name - as one
+   call. Record the scope under `scopes` and the name under `names` in `picks.json` (`{"scopes": {<id>: "local"},
+   "names": {<id>: "keep"}}`) and in the tool's answers, and run the command again, because the folder depends on both.
+3. Ask `tools.<id>.questions` as one call, as printed. Map the answers into that tool's entry in `<tmp>/answers.json`
    (`{"picks": {<id>: {...}}}`):
 
 | Answer | Entry |
@@ -94,10 +97,8 @@ project is never offered, so this adds only: nothing installed is changed.
 | scope, the label's first word | `"scope": "local"` / `"project"` / `"user"` |
 | name 'Keep ...' | `"name": "keep"` |
 | name 'Use `x`' or Other | `"name": "x"` |
-| location 'Keep ...' | `{"side": "default"}` |
-| location 'Use alfred-code's `x`' | `{"side": "alfred"}` |
-| location 'Use `x`' | `{"side": "project"}` or `{"side": "account"}`, as its description says |
-| location Other, or 'Another folder' | `{"side": "path", "path": "<typed>"}` |
+| location | `"location":` the entry `tools.<id>.answers` gives for the label picked |
+| location Other, or 'Another ...folder' | `"location": {"side": "path", "path": "<typed>"}` |
 | browser 'A browser binary I name' | `"executablePath": "<typed>"` |
 | API key 'Use `${VAR}`' | `"token": true` (the reference only) |
 | host Other | `"params": {"host": "<typed>"}` |
