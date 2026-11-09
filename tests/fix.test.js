@@ -109,9 +109,12 @@ test('serena-windows-home: slashes keep the folder, a space needs another one, a
     // relative -> the project folder
     [f] = homes(mk('.serena\\home'));
     assert.deepStrictEqual(f.proposal, { SERENA_HOME: 'C:\\proj\\.serena\\home' });
-    // the project scope cannot hold an absolute path
+    // the project scope reads ${USERPROFILE} from the environment fix runs in: unset, it is named; set, the forward slash
+    // still fails serena's rule
     [f] = homes(mk('${USERPROFILE}/.serena', {}, { scope: 'project' }));
-    assert.match(f.blocked, /committed file/);
+    assert.match(f.blocked, /USERPROFILE.*does not set/);
+    [f] = detect(ctxFor({ platform: 'win32', env: { USERPROFILE: 'C:\\Users\\dev' }, registrations: [reg('serena', { command: 'uvx', args: [], env: { SERENA_HOME: '${USERPROFILE}/.serena' } }, { scope: 'project' })] })).found.filter((x) => x.id === 'serena-windows-home');
+    assert.match(f.blocked, /write it under \$\{USERPROFILE\}\\/);
     // not Windows, or no SERENA_HOME at all: nothing
     assert.deepStrictEqual(detect(ctxFor({ platform: 'darwin', registrations: [reg('serena', { command: 'uvx', args: [], env: { SERENA_HOME: 'C:/x' } })] })).found.filter((x) => x.id === 'serena-windows-home'), []);
     assert.deepStrictEqual(detect(ctxFor({ platform: 'win32', registrations: [reg('serena', { command: 'uvx', args: ['--python', '3.13'], env: { SERENA_USAGE_REPORTING: 'false' } })] })).found, []);
@@ -242,8 +245,10 @@ test('appium-sdk-env: ANDROID_HOME and JAVA_HOME are looked up on the machine an
     assert.deepStrictEqual(detect(ctxFor({ machine, registrations: [reg('appium', set, { name: 'appium-mcp' })] })).found, []);
     const partly = { ...appium, env: { ...appium.env, ANDROID_HOME: '/mine' } };
     assert.deepStrictEqual(Object.keys(detect(ctxFor({ home: '/Users/dev', machine, registrations: [reg('appium', partly, { name: 'appium-mcp' })] })).found[0].proposal), ['JAVA_HOME']);
-    // a committed file takes no absolute path
-    assert.match(detect(ctxFor({ machine, registrations: [reg('appium', appium, { name: 'appium-mcp', scope: 'project' })] })).found[0].blocked, /committed file/);
+    // a committed file takes no machine path: the variables come from the environment Claude Code starts with
+    const committed = detect(ctxFor({ machine, registrations: [reg('appium', appium, { name: 'appium-mcp', scope: 'project' })] })).found[0];
+    assert.match(committed.blocked, /environment Claude Code starts with/);
+    assert.doesNotMatch(committed.blocked, /committed file and cannot hold/);
 });
 
 // ---- serena-telemetry -----------------------------------------------------------------------------------------------
@@ -664,4 +669,31 @@ test('token-sync rewrites a live user registration only from the home file - a d
         for (const v of [live, chain, home]) assert.ok(!lines.join('\n').includes(v));
     }
     finally { w.clean(); }
+});
+
+test('serena-windows-home at project scope: ${USERPROFILE}\\.serena passes on a space-free profile, an unset variable blocks', () => {
+    const entry = { ...fresh('serena', 'win32'), env: { SERENA_HOME: '${USERPROFILE}\\.serena' } };
+    const ok = ctxFor({ platform: 'win32', registrations: [reg('serena', entry, { scope: 'project' })], env: { USERPROFILE: 'C:\\Users\\dev' } });
+    assert.deepStrictEqual(ids(detect(ok, 'serena-windows-home').found), []);
+    const unset = ctxFor({ platform: 'win32', registrations: [reg('serena', entry, { scope: 'project' })], env: {} });
+    assert.match(detect(unset, 'serena-windows-home').found[0].blocked, /USERPROFILE/);
+    const fallback = { ...entry, env: { SERENA_HOME: '${NOPE:-C:\\serena}' } };
+    assert.deepStrictEqual(ids(detect(ctxFor({ platform: 'win32', registrations: [reg('serena', fallback, { scope: 'project' })] }), 'serena-windows-home').found), []);
+});
+
+test('appium-sdk-env at project scope: the variables in the environment count; a missing one is blocked, never written', () => {
+    const at = (env) => detect(ctxFor({ registrations: [reg('appium', fresh('appium'), { scope: 'project' })], env }), 'appium-sdk-env').found;
+    assert.deepStrictEqual(at({ ANDROID_HOME: '/sdk', JAVA_HOME: '/jdk' }), []);
+    const [f] = at({ ANDROID_HOME: '/sdk' });
+    assert.match(f.blocked, /JAVA_HOME.*environment Claude Code starts with/);
+    assert.strictEqual(f.proposal, undefined);
+});
+
+test('expandVars: ${NAME} from the environment, ${NAME:-fallback} when unset, null when a bare name is unset', () => {
+    const C = require('../scripts/fixes/common.js');
+    assert.strictEqual(C.expandVars('${A}\\x', { A: 'C:\\a' }), 'C:\\a\\x');
+    assert.strictEqual(C.expandVars('${B:-C:\\b}', {}), 'C:\\b');
+    assert.strictEqual(C.expandVars('${B:-C:\\b}', { B: 'D:\\d' }), 'D:\\d');
+    assert.strictEqual(C.expandVars('${MISSING}\\x', {}), null);
+    assert.strictEqual(C.expandVars('plain', {}), 'plain');
 });

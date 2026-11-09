@@ -22,6 +22,22 @@ const routeOf = (ctx, reg) => rowOf(ctx, reg.rowId).routes[reg.route];
 const launcher = (entry) => path.basename(launchTokens(entry).command).replace(/\.(exe|cmd)$/i, '');
 const launchArgs = (entry) => launchTokens(entry).args;
 
+// A committed value's ${NAME} and ${NAME:-fallback} read against an environment, as Claude Code expands .mcp.json from
+// the one it starts with. -> the expanded text, or null when a ${NAME} with no fallback is unset (`unset` names it).
+function expandVars(text, env)
+{
+    let unset = null;
+    const out = String(text).replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g, (m, name, fallback) =>
+    {
+        if (env[name]) return env[name];
+        if (fallback !== undefined) return fallback;
+        unset = unset || name;
+        return m;
+    });
+    return unset ? null : out;
+}
+const firstUnset = (text, env) => { const m = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/.exec(String(text).replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (x, n) => (env[n] ? '' : x))); return m ? m[1] : null; };
+
 const finding = (fixId, reg, what, extra = {}) => ({ id: fixId, row: reg.rowId, name: reg.name, scope: reg.scope, found: what, ...extra });
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
@@ -81,4 +97,4 @@ function realMachine({ env = process.env, platform = process.platform } = {})
     };
 }
 
-module.exports = { fixOf, rowOf, registrationsOf, routeOf, launcher, launchArgs, finding, clone, compareVersions, pinnedVersion, onPath, realMachine };
+module.exports = { fixOf, rowOf, registrationsOf, routeOf, launcher, launchArgs, finding, clone, compareVersions, pinnedVersion, onPath, realMachine, expandVars, firstUnset };

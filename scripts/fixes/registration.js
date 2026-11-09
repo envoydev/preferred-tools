@@ -11,7 +11,6 @@ const C = require('./common.js');
 const { windowsMcpServers, fromHere } = require('../inventory.js');
 
 const eachReg = (ctx, id, fn) => C.registrationsOf(ctx, id).map((reg) => fn(reg, C.routeOf(ctx, reg))).filter(Boolean);
-const PROJECT_ABS = 'the project scope is a committed file and cannot hold an absolute path - move the registration to local or user scope first (/preferred-tools:configure, Scope)';
 
 // ---- serena-windows-home --------------------------------------------------------------------------------------------
 // SERENA_HOME absolute, in backslashes and space-free. A value that is only wrong in its slashes keeps its folder (so the
@@ -29,9 +28,16 @@ function serenaWindowsHomeDetect(ctx)
     {
         const value = (reg.entry.env || {}).SERENA_HOME;
         if (typeof value !== 'string' || E.validWindowsSerenaHome(value)) return null;
+        // the committed file names the home through the environment (${USERPROFILE}\.serena): read it as a session would
+        if (reg.scope === 'project')
+        {
+            const expanded = C.expandVars(value, ctx.env);
+            if (expanded === null) return C.finding('serena-windows-home', reg, `SERENA_HOME is '${value}'`, { blocked: `SERENA_HOME names \${${C.firstUnset(value, ctx.env)}}, which this environment does not set` });
+            if (E.validWindowsSerenaHome(expanded)) return null;
+            return C.finding('serena-windows-home', reg, `SERENA_HOME is '${value}' (${expanded} on this machine)`, { blocked: 'serena\'s home on Windows must be absolute, in backslashes and space-free: write it under ${USERPROFILE}\\..., or move it to local (/preferred-tools:configure, Scope)' });
+        }
         const faults = [!path.win32.isAbsolute(value) && 'not absolute', value.includes('/') && 'forward slashes', /\s/.test(value) && 'a space'].filter(Boolean);
         const what = `SERENA_HOME is '${value}' (${faults.join(', ')})`;
-        if (reg.scope === 'project') return C.finding('serena-windows-home', reg, what, { blocked: PROJECT_ABS });
         const same = windowsHomeOf(value, ctx);
         if (E.validWindowsSerenaHome(same)) return C.finding('serena-windows-home', reg, what, { proposal: { SERENA_HOME: same }, note: `same folder, written absolute with backslashes: ${same}` });
         const fresh = E.serenaWindowsHome({ home: ctx.home });
@@ -158,10 +164,11 @@ function appiumSdkEnvDetect(ctx)
     return eachReg(ctx, 'appium-sdk-env', (reg) =>
     {
         const env = reg.entry.env || {};
-        const missing = ['ANDROID_HOME', 'JAVA_HOME'].filter((k) => !env[k]);
+        // the committed file holds no machine path: there the server reads them from the environment Claude Code starts with
+        const missing = ['ANDROID_HOME', 'JAVA_HOME'].filter((k) => !env[k] && !(reg.scope === 'project' && ctx.env[k]));
         if (!missing.length) return null;
         const what = `${missing.join(' and ')} not set in the registration`;
-        if (reg.scope === 'project') return C.finding('appium-sdk-env', reg, what, { blocked: PROJECT_ABS });
+        if (reg.scope === 'project') return C.finding('appium-sdk-env', reg, `${missing.join(' and ')} not set`, { blocked: `${missing.join(' and ')} ${missing.length > 1 ? 'are' : 'is'} not set in this shell - set ${missing.length > 1 ? 'them' : 'it'} in the environment Claude Code starts with (the account settings.json "env" reaches every start); the committed .mcp.json holds no machine path` });
         const lookup = { ANDROID_HOME: missing.includes('ANDROID_HOME') ? androidSdk(ctx) : null, JAVA_HOME: missing.includes('JAVA_HOME') ? javaHome(ctx) : null };
         const proposal = Object.fromEntries(Object.entries(lookup).filter(([, v]) => v));
         const notFound = missing.filter((k) => !proposal[k]);
