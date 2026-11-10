@@ -114,6 +114,40 @@ test('a registration whose helper points into a root is not asked about', () => 
     assert.deepStrictEqual(X.items(invOf({ registrations: [helper, data, elsewhere, retired, inherited] }), [], catalog, ctx).map((x) => x.key), ['mcp:serena~user']);
 });
 
+test("a blocked key-to-helper or token-sync finding is a repair waiting on the user: 'manage' recommended, the step named", () => {
+    const i = invOf({ registrations: [regOf('github', 'project', { ...GH, headers: { Authorization: 'Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN}' } }, 'github', 'remote'), regOf('c7', 'local', C7, 'context7', 'remote')] });
+    const found = [
+        { id: 'key-to-helper', name: 'github', scope: 'project', found: 'the Authorization header holds ${GITHUB_PERSONAL_ACCESS_TOKEN}', blocked: "put GITHUB_PERSONAL_ACCESS_TOKEN's value in /work/shop/.preferred-tools/.mcps-secrets, then run /preferred-tools:fix" },
+        { id: 'token-sync', name: 'c7', scope: 'local', found: 'the key differs', blocked: "pick the key's name with /preferred-tools:configure" },
+    ];
+    const q = X.questions(X.items(i, [], catalog, ctx), found);
+    const byKey = (key) => q.calls.flat().find((x) => Object.values(q.answers[x.id])[0].key === key);
+    const gh = byKey('mcp:github~project');
+    assert.deepStrictEqual(gh.options.map((o) => o.label), ['Let preferred-tools manage it (Recommended)', 'Leave it on its own']);
+    assert.strictEqual(gh.options[0].description, "configure, update and fix look after it - key-to-helper can repair it (first: put GITHUB_PERSONAL_ACCESS_TOKEN's value in /work/shop/.preferred-tools/.mcps-secrets, then run /preferred-tools:fix)");
+    assert.strictEqual(gh.options[1].description, 'key-to-helper will not repair it: the Authorization header holds ${GITHUB_PERSONAL_ACCESS_TOKEN}');
+    assert.strictEqual(byKey('mcp:c7~local').options[0].label, 'Let preferred-tools manage it (Recommended)');
+});
+
+test("a helper file of the user's own - no preferred-tools number line, or not this plugin's arguments - is asked about", () => {
+    const w = world();
+    try
+    {
+        const own = path.join(w.dir, 'shop', '.alfred', 'mcp-headers.js');
+        fs.mkdirSync(path.dirname(own), { recursive: true });
+        fs.writeFileSync(own, "#!/usr/bin/env node\nconsole.log(JSON.stringify({ Authorization: 'Bearer ' + process.env.GH }));\n");
+        const real = { home: HOME };
+        const hand = regOf('github', 'local', { ...GH, headersHelper: `node ${own} github` }, 'github', 'remote');
+        assert.deepStrictEqual(X.items(invOf({ registrations: [hand] }), [], catalog, real).map((x) => x.key), ['mcp:github~local'], 'a hand-made file in place');
+        const shape = regOf('github', 'local', { ...GH, headersHelper: 'node /work/shop/.alfred/mcp-headers.js github' }, 'github', 'remote');
+        assert.deepStrictEqual(X.items(invOf({ registrations: [shape] }), [], catalog, ctx).map((x) => x.key), ['mcp:github~local'], "no file, and not this plugin's <NAME> <SCHEME>");
+        fs.writeFileSync(own, require('../scripts/roots.js').helperSource());
+        const ours = regOf('github', 'local', { ...GH, headersHelper: `node ${own} GITHUB_PERSONAL_ACCESS_TOKEN Bearer` }, 'github', 'remote');
+        assert.deepStrictEqual(X.items(invOf({ registrations: [ours] }), [], catalog, real), [], "this plugin's helper in place: not asked");
+    }
+    finally { w.clean(); }
+});
+
 test('the record round-trips, and a second run asks nothing about a server already answered, either way', () => {
     const w = world();
     try

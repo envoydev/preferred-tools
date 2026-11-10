@@ -84,9 +84,8 @@ function absOf(text, ctx)
 // The helper file a `headersHelper` command names, or null.
 function helperPathOf(command)
 {
-    if (typeof command !== 'string') return null;
-    const m = /"([^"]*mcp-headers\.js)"|'([^']*mcp-headers\.js)'|(\S*mcp-headers\.js)\b/.exec(command);
-    return m ? m[1] || m[2] || m[3] : null;
+    const h = E.helperParts(command);
+    return h ? h.path : null;
 }
 
 const managed = (r, family) => r.rowId && !r.alfredRetired && r.choice !== 'own' && SCOPES_OF[family].includes(r.scope);
@@ -231,8 +230,17 @@ function resolve(inv, answers, ctx)
 function pointsIntoRoot(reg, inv, ctx)
 {
     const P = pathFor(ctx.platform);
-    const file = helperPathOf(reg.entry && reg.entry.headersHelper);
-    if (file) return P.dirname(absOf(file, ctx));
+    const command = reg.entry && reg.entry.headersHelper;
+    const file = helperPathOf(command);
+    if (file)
+    {
+        // this plugin's helper: its number line in the file, or - no file yet - this plugin's `<NAME> <SCHEME>`; a helper
+        // of the user's own under the same name is asked about
+        const abs = absOf(file, ctx);
+        const { state, number } = helperState(abs, ctx.exists || ((p) => fs.existsSync(p)));
+        const ours = state === 'absent' ? Boolean(E.helperNameOf(command)) : number !== null;
+        return ours ? P.dirname(abs) : null;
+    }
     const row = reg.rowId ? catalogOf(ctx).byId.get(reg.rowId) : null;
     if (!row || !row.locations || !reg.entry) return null;
     let rootStr;
@@ -339,17 +347,19 @@ function gitIgnores(file)
     return r.status === 0 ? true : r.status === 1 ? false : null;
 }
 
-// R13's check for a root that exists: git would commit its key file, or - a project root other than .alfred - would
-// ignore the helper a project-scope server needs committed. -> null | { reason }; null outside a work tree or with no git.
+// R13's check for a root that exists: git would commit its key file (`secrets`), or - a project root other than .alfred -
+// would ignore the helper a project-scope server needs committed (`helper`; `excluded` when a .gitignore above excludes
+// the root folder itself, which no line inside it can undo). -> null | { reason, secrets?, helper?, excluded? }; null
+// outside a work tree or with no git.
 function ignoreGap(root, family)
 {
     const secrets = path.join(root, FILES.secrets);
     const s = gitIgnores(secrets);
-    if (s === false) return { reason: `git would commit ${secrets}` };
+    if (s === false) return { reason: `git would commit ${secrets}`, secrets: true };
     if (s === null) return null;
     const file = path.join(root, FILES.helper);
     if (family === 'project' && path.basename(root) !== '.alfred' && gitIgnores(file) === true)
-        return { reason: `git ignores ${file}, which a project-scope server needs committed` };
+        return { reason: `git ignores ${file}, which a project-scope server needs committed`, helper: true, excluded: gitIgnores(root) === true };
     return null;
 }
 

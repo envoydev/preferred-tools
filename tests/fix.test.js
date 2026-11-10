@@ -989,6 +989,23 @@ test('helper-missing writes the helper; helper-stale rewrites a lower number, na
     finally { w.clean(); }
 });
 
+test('helper-stale never rewrites a file with no preferred-tools number line: it is blocked and named', () =>
+{
+    const w = world();
+    try
+    {
+        const file = path.join(ptRoot(w), 'mcp-headers.js');
+        seed(w, 'github', 'local', { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headersHelper: `node ${file} ${GK} Bearer` });
+        const mine = "#!/usr/bin/env node\nconsole.log('{}');\n";
+        put(file, mine);
+        const [f] = detect(ctxOf(w)).found.filter((x) => x.id === 'helper-stale');
+        assert.strictEqual(f.blocked, `${file} has no preferred-tools number line - it is not this plugin's helper, and fix never overwrites it: rename yours, or delete it and run /preferred-tools:fix`);
+        fix.applyFixes(ctxOf(w), ['helper-stale'], { log: () => {} });
+        assert.strictEqual(fsx.readFileSync(file, 'utf8'), mine, 'left as it is');
+    }
+    finally { w.clean(); }
+});
+
 test('helper-stale finds nothing for a CRLF copy of the same helper', () =>
 {
     const w = world();
@@ -1030,6 +1047,24 @@ test('root-ignore covers a project or global root inside a git work tree: append
         fsx.appendFileSync(path.join(ptRoot(w), '.gitignore'), '!.mcps-secrets\n');
         const [b] = detect(ctxOf(w)).found.filter((x) => x.id === 'root-ignore');
         assert.match(b.blocked, /re-includes \.mcps-secrets/);
+    }
+    finally { w.clean(); }
+});
+
+test('root-ignore blocks a helper gap no appended line can close - a .gitignore above excludes the root - and names the line to remove', () =>
+{
+    const w = world();
+    try
+    {
+        gitInit(w.project);
+        put(path.join(w.project, '.gitignore'), '.preferred-tools/\n');
+        put(path.join(ptRoot(w), '.gitignore'), rootsLib.GITIGNORE);
+        secretsAt(ptRoot(w), { [GK]: '' });
+        helperAt(ptRoot(w), 1);
+        seed(w, 'github', 'project', { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headersHelper: `node .preferred-tools/mcp-headers.js ${GK} Bearer` });
+        const [f] = detect(ctxOf(w)).found.filter((x) => x.id === 'root-ignore');
+        assert.ok(f, 'found');
+        assert.strictEqual(f.blocked, `a .gitignore above excludes ${ptRoot(w)} - remove that line (git check-ignore -v ${ptRoot(w)} names it): git never re-includes a file inside an excluded folder`);
     }
     finally { w.clean(); }
 });

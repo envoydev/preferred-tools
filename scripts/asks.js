@@ -177,13 +177,15 @@ function packed(items, { id, question, none })
     return chunk(out, 4);
 }
 
-// The install pick: the rows for this OS not installed in this project. A row installed only for every project (user
-// scope, below its recommended scope) or inherited from a parent folder's .mcp.json is offered too: picking it adds this
-// project's own copy beside that one. A row installed here, or at its recommended scope, is configure's.
+// The install pick: the rows for this OS not installed in this project. A server installed only for every project (user
+// scope, even where Global is its recommended scope - a hosted keyed route) or inherited from a parent folder's .mcp.json
+// is offered too: picking it adds this project's own copy beside that one (the user's ruling, docs/build-prompt.md). A
+// server installed here, or a plugin at its recommended scope, is configure's.
 const offeredForInstall = (row, inv) =>
 {
     const at = installedOf(inv, row.id).map((h) => h.scope);
-    return !at.includes('local') && !at.includes('project') && !at.includes(recommendedScope(row, row.recommendedRoute));
+    if (at.includes('local') || at.includes('project')) return false;
+    return row.kind === 'mcp' || !at.includes(recommendedScope(row, row.recommendedRoute));
 };
 
 // `existing`: the answers about servers already set up so far (spec D6). A row whose server was left on its own -

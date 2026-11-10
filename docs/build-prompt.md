@@ -38,8 +38,9 @@ account-wide one, which is never changed or removed; install never renames, move
 already there under its name and scope is reported unchanged), and a rename or move is configure's alone. The copy's
 questions leave out the scope already taken. A row whose data defaults to the account folder (memory) defaults to the
 project folder for a copy, so the copy starts empty and, under the same name, hides the account-wide data in this
-project; 'Keep' at the location question shares it. A row installed in this project, or at its recommended scope (so
-claude-hud at user scope), is configure's.
+project; 'Keep' at the location question shares it. A server installed in this project, or a plugin at its recommended
+scope (so claude-hud at user scope), is configure's; a server at Global scope is offered for a copy even where Global is
+its recommended scope (a hosted keyed route, 0.2.0 D5).
 
 Done means every acceptance criterion in 'Acceptance criteria' holds and its proof is in your report.
 
@@ -258,7 +259,9 @@ with, while the key sat in a file (the user's Windows workspace, 2026-11-10).
 - **D4 - The header helper, `mcp-headers.js`.** `scripts/mcp-headers.js`, Node built-ins only, first line
   `// preferred-tools mcp-headers <n>`, its SHA-256 pinned per number in `tests/lint.js`. `write-helper` copies it into
   the root when absent or lower; a higher number is never overwritten. A hosted keyed registration carries
-  `headersHelper: node <path> <NAME> <SCHEME> [<global root>]` and no `Authorization` header; the helper prints
+  `headersHelper: node <path> <NAME> <SCHEME> [<global root>]` and no `Authorization` header - a path the shell would
+  split is quoted (single quotes on macOS and Linux, double quotes in the committed `.mcp.json`, forward slashes on
+  Windows, which cmd, PowerShell and Git Bash all pass whole); the helper prints
   `{"Authorization":"<SCHEME> <value>"}`, or `{}` and one stderr line naming the variable and the files when it finds
   none. Project and local helpers run only after the folder's trust is accepted, and not in a child folder (measured).
 - **D5 - Routes and scopes.** A hosted keyed route (github; context7 and sentry when a key is picked, sentry's scheme
@@ -267,10 +270,13 @@ with, while the key sat in a file (the user's Windows workspace, 2026-11-10).
   runs keyless there. `${VAR}` stays for machine paths at project scope only.
 - **D6 - Servers already set up.** Before the picks, install asks once about each server here that matches a catalog
   row - a registration ('Leave it on its own' or 'Let preferred-tools manage it', the second recommended when a fix
-  detector would repair it), a server an enabled plugin provides, a claude.ai connector the session has loaded ('Leave
-  it with <owner>' or 'Add preferred-tools' own registration as well'). The answer is recorded in the family root's
-  `preferred-tools.json` (names, scopes, fingerprints and choices only), so it is asked once; 'on its own' is honoured
-  by install, configure ('On their own' group), update and fix ('on its own - not checked').
+  detector would repair it, a `key-to-helper` or `token-sync` that waits on a key the user fills included), a server an
+  enabled plugin provides, a claude.ai connector the session has loaded ('Leave it with <owner>' or 'Add
+  preferred-tools' own registration as well'). A registration whose helper is this plugin's (its number line, or no
+  file yet and `<NAME> <SCHEME>` arguments) is not asked about; a helper of the user's own under the same name is. The
+  answer is recorded in the family root's `preferred-tools.json` (names, scopes, fingerprints and choices only), so it
+  is asked once - install plans the answers even when nothing is picked; 'on its own' is honoured by install,
+  configure ('On their own' group), update and fix ('on its own - not checked').
 - **D7 - Fix, update and configure.** Fix rows `key-to-helper`, `helper-missing`, `helper-stale` and `root-ignore`;
   `token-sync` narrowed to stdio routes; a trust note for a project or local helper. update rewrites a helper copy
   with a lower number. configure changes a root (each managed registration of the family re-added pointing into the
@@ -485,8 +491,8 @@ rows - each `source` line is the alfred-code file to read for the detail:
 | token-sync | a stdio token server at local or global scope lacks the key `.mcps-secrets` has, or holds an older one | write the key in from the root's `.mcps-secrets` (D3's stdio chain); a key held under no name there is blocked: 'pick the key's name with /preferred-tools:configure' | `scripts/keys.js`, D7 |
 | key-to-helper | a hosted server's `Authorization` header holds a `${VAR}` or a key (0.1.x wrote both) | re-add it with `headersHelper` and without the header, once its name is filled in the hosted chain; the root's `.gitignore` and helper are written first | D4, D7 |
 | helper-missing | a registration names a `mcp-headers.js` that is not there (a teammate's clone) - the server connects without its key | write the helper | D4, D7 |
-| helper-stale | the helper copy is older than this plugin's, or was edited by hand | rewrite it; a newer copy is left with a note to update the plugin | D4, D7 |
-| root-ignore | git would commit a root's `.mcps-secrets`, or ignores a project root's `mcp-headers.js` | append the lines the root's `.gitignore` lacks; a gap no appended line closes is blocked and named | D2, D7 |
+| helper-stale | the helper copy is older than this plugin's, or was edited by hand | rewrite it; a newer copy is left with a note to update the plugin, and a file with no number line - not this plugin's - is never overwritten | D4, D7 |
+| root-ignore | git would commit a root's `.mcps-secrets`, or ignores a project root's `mcp-headers.js` | append the lines the root's `.gitignore` lacks; a gap no appended line closes - a `.gitignore` above excluding the root folder - is blocked and named | D2, D7 |
 | typescript-lsp-ts7 | typescript-lsp shows no diagnostics (TypeScript 7 ships no `tsserver.js`) | `npm install -g typescript-language-server typescript@6` | alfred-code `meta/stack-manifest.json`, the typescript-lsp row |
 | windows-mcp-one-per-desktop | windows-desktop shows connected in `/mcp` but its desktop tools stay unavailable: windows-mcp 0.8.8 makes one missed overlay confirmation permanent for the process, and a second windows-mcp on the same desktop is the likely cause | advice only (`advice: true`, `fix: null`): two or more windows-mcp servers starting here are reported, each with how its owner drops it; nothing is changed, and a stuck one recovers in a new session | `docs/sources.md` 'windows-mcp 0.8.8 - the sticky overlay failure' |
 | npx-cache-entry | an npx server fails at every start with `ENOENT` reading `<npm cache>/_npx/<hash>/package.json`: two first installs of one package at once (a session started while `fetch.js` runs) left the folder without it, and npx never repairs it. The cache is the machine's, so a server this folder inherits from a parent's `.mcp.json` is checked too | remove that one folder, then `fetch.js` fills it again (a parent's server read from the parent's file, started here) | measured on npm 10.9.2 and 11.6.1 (`docs/sources.md`) |

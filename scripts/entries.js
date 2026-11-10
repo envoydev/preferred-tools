@@ -314,12 +314,57 @@ function mergeSettings(entry, route, pairs)
 
 // ---- the header helper (spec D4) ------------------------------------------------------------------------------------
 
-// The registration's `headersHelper`: `node <path> <NAME> <SCHEME> [<global root>]`, a path holding a space in double
-// quotes. The command line names the helper and a variable name, never the key file or a value.
-function helperCommand({ helperPath, name, scheme, globalRoot = null })
+// One path in a `headersHelper` command, written so the shell that runs it passes it to node whole (Review Focus 1).
+// `style`: 'posix' - single quotes, a quote inside as '\\'' ; 'win32' - forward slashes, which node takes and cmd,
+// PowerShell and Git Bash all pass as they are, in double quotes when needed; 'portable' - the committed file's relative
+// path, read by any OS's shell, in double quotes when needed. Letters, digits and _ . / : @ + , = - need no quotes.
+const PLAIN_ARG = /^[A-Za-z0-9_./:@+,=-]+$/;
+function shellArg(text, style)
 {
-    const q = (s) => (/\s/.test(s) ? `"${s}"` : s);
-    return ['node', q(helperPath), name, scheme, ...(globalRoot ? [q(globalRoot)] : [])].join(' ');
+    const t = style === 'win32' ? text.replace(/\\/g, '/') : text;
+    if (PLAIN_ARG.test(t)) return t;
+    return style === 'posix' ? `'${t.replace(/'/g, "'\\''")}'` : `"${t}"`;
+}
+
+// The registration's `headersHelper`: `node <path> <NAME> <SCHEME> [<global root>]`, each path quoted for `style` (see
+// shellArg). The command line names the helper and a variable name, never the key file or a value.
+function helperCommand({ helperPath, name, scheme, globalRoot = null, style = 'portable' })
+{
+    return ['node', shellArg(helperPath, style), name, scheme, ...(globalRoot ? [shellArg(globalRoot, style)] : [])].join(' ');
+}
+
+// A `headersHelper` command split as its shell reads it: quoted text kept as it is, '\\'' joined into one argument, and a
+// backslash outside quotes kept unless a quote follows it (a Windows path written by hand). -> [string]
+function helperArgv(command)
+{
+    const out = [];
+    let cur = null;
+    const text = String(command);
+    for (let i = 0; i < text.length; i++)
+    {
+        const c = text[i];
+        if (c === "'" || c === '"')
+        {
+            const end = text.indexOf(c, i + 1);
+            const stop = end < 0 ? text.length : end;
+            cur = (cur || '') + text.slice(i + 1, stop);
+            i = stop;
+        }
+        else if (c === '\\' && (text[i + 1] === "'" || text[i + 1] === '"')) { cur = (cur || '') + text[i + 1]; i++; }
+        else if (/\s/.test(c)) { if (cur !== null) out.push(cur); cur = null; }
+        else cur = (cur || '') + c;
+    }
+    if (cur !== null) out.push(cur);
+    return out;
+}
+
+// The helper file a `headersHelper` command names, and the arguments after it -> { path, args } | null
+function helperParts(command)
+{
+    if (typeof command !== 'string') return null;
+    const argv = helperArgv(command);
+    const at = argv.findIndex((a) => /mcp-headers\.js$/.test(a));
+    return at < 0 ? null : { path: argv[at], args: argv.slice(at + 1) };
 }
 
 // Where a registration at `scope` finds the helper: relative to the project at project scope (it runs in the folder whose
@@ -337,16 +382,16 @@ function helperPathFor(scope, ctx)
 // ~/.preferred-tools and ~/.alfred itself.
 const helperGlobalRoot = (scope, ctx) => (scope === 'local' && ctx.roots && ctx.roots.globalNamed ? ctx.roots.global : null);
 
-// The key name a `headersHelper` passes, or null.
+// The key name a `headersHelper` passes, or null: the helper's arguments as this plugin writes them, `<NAME> <SCHEME>`.
 function helperNameOf(command)
 {
-    const m = typeof command === 'string' ? /mcp-headers\.js["']?\s+([A-Za-z_][A-Za-z0-9_]*)\s/.exec(command) : null;
-    return m ? m[1] : null;
+    const h = helperParts(command);
+    return h && h.args.length >= 2 && /^[A-Za-z_][A-Za-z0-9_]*$/.test(h.args[0]) && /^[A-Za-z][\w-]*$/.test(h.args[1]) ? h.args[0] : null;
 }
 
 // The helper command a hosted keyed route gets at `scope`: the key's name (`keyName`, else the catalog's default) and
 // the route's scheme.
-const helperFor = (route, scope, ctx, keyName = null) => helperCommand({ helperPath: helperPathFor(scope, ctx), name: keyName || route.helper.var, scheme: route.helper.scheme, globalRoot: helperGlobalRoot(scope, ctx) });
+const helperFor = (route, scope, ctx, keyName = null) => helperCommand({ helperPath: helperPathFor(scope, ctx), name: keyName || route.helper.var, scheme: route.helper.scheme, globalRoot: helperGlobalRoot(scope, ctx), style: scope === 'project' ? 'portable' : ctx.platform === 'win32' ? 'win32' : 'posix' });
 
 // A fresh entry from the catalog. `a` = { rootStr, scope, executablePath, token, keyName, params }. A hosted route that
 // sends a key gets `headersHelper` and no `headers`: the key stays in .mcps-secrets (spec D4).
@@ -469,5 +514,5 @@ module.exports = {
     pathFor, slashes, isWindowsArm, pythonRequest, parseRoot, logicalRoot, currentOf, formatRoot, withSub, homeVar, serenaWindowsHome, serenaSpaceFree, validWindowsSerenaHome,
     defaultRoot, alfredRoot, otherSide, otherPlace, rootOfEntry, applyRoot, buildEntry, nameProblem, subst, fetchStep,
     ALFRED_ENTRIES, alfredData, alfredNameProblem, recommendedSide, rootOf, machinePath, expandVars,
-    helperCommand, helperPathFor, helperGlobalRoot, helperNameOf, helperFor, APPIUM_SDK_ENV, settingsOf, mergeSettings,
+    helperCommand, helperPathFor, helperGlobalRoot, helperNameOf, helperFor, helperArgv, helperParts, shellArg, APPIUM_SDK_ENV, settingsOf, mergeSettings,
 };

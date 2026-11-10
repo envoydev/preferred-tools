@@ -77,7 +77,9 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/plan.js" --questions <tmp>/inventory.json <t
 ```
 
 Its `pick` holds only the tools not installed here, without a tool left on its own or with a plugin or claude.ai in
-step 3. When it is empty, say every catalog tool for this OS is installed or looked after elsewhere, point to
+step 3. When step 3 collected answers, every stop in this step goes to step 7 instead, with `<tmp>/answers.json` holding
+only `existing`: the plan records them, so they are never asked again and a server left on its own is skipped by update
+and fix. When it is empty, say every catalog tool for this OS is installed or looked after elsewhere, point to
 `/preferred-tools:configure` to change or remove one, and stop.
 
 If the argument is a tool id from the table: installed, say where (from the table) and point to

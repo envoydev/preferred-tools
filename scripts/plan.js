@@ -257,12 +257,16 @@ function planMcp(row, pick, inv, ctx, catalog, out)
         if (scope === 'project' && w.root.kind === 'project')
         {
             out.notes.push(`${row.id}: a session started in another folder - a child or a subfolder - creates ${rootStr} there; run /preferred-tools:fix once in each such folder where alfred-code's .alfred/.gitignore does not cover it`);
-            // the ensure step's .gitignore holds * and so ignores itself: only alfred-code's .alfred/.gitignore is committed
+            // a root's .gitignore keeps itself and the helper in git (roots.GITIGNORE), so another clone has it once it is
+            // committed; ignoring the root folder instead would hide the helper a committed server runs
             const rel = w.root.rel.replace(/\\/g, '/');
             if (!(rel.startsWith('.alfred/') && ctx.alfredHere))
             {
-                const line = rel.startsWith('.preferred-tools/') ? '.preferred-tools/' : `${rel}/`;
-                out.notes.push(`${row.id}: another clone of this project creates ${rootStr} unignored - its .gitignore holds * and is never committed: add ${line} to the project's .gitignore, or run /preferred-tools:fix there`);
+                const PP = E.pathFor(ctx.platform);
+                const top = ctx.roots && ctx.roots.project ? PP.relative(ctx.project, ctx.roots.project).split(PP.sep).join('/') : null;
+                if (top && !top.startsWith('..') && rel.startsWith(`${top}/`))
+                    out.notes.push(`${row.id}: commit ${top}/.gitignore with the project - another clone then keeps ${rootStr} out of git; never add ${top}/ to the project's .gitignore, which would hide mcp-headers.js`);
+                else out.notes.push(`${row.id}: another clone of this project creates ${rootStr} unignored: add ${rel}/ to the project's .gitignore, or run /preferred-tools:fix there`);
             }
         }
     }
@@ -398,7 +402,7 @@ function useRoots(ctx, scope, { helper, keyFile, keyName, data })
     const inside = (root, p) => { if (!root || !p) return false; const rel = P.relative(root, p); return rel === '' || (!rel.startsWith('..') && !P.isAbsolute(rel)); };
     const familyOf = (p) => ['project', 'global'].find((f) => inside(r[f], p)) || null;
     const family = roots.familyOf(scope);
-    if (helper && r[family]) ctx.uses.push({ family, root: r[family], helper: true });
+    if (helper && r[family]) ctx.uses.push({ family, root: r[family], helper: true, committed: scope === 'project' });
     const kf = familyOf(keyFile);
     if (kf) ctx.uses.push({ family: kf, root: r[kf], key: { file: keyFile, name: keyName } });
     const df = familyOf(data);
@@ -419,6 +423,7 @@ function fileSteps(inv, ctx, out)
             const r = byRoot.get(u.root) || { family, root: u.root, helper: false, keys: new Map() };
             byRoot.set(u.root, r);
             if (u.helper) r.helper = true;
+            if (u.committed) r.committed = true;
             if (u.key) r.keys.set(u.key.file, [...new Set([...(r.keys.get(u.key.file) || []), u.key.name])]);
         }
     const ignore = [];
@@ -431,8 +436,12 @@ function fileSteps(inv, ctx, out)
         const existed = exists(r.root);
         if (!existed && P.basename(r.root) !== '.alfred')
             ignore.push({ op: 'root-ignore', path: r.root, why: `the new root ${r.root}: its .gitignore keeps the key file, the record and the data out of git` });
+        // a key file git would commit gets no name; an ignored helper matters only to a project-scope server, whose
+        // committed .mcp.json names it - the key file beside it is still ignored, so its names are written
         const gap = existed ? roots.ignoreGap(r.root, r.family) : null;
-        if (gap) out.notes.push(`${r.root}: ${gap.reason} - no key file is written there; /preferred-tools:fix (root-ignore) covers it`);
+        if (gap && gap.secrets) out.notes.push(`${r.root}: ${gap.reason} - no key file is written there; /preferred-tools:fix (root-ignore) covers it`);
+        if (gap && gap.helper && r.committed)
+            out.notes.push(`${r.root}: ${gap.reason} - ${gap.excluded ? `a .gitignore above excludes ${r.root}: remove that line (git check-ignore -v ${r.root} names it)` : '/preferred-tools:fix (root-ignore) covers it'}`);
         if (r.helper)
         {
             const { state } = roots.helperState(P.join(r.root, roots.FILES.helper), exists);
@@ -441,7 +450,7 @@ function fileSteps(inv, ctx, out)
             else if (state === 'higher') out.notes.push(`mcp-headers.js in ${r.root} is newer than this plugin - update preferred-tools`);
             else if (state === 'edited') out.notes.push(`mcp-headers.js in ${r.root} changed since preferred-tools wrote it - left as it is; /preferred-tools:fix (helper-stale) rewrites it`);
         }
-        if (!gap)
+        if (!gap || !gap.secrets)
             for (const [file, want] of r.keys)
             {
                 const have = new Set(exists(file) ? keys.namesIn(file) : []);

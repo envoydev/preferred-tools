@@ -698,6 +698,16 @@ test('a copy and a configure change on Windows and Linux: each OS\'s paths, the 
     }
 });
 
+test('a hosted row installed for every project at its recommended Global scope is still offered as this project\'s own copy', () => {
+    const i = inv(MAC, { registrations: [installed('github', { route: 'remote', scope: 'user' }), installed('context7', { route: 'remote', scope: 'user' })] });
+    const offered = asks.pickQuestions(i, catalog).flat().flatMap((q) => q.options.map((o) => o.label));
+    assert.ok(offered.includes('github (installed for every project as github)'), offered.join('\n'));
+    assert.ok(offered.includes('context7 (installed for every project as context7)'), offered.join('\n'));
+    // a plugin at its recommended scope is installed: configure's
+    const hud = inv(MAC, { plugins: [{ id: 'claude-hud@claude-hud', plugin: 'claude-hud', scope: 'user', version: '0.13.1', enabled: true, rowId: 'claude-hud', alfredRetired: false }] });
+    assert.ok(!asks.pickQuestions(hud, catalog).flat().flatMap((q) => q.options.map((o) => o.label)).some((l) => l.startsWith('claude-hud')));
+});
+
 test('install questions for a copy: the taken scope is not offered, and an account-default folder becomes the project one', () => {
     const i = inv(MAC, { registrations: [reg('memory', 'user', { command: 'uvx', args: ['--from', 'mcp-memory-service[sqlite]==12.1.1'] }, 'memory', 'local')], plugins: [{ id: 'claude-hud@claude-hud', scope: 'user', enabled: true, rowId: 'claude-hud', alfredRetired: false }, { id: 'typescript-lsp@claude-plugins-official', scope: 'user', enabled: true, rowId: 'typescript-lsp', alfredRetired: false }] });
     const offered = asks.pickQuestions(i, catalog).flat().flatMap((q) => q.options);
@@ -1237,10 +1247,11 @@ test("a move to project scope carries no machine path in env: appium's SDK homes
     assert.strictEqual(refused.steps.length, 0);
 });
 
-test('project scope in .preferred-tools: the plan says another clone needs the folder git-ignored', () => {
+test('project scope in .preferred-tools: the plan says to commit the root\'s .gitignore, never to ignore the root folder', () => {
     const own = plan(inv(MAC), pickOne('playwright-chrome', { scope: 'project', location: { side: 'project' } }), opts('/Users/me'));
     assert.deepStrictEqual(own.errors, []);
-    assert.ok(own.notes.some((n) => /another clone of this project creates \.preferred-tools\/playwright-chrome unignored - its \.gitignore holds \* and is never committed: add \.preferred-tools\/ to the project's \.gitignore, or run \/preferred-tools:fix there/.test(n)), own.notes.join('\n'));
+    assert.ok(own.notes.includes("playwright-chrome: commit .preferred-tools/.gitignore with the project - another clone then keeps .preferred-tools/playwright-chrome out of git; never add .preferred-tools/ to the project's .gitignore, which would hide mcp-headers.js"), own.notes.join('\n'));
+    assert.ok(!own.notes.some((n) => /(?<!never )add \.preferred-tools\/ to the project's \.gitignore/.test(n)), 'no advice to ignore the root folder');
     // alfred-code's .alfred/.gitignore is committed, so every clone has it
     const alfred = plan(inv(MAC, { alfredCodeEnabled: true }), pickOne('playwright-chrome', { scope: 'project', location: { side: 'alfred-data' } }), opts('/Users/me', { exists: ALFRED }));
     assert.deepStrictEqual(alfred.errors, []);
@@ -1524,12 +1535,13 @@ test('D5: each keyed route at each scope', () => {
 
 test('the helper command per scope', () => {
     const E = require('../scripts/entries.js');
-    assert.strictEqual(E.helperCommand({ helperPath: '.alfred/mcp-headers.js', name: G, scheme: 'Bearer' }), `node .alfred/mcp-headers.js ${G} Bearer`);
-    assert.strictEqual(E.helperCommand({ helperPath: '/work/my shop/.preferred-tools/mcp-headers.js', name: G, scheme: 'Bearer' }), `node "/work/my shop/.preferred-tools/mcp-headers.js" ${G} Bearer`);
-    assert.strictEqual(E.helperCommand({ helperPath: '/w/.preferred-tools/mcp-headers.js', name: G, scheme: 'Bearer', globalRoot: '/my keys' }), `node /w/.preferred-tools/mcp-headers.js ${G} Bearer "/my keys"`);
+    assert.strictEqual(E.helperCommand({ helperPath: '.alfred/mcp-headers.js', name: G, scheme: 'Bearer', style: 'portable' }), `node .alfred/mcp-headers.js ${G} Bearer`);
+    assert.strictEqual(E.helperCommand({ helperPath: 'my keys/mcp-headers.js', name: G, scheme: 'Bearer', style: 'portable' }), `node "my keys/mcp-headers.js" ${G} Bearer`, 'the committed file: double quotes, which every shell reads');
+    assert.strictEqual(E.helperCommand({ helperPath: '/work/my shop/.preferred-tools/mcp-headers.js', name: G, scheme: 'Bearer', style: 'posix' }), `node '/work/my shop/.preferred-tools/mcp-headers.js' ${G} Bearer`);
+    assert.strictEqual(E.helperCommand({ helperPath: '/w/.preferred-tools/mcp-headers.js', name: G, scheme: 'Bearer', globalRoot: '/my keys', style: 'posix' }), `node /w/.preferred-tools/mcp-headers.js ${G} Bearer '/my keys'`);
     const gh = (base, scope, roots, home = '/Users/me') => helperOf(plan(inv(base, { alfredCodeEnabled: true }), { picks: { github: { route: 'remote', scope } }, roots }, opts(home, { exists: ALFRED })), 'github');
     assert.strictEqual(gh(MAC, 'project'), `node .alfred/mcp-headers.js ${G} Bearer`);
-    assert.strictEqual(gh({ ...MAC, project: '/work/my shop' }, 'local', { project: { id: 'preferred-tools' } }), `node "/work/my shop/.preferred-tools/mcp-headers.js" ${G} Bearer`);
+    assert.strictEqual(gh({ ...MAC, project: '/work/my shop' }, 'local', { project: { id: 'preferred-tools' } }), `node '/work/my shop/.preferred-tools/mcp-headers.js' ${G} Bearer`);
     assert.strictEqual(gh(MAC, 'user'), `node /Users/me/.preferred-tools/mcp-headers.js ${G} Bearer`);
     // the third argument: at local scope only, only for a named global root
     const named = { global: { id: 'named', path: '/srv/keys' } };
@@ -1537,9 +1549,35 @@ test('the helper command per scope', () => {
     assert.strictEqual(gh(MAC, 'local'), `node /work/shop/.alfred/mcp-headers.js ${G} Bearer`, 'the standard global root: no third argument');
     assert.strictEqual(gh(MAC, 'project', named), `node .alfred/mcp-headers.js ${G} Bearer`, 'project scope never names it');
     assert.strictEqual(gh(MAC, 'user', named), `node /srv/keys/mcp-headers.js ${G} Bearer`);
-    // Windows: backslashes, quoted for a space (Review Focus 1)
+    // Windows: forward slashes, which cmd, PowerShell and Git Bash all pass whole; quoted for a space (Review Focus 1)
     const win = helperOf(plan(inv({ ...WIN, project: 'C:\\work\\my shop' }), pickOne('github', { route: 'remote', scope: 'local' }), opts('C:\\Users\\me')), 'github');
-    assert.strictEqual(win, `node "C:\\work\\my shop\\.preferred-tools\\mcp-headers.js" ${G} Bearer`);
+    assert.strictEqual(win, `node "C:/work/my shop/.preferred-tools/mcp-headers.js" ${G} Bearer`);
+    assert.strictEqual(helperOf(plan(inv(WIN), pickOne('github', { route: 'remote', scope: 'user' }), opts('C:\\Users\\me')), 'github'), `node C:/Users/me/.preferred-tools/mcp-headers.js ${G} Bearer`);
+});
+
+test('a helper path holding shell characters reaches node whole, and the command reads back to its path and key name', () => {
+    const E = require('../scripts/entries.js');
+    const rootsLib = require('../scripts/roots.js');
+    const { spawnSync } = require('node:child_process');
+    const cases = [
+        ['posix', '/work/R&D/.preferred-tools/mcp-headers.js', `node '/work/R&D/.preferred-tools/mcp-headers.js' ${G} Bearer`],
+        ['posix', "/Users/bob's-app/.preferred-tools/mcp-headers.js", `node '/Users/bob'\\''s-app/.preferred-tools/mcp-headers.js' ${G} Bearer`],
+        ['posix', '/work/a $b (c)/.preferred-tools/mcp-headers.js', `node '/work/a $b (c)/.preferred-tools/mcp-headers.js' ${G} Bearer`],
+        ['win32', 'C:\\Users\\mac\\.preferred-tools\\mcp-headers.js', `node C:/Users/mac/.preferred-tools/mcp-headers.js ${G} Bearer`],
+        ['win32', 'C:\\Users\\Jo Doe\\.preferred-tools\\mcp-headers.js', `node "C:/Users/Jo Doe/.preferred-tools/mcp-headers.js" ${G} Bearer`],
+    ];
+    for (const [style, helperPath, want] of cases)
+    {
+        const cmd = E.helperCommand({ helperPath, name: G, scheme: 'Bearer', style });
+        assert.strictEqual(cmd, want);
+        assert.strictEqual(rootsLib.helperPathOf(cmd), style === 'win32' ? helperPath.replace(/\\/g, '/') : helperPath, `read back: ${cmd}`);
+        assert.strictEqual(E.helperNameOf(cmd), G);
+        if (style === 'posix' && process.platform !== 'win32')
+        {
+            const r = spawnSync('/bin/sh', ['-c', cmd.replace(/^node /, "printf '%s\\n' ")], { encoding: 'utf8' });
+            assert.deepStrictEqual(r.stdout.split('\n').slice(0, 3), [helperPath, G, 'Bearer'], `sh -c ${cmd}`);
+        }
+    }
 });
 
 test('no hosted entry holds Authorization or a ${VAR} for a key, at any scope', () => {
@@ -1741,11 +1779,27 @@ test('an existing root without a .gitignore gets no key file step and the plan n
         let p = at('local');
         assert.ok(!p.steps.some((s) => s.op === 'ensure-key-name' || s.op === 'root-ignore'), JSON.stringify(p.steps.map((s) => s.op)));
         assert.ok(p.notes.includes(`${root}: git would commit ${path.join(root, '.mcps-secrets')} - no key file is written there; /preferred-tools:fix (root-ignore) covers it`), p.notes.join('\n'));
-        // a 0.1.x .gitignore holding *: the helper a committed server needs is ignored
+        // a 0.1.x .gitignore holding *: the key file is ignored, so its name is written; the helper a committed server
+        // needs is ignored too, which matters at project scope only
         fs.writeFileSync(path.join(root, '.gitignore'), '*\n');
+        const keyFile = path.join(root, '.mcps-secrets');
+        const helperGap = `${root}: git ignores ${path.join(root, 'mcp-headers.js')}, which a project-scope server needs committed`;
         p = at('local');
-        assert.ok(!p.steps.some((s) => s.op === 'ensure-key-name'));
-        assert.ok(p.notes.includes(`${root}: git ignores ${path.join(root, 'mcp-headers.js')}, which a project-scope server needs committed - no key file is written there; /preferred-tools:fix (root-ignore) covers it`), p.notes.join('\n'));
+        assert.deepStrictEqual(p.steps.filter((s) => s.op === 'ensure-key-name').map((s) => s.file), [keyFile]);
+        assert.ok(!p.notes.some((n) => n.startsWith(helperGap)), p.notes.join('\n'));
+        p = at('project');
+        assert.deepStrictEqual(p.steps.filter((s) => s.op === 'ensure-key-name').map((s) => s.file), [keyFile]);
+        assert.ok(p.notes.includes(`${helperGap} - /preferred-tools:fix (root-ignore) covers it`), p.notes.join('\n'));
+        // a .gitignore above excludes the root: no appended line can bring the helper back
+        fs.writeFileSync(path.join(root, '.gitignore'), '*\n!.gitignore\n!mcp-headers.js\n');
+        fs.writeFileSync(path.join(w.project, '.gitignore'), '.preferred-tools/\n');
+        p = at('project');
+        assert.deepStrictEqual(p.steps.filter((s) => s.op === 'ensure-key-name').map((s) => s.file), [keyFile]);
+        assert.ok(p.notes.includes(`${helperGap} - a .gitignore above excludes ${root}: remove that line (git check-ignore -v ${root} names it)`), p.notes.join('\n'));
+        const sentry = plan(i, pickOne('sentry', { route: 'local', scope: 'local' }), { home: w.home, env: {} });
+        assert.deepStrictEqual(sentry.steps.filter((s) => s.op === 'ensure-key-name').map((s) => s.file), [keyFile], 'a stdio key at local scope: its name is written');
+        assert.ok(!sentry.notes.some((n) => n.startsWith(helperGap)), sentry.notes.join('\n'));
+        fs.rmSync(path.join(w.project, '.gitignore'));
         // a global root outside any work tree gets its key file step
         p = at('user');
         assert.deepStrictEqual(p.steps.filter((s) => s.op === 'ensure-key-name').map((s) => [s.file, s.names]), [[path.join(w.home, '.preferred-tools', '.mcps-secrets'), [G]]]);

@@ -71,6 +71,14 @@ test("install maps both API key answers: 'No key' is written, since 'Use a key f
     assert.ok(row.includes('"token": true') && row.includes('"token": false'), row);
 });
 
+test("install plans step 3's answers when the walk stops before the plan, so they are recorded and never asked again", () => {
+    const text = fs.readFileSync(path.join(__dirname, '..', 'commands', 'install.md'), 'utf8');
+    const step4 = text.slice(text.indexOf('## 4. Pick'), text.indexOf('## 5. Settings'));
+    assert.match(step4.replace(/\s+/g, ' '), /When step 3 collected answers, every stop in this step goes to step 7 instead, with `<tmp>\/answers\.json` holding only `existing`/);
+    // every stop in step 4 is one the rule covers
+    assert.strictEqual((step4.match(/\bstop\b/g) || []).length, 4, step4);
+});
+
 test('asks.js never requires plan.js: the shared readers (currentOf, logicalRoot) live in entries.js, so there is no require cycle', () => {
     const fs = require('node:fs');
     const src = fs.readFileSync(require.resolve('../scripts/asks.js'), 'utf8');

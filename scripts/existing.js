@@ -131,6 +131,10 @@ function itemOf(inv, key, catalog)
 const ownerOf = (item) => (item.kind === 'plugin' ? item.plugin.split('@')[0] : 'claude.ai');
 const scopeWord = (scope) => (scope === 'user' ? 'global' : scope);
 
+// The key rows whose blocked finding is still a repair: it waits only on the user filling a key or picking its name, the
+// 0.1.x upgrade case D6's O5 was written for.
+const WAITING = new Set(['key-to-helper', 'token-sync']);
+
 // One question per item not answered yet, at most four a call, the recommended option first. A registration that a fix
 // detector would repair (`findings`: fix.detectAll's found, run read-only) recommends 'Let preferred-tools manage it', and
 // 'Leave it on its own' names what would not be repaired. -> { calls, answers: { <id>: { <label>: { key, choice } } } }
@@ -144,9 +148,11 @@ function questions(list, findings = [])
         let opts;
         if (x.kind === 'mcp')
         {
-            const repairs = findings.filter((f) => !f.blocked && f.name === x.name && f.scope === x.scope);
+            const repairs = findings.filter((f) => (!f.blocked || WAITING.has(f.id)) && f.name === x.name && f.scope === x.scope);
+            const ready = [...new Set(repairs.filter((f) => !f.blocked).map((f) => f.id))];
+            const can = [...(ready.length ? [`${ready.join(', ')} can repair it`] : []), ...repairs.filter((f) => f.blocked && !ready.includes(f.id)).map((f) => `${f.id} can repair it (first: ${f.blocked})`)];
             const own = { label: 'Leave it on its own', choice: 'own', description: repairs.length ? repairs.map((f) => `${f.id} will not repair it: ${f.found}`).join('; ') : `nothing in this plugin changes it again, and install stops offering ${x.label} here` };
-            const manage = { label: 'Let preferred-tools manage it', choice: 'manage', description: repairs.length ? `configure, update and fix look after it - ${[...new Set(repairs.map((f) => f.id))].join(', ')} can repair it` : 'configure, update and fix look after it, as for a server this plugin added' };
+            const manage = { label: 'Let preferred-tools manage it', choice: 'manage', description: repairs.length ? `configure, update and fix look after it - ${can.join('; ')}` : 'configure, update and fix look after it, as for a server this plugin added' };
             opts = repairs.length ? [manage, own] : [own, manage];
             question = `${x.name} (${scopeWord(x.scope)}) is already set up here. Who looks after it?`;
         }

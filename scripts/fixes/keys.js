@@ -113,6 +113,7 @@ function helperStaleDetect(ctx)
     {
         const { state, number } = roots.helperState(h.file);
         if (state === 'lower') out.push(helperFinding('helper-stale', h, `mcp-headers.js is helper ${number} - this plugin's is ${HELPER_VERSION}`, { from: number }));
+        else if (state === 'edited' && number === null) out.push(helperFinding('helper-stale', h, 'mcp-headers.js has no preferred-tools number line', { blocked: `${h.file} has no preferred-tools number line - it is not this plugin's helper, and fix never overwrites it: rename yours, or delete it and run /preferred-tools:fix` }));
         else if (state === 'edited') out.push(helperFinding('helper-stale', h, "mcp-headers.js changed since preferred-tools wrote it - the fix puts this plugin's copy back"));
         else if (state === 'higher') out.push(helperFinding('helper-stale', h, `mcp-headers.js is helper ${number} - newer than this plugin's ${HELPER_VERSION}`, { blocked: `mcp-headers.js in ${h.root} is newer than this plugin - update preferred-tools` }));
     }
@@ -148,6 +149,7 @@ function rootIgnoreDetect(ctx)
         const found = [secretsGap && `git would commit ${secrets}`, helperGap && `git ignores ${helper}, which a project-scope server needs committed`].filter(Boolean).join('; ');
         const base = { id: 'root-ignore', row: null, name: root, scope: family, found, path: root, family };
         if (path.basename(root) === '.alfred') { out.push({ ...base, blocked: `${root} is alfred-code's - add ${roots.FILES.secrets} to its .gitignore yourself` }); continue; }
+        if (gap.excluded) { out.push({ ...base, blocked: `a .gitignore above excludes ${root} - remove that line (git check-ignore -v ${root} names it): git never re-includes a file inside an excluded folder` }); continue; }
         const lines = rootIgnoreLines(root);
         const fixes = { secrets: secretsGap && lines.lack.includes(lines.mine ? '*' : roots.FILES.secrets), helper: helperGap && lines.mine && lines.lack.includes(`!${roots.FILES.helper}`) };
         const left = [
