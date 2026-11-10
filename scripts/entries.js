@@ -118,7 +118,8 @@ function alfredData(ctx, enabled)
 // Why .alfred/<name> cannot hold this tool's data, or null.
 function alfredNameProblem(name, ctx)
 {
-    if (ALFRED_ENTRIES.includes(name)) return `'${name}' is one of alfred-code's own entries under .alfred (${ALFRED_ENTRIES.join(', ')}) - pick another name or folder`;
+    // macOS and Windows file systems ignore case: '.alfred/Docs' is alfred-code's docs folder there
+    if (ALFRED_ENTRIES.includes(String(name).toLowerCase())) return `'${name}' is one of alfred-code's own entries under .alfred (${ALFRED_ENTRIES.join(', ')}) - pick another name or folder`;
     const at = pathFor(ctx.platform).join(ctx.project, '.alfred', name);
     const exists = ctx.exists || ((p) => fs.existsSync(p));
     if (!exists(at)) return null;

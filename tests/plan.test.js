@@ -1159,3 +1159,14 @@ test('project scope with a relative folder: the plan notes the other folders Cla
     assert.doesNotMatch(render(plan(inv(MAC), pickOne('playwright-chrome', { scope: 'project' }), opts('/Users/me', { catalog: withoutRelative('playwright-chrome') }))), /a session started in another folder/);
     assert.doesNotMatch(render(plan(inv(MAC), pickOne('playwright-chrome'), opts('/Users/me', { catalog: withRelative('playwright-chrome') }))), /a session started in another folder/);
 });
+
+// ---- final review fixes ---------------------------------------------------------------------------------------------
+test("the alfred-code name guard ignores case: 'Docs' or 'STATE' is alfred-code's own folder on macOS and Windows", () => {
+    const E = require('../scripts/entries.js');
+    const ctx = { project: '/work/shop', platform: 'darwin', exists: () => false };
+    assert.match(E.alfredNameProblem('Docs', ctx) || '', /one of alfred-code's own entries under \.alfred/);
+    assert.match(E.alfredNameProblem('STATE', ctx) || '', /one of alfred-code's own entries under \.alfred/);
+    assert.strictEqual(E.alfredNameProblem('docs-browser', ctx), null);
+    const p = plan(inv(MAC, { alfredCodeEnabled: true }), pickOne('playwright-chrome', { scope: 'local', name: 'Docs', location: { side: 'alfred-data' } }), opts('/Users/me', { exists: ALFRED }));
+    assert.match(p.errors.join(' '), /'Docs' is one of alfred-code's own entries/);
+});
