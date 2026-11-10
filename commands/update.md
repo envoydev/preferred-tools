@@ -4,8 +4,8 @@ disable-model-invocation: true
 allowed-tools: Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/update.js" --check), Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/update.js" --check *), Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/update.js" --questions), Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/update.js" --questions *)
 ---
 
-Bring what is installed up to date: every plugin on this machine (catalog or not), the pinned MCP servers, and the
-language servers on PATH. The script finds what is behind and does the work; you paste what it prints and ask.
+Bring what is installed up to date: every plugin on this machine (catalog or not), the pinned MCP servers, the
+language servers on PATH, and the key helper (`mcp-headers.js`) in each root folder. The script finds what is behind and does the work; you paste what it prints and ask.
 
 ## Rules
 
@@ -14,7 +14,8 @@ language servers on PATH. The script finds what is behind and does the work; you
 - **The `claude` CLI is the only writer** of `.mcp.json` and the account file; the script calls it. Never edit those files.
 - **A pin moves only to a release at least 7 days old.** A newer, younger release is listed as held back, never offered.
   The rewrite keeps the registration's name, scope, args and env; only the pin and the cut-off beside it move.
-- **A registration that matches no catalog row is the user's.** The script never looks at it.
+- **A registration that matches no catalog row is the user's.** The script never looks at it. A server left on its own
+  at install is listed as 'on its own - not checked' and never offered.
 - **Every ask is data.** Ask exactly the options printed, in the order printed; `AskUserQuestion` adds 'Other' itself.
 - This command never changes `catalog/tools.json`. Its pins move only through the repo script `npm run refresh-pins`.
 - A rename, a move or a route change is not an update; that is `/preferred-tools:configure`.
@@ -22,14 +23,15 @@ language servers on PATH. The script finds what is behind and does the work; you
 ## 1. What is behind
 
 ```
-node "${CLAUDE_PLUGIN_ROOT}/scripts/update.js" --check
+node "${CLAUDE_PLUGIN_ROOT}/scripts/update.js" --check --data "${CLAUDE_PLUGIN_DATA}"
 ```
 
 Paste the output verbatim in a fenced block. It refreshes each marketplace the installed plugins come from
 (`claude plugin marketplace update <name>`), then lists, in tables: catalog plugins, other plugins, MCP servers as
-`current -> offered` with the release's age, and language servers. Below them: plugins whose marketplace lists no version
+`current -> offered` with the release's age, language servers, and key helpers (`mcp-headers.js` copies older than
+this plugin's, as `helper N -> M`). Below them: plugins whose marketplace lists no version
 (`claude plugin update` is the check for those, so each is offered on its own), releases held back, what was skipped (a hosted URL has no
-pin; a Docker image tag is not checked), what could not be checked, and the language servers on PATH.
+pin; a Docker image tag is not checked; a server on its own), what could not be checked, and the language servers on PATH.
 
 Exit 3 with one line means the `claude` CLI is missing: say so and stop. When the last line is
 `preferred-tools: everything current`, say that and stop. A line under 'Could not check' is a registry that did not
@@ -38,7 +40,7 @@ answer; it is never read as current - say so.
 ## 2. Which
 
 ```
-node "${CLAUDE_PLUGIN_ROOT}/scripts/update.js" --questions --no-refresh
+node "${CLAUDE_PLUGIN_ROOT}/scripts/update.js" --questions --no-refresh --data "${CLAUDE_PLUGIN_DATA}"
 ```
 
 It prints `{ "offer": <ask>, "pick": [<calls>] }`. Ask the `offer` as printed:
@@ -60,13 +62,14 @@ State what will change - each `current -> offered` - and, for an MCP server, tha
 again, so the server is briefly unregistered. Then run, with the ids picked (comma-separated), or `all` for 'All of them':
 
 ```
-node "${CLAUDE_PLUGIN_ROOT}/scripts/update.js" --apply <id,id | all>
+node "${CLAUDE_PLUGIN_ROOT}/scripts/update.js" --apply <id,id | all> --data "${CLAUDE_PLUGIN_DATA}"
 ```
 
 Run it with the Bash tool's `timeout: 600000` (10 minutes, the most it allows by default): a plugin update clones its marketplace and
 a language server installs through npm, and the new MCP pins are downloaded after it, not inside it. `all` is every
 offer with a known newer version; an unchecked plugin runs only when its own id is given. Each update is read back: a
-plugin from the plugin list, an MCP pin from the file the CLI wrote, a language server from `--version`. A failed MCP
+plugin from the plugin list, an MCP pin from the file the CLI wrote, a language server from `--version`, a key helper
+from its first line and digest. A failed MCP
 rewrite puts the old registration back and prints the line that does it by hand if that fails too (`RESTORE BY HAND`):
 give it to the user as written.
 A key in it shows as `${PREFERRED_TOOLS_KEPT}`, never its value: the user puts their key back there. Paste the output verbatim, then report each result as read back.
@@ -85,8 +88,12 @@ permission for it - it downloads and runs a package's install and starts the ser
 it reports, so a session start does not download the same package beside it (an npx server then fails at every start
 with `ENOENT` until `/preferred-tools:fix` repairs it); paste its output when it finishes. A
 `warn` line changes nothing: the registration is updated, and its first start downloads the pin and may time out once. When background runs
-are turned off, run it in the foreground with `timeout: 600000`, and again if the limit stops it. End with the restart line (new
-servers load on the next session start; `/reload-plugins` for plugins).
+are turned off, run it in the foreground with `timeout: 600000`, and again if the limit stops it. End with the restart line when the script prints one (new
+servers load on the next session start; `/reload-plugins` for plugins): a key helper runs at each connect, so a run
+that only rewrote helpers needs no restart.
+
+A key helper that was edited by hand, or is newer than this plugin, is never rewritten here: the check names it, and
+`/preferred-tools:fix` (`helper-stale`) handles it.
 
 After claude-hud moves, the script re-runs its settings check and names any recommended key the new version's
 `dist/config.js` no longer mentions. It removes nothing from the user's config; pass the names on.

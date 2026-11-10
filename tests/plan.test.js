@@ -1369,7 +1369,8 @@ test('plan.js --questions takes --data after its files and refuses an unknown fl
 });
 
 // ---- 0.2.0: data folders in the root (spec D2) ----------------------------------------------------------------------
-const OTHER_RE = /\b(?:in|into|via|through|using) (?:the )?['‘’]?Other\b|\btype (?:it|them|\w+) (?:in|into)\b[^.]{0,20}\bOther\b/;
+// alfred-code 3.9.2's pattern, cited where it lives
+const { OTHER_RE } = require('./ask-texts.js');
 const ALFRED_ROOT = { project: { id: 'alfred' } };
 const callsOf = (x) => (Array.isArray(x) ? x : (x && x.calls) || []).flat();
 

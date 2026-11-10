@@ -12,8 +12,8 @@ const asks = require('../scripts/asks.js');
 const catalogLib = require('../scripts/catalog.js');
 
 const catalog = catalogLib.load();
-// alfred-code 3.9.2 stack/hooks/guard-stop-contract.js: an ask that sends the user to the Other field
-const OTHER_RE = /\b(?:in|into|via|through|using) (?:the )?['‘’]?Other\b|\btype (?:it|them|\w+) (?:in|into)\b[^.]{0,20}\bOther\b/;
+// alfred-code 3.9.2's pattern, cited where it lives
+const { OTHER_RE } = require('./ask-texts.js');
 const inv = (extra = {}) => ({ version: 1, project: '/work/shop', os: 'darwin', arch: 'arm64', cli: { ok: true }, unreadable: [], registrations: [], plugins: [], marketplaces: [], alfredCodeEnabled: false, sources: {}, ...extra });
 const ctxOf = (present = [], extra = {}) => ({ project: '/work/shop', home: '/Users/me', platform: 'darwin', catalog, exists: (p) => present.includes(p), ...extra });
 const ids = (list) => list.map((o) => o.id);

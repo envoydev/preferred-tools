@@ -1,5 +1,5 @@
 ---
-description: "Change or remove installed preferred tools - an MCP server's route, scope, name or data folder, a plugin's scope, claude-hud's settings - one confirmed plan"
+description: "Change or remove installed preferred tools - an MCP server's route, scope, name, data folder, key name or settings, a root folder, a plugin's scope, claude-hud's settings - one confirmed plan"
 argument-hint: "[registration name | tool id | hud]"
 disable-model-invocation: true
 allowed-tools: Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/tmpdir.js"), Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/inventory.js" *), Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/table.js" *), Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/plan.js" *), Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/prereq.js" *), Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/hud-statusline.js" --check *)
@@ -20,25 +20,31 @@ updated pin is never downgraded. Adding a tool that is not installed is `/prefer
 - **A registration that matches no catalog row is the user's.** It is listed, never offered, never touched.
 - **A server inherited from a parent folder's `.mcp.json` is that folder's.** It is noted under the table, never
   offered; to change it, run `/preferred-tools:configure` in that folder.
-- **A key comes from its key file, never from the chat.** At `project` scope a token route registers `${VAR}` (the
-  committed `.mcp.json`); at `local` and `user` scope the apply writes the key into the registration from the key file
-  the plan names - alfred-code's store when alfred-code is set up in this project, else `.preferred-tools/.secrets`,
-  then `~/.preferred-tools/.secrets` (for `user`, the home file first). Never ask for a key, and never read, print or
-  edit a key file: name it, and the user fills it by hand.
+- **Scopes are Global, Project and Local.** Global is `user` scope - every project on this machine.
+- **Keys live in `.mcps-secrets` in the root folder**, one per root (the project root for Project and Local, the global
+  root for Global), and the user fills each value by hand. The apply writes names only, as empty `NAME=` lines. A hosted
+  route reads its key through `mcp-headers.js` each time Claude Code connects; a local route's key is written into the
+  registration at Local and Global scope. Never ask for a key, and never read, print or edit a value: name the file and
+  the name.
 - **Every ask is data or one of the blocks below.** Ask exactly the options printed, in the order printed; do not add or
   reword one. `AskUserQuestion` adds 'Other' itself.
+- **A typed value is asked next, in one plain line that ends your turn.** When the option picked says 'asked next' (a
+  folder you name, a name you choose, a setting, a browser binary, a host), ask for that one value in a single line of
+  text - no `AskUserQuestion` - and end the turn; the user's next message is the value. A value the user typed as the
+  Other answer to that question is taken the same way.
 - Every file below lives in one temp folder. Make it once with `node "${CLAUDE_PLUGIN_ROOT}/scripts/tmpdir.js"` and call
   its path `<tmp>`.
 
 ## 1. Inventory
 
 ```
-node "${CLAUDE_PLUGIN_ROOT}/scripts/inventory.js" --json <tmp>/inventory.json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/inventory.js" --json <tmp>/inventory.json --data "${CLAUDE_PLUGIN_DATA}"
 ```
 
-It reads `.mcp.json`, the account file (user servers and this project's local ones) and `claude plugin list --json`, and
-starts no server. Exit 3 with one line means the `claude` CLI is missing: say so and stop. A file named as not valid
-JSON is unreadable: its scope gets no write, and you offer nothing that writes there.
+It reads `.mcp.json`, the account file (user servers and this project's local ones), `claude plugin list --json`, the
+servers enabled plugins provide, and the records of earlier answers, and starts no server. Exit 3 with one line means
+the `claude` CLI is missing: say so and stop. A file named as not valid JSON is unreadable: its scope gets no write, and
+you offer nothing that writes there.
 
 ## 2. The table
 
@@ -52,12 +58,13 @@ each scope as `name [route, pin]`.
 ## 3. What to change
 
 ```
-node "${CLAUDE_PLUGIN_ROOT}/scripts/plan.js" --questions <tmp>/inventory.json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/plan.js" --questions <tmp>/inventory.json --data "${CLAUDE_PLUGIN_DATA}"
 ```
 
-Its `change.keys` maps each installed registration and plugin to its key: `mcp:<name>~<scope>` or
-`plugin:<id>~<scope>`. When it is empty, say nothing from the catalog is installed here, point to
-`/preferred-tools:install`, and stop.
+Its `change.keys` maps each option to its key: an installed registration or plugin (`mcp:<name>~<scope>`,
+`plugin:<id>~<scope>`), a server left on its own (`mcp:...`, `plugin-mcp:<plugin>/<server>`, `connector:<Name>`), and a
+root folder in use (`root:project`, `root:global`). When it is empty, say nothing from the catalog is installed here,
+point to `/preferred-tools:install`, and stop.
 
 The argument, when given:
 
@@ -70,7 +77,7 @@ Otherwise ask, leaving out 'claude-hud settings' when the table shows claude-hud
 
 ```ask menu
 What do you want to change?
-- 'Change tools (Recommended)' - pick installed tools, then route, scope, name and location
+- 'Change tools (Recommended)' - pick installed tools, servers on their own or a root folder, then what to change
 - 'Remove tools' - choose the registrations and plugins to remove
 - 'claude-hud settings' - the status line and its recommended settings - only shown when claude-hud is installed
 - 'Done' - nothing changes
@@ -81,44 +88,70 @@ What do you want to change?
 ## 4. Pick
 
 Ask each `change.calls` call as printed - one `AskUserQuestion` of up to four multi-select questions, one option per
-registration or plugin (a tool at two scopes is two options; your own servers are not there). Turn each picked label into
-its key through `change.keys`. 'None of these', or nothing picked: say so and stop.
+registration or plugin (a tool at two scopes is two options; your own servers are not there), then the 'On their own'
+group (servers left on their own, with a plugin or with claude.ai) and the 'Root folders' group. Turn each picked label
+into its key through `change.keys`. 'None of these', or nothing picked: say so and stop.
 
 ## 5. Each pick
 
-Write `{"targets": [<picked keys>], "routes": {}}` to `<tmp>/picks.json` and run
-`plan.js --questions <tmp>/inventory.json <tmp>/picks.json`. Its `targets.<key>` holds the tool's `row`, what it has
-now (`current`: name, scope, route) and the questions, each with what it has now first and recommended. For each key in
-order:
+Write `{"targets": [<picked keys>], "routes": {}}` to `<tmp>/picks.json` and run:
 
-1. A target whose `route` is not null: ask that one question first. Record the answer under `routes.<key>` in
-   `picks.json` and run the command again, because the scope options depend on the route.
-2. A target whose `targets.<key>.first` is not null (it has a data folder): ask those questions - scope and name - as
-   one call. Record the scope under `scopes.<key>` and the name under `names.<key>` in `picks.json` ('Keep ...' is
-   `"keep"`) and in the answers below, and run the command again, because the folder depends on both.
-3. Ask `targets.<key>.questions` as one call, as printed. When it is empty, make no call. When `targets.<key>.only` is
-   set, one folder is left at the new scope and no location is asked: write it as the target's `"location"`, since the
-   folder it uses now cannot stay there. Write the answers into `<tmp>/answers.json` as
-   `{"change": {<key>: {"row": <targets.<key>.row>, ...}}}`, mapped as below, and leave out every answer that keeps what
-   the tool has now - the plan reads a missing key as 'keep':
+```
+node "${CLAUDE_PLUGIN_ROOT}/scripts/plan.js" --questions <tmp>/inventory.json <tmp>/picks.json --data "${CLAUDE_PLUGIN_DATA}"
+```
+
+Its `targets.<key>` holds the tool's `row`, what it has now (`current`: name, scope, route) and the questions, each with
+what it has now first and recommended. A target with an `error` is not changed: say why. For each key in order:
+
+- **On its own** (`kind: "own"`): ask `targets.<key>.own.question`. Its answer is `own.answers.<label>`, a
+  `{key, choice}`: write `"existing": {<key>: <choice>}` into `<tmp>/answers.json`. 'Let preferred-tools manage it'
+  hands it to configure, update and fix from now on; for a plugin's server or a connector, the other option lets
+  install offer preferred-tools' own beside it.
+- **A root folder** (`kind: "root"`): ask `targets.<key>.root.question`, the root in use first. Its answer is
+  `root.answers.<label>`, a `{family, id, root}`; 'A folder you name' is asked next. A root other than the one in use
+  writes `"roots": {<family>: {"id": <id>}}` (or `{"id": "named", "path": "<typed>"}`) and `"rootChange": [<family>]`
+  into `answers.json`. The plan re-adds each registration of that family with its helper, and its data folder when it
+  sits in the old root, pointing into the new root; it moves no data and no key value, and names both.
+- **A registration or plugin**:
+  1. A target whose `route` is not null: ask that one question first. Record the answer under `routes.<key>` in
+     `picks.json` and run the command again, because the scope options depend on the route.
+  2. A target whose `targets.<key>.first` is not null (it has a data folder): ask those questions - scope and name - as
+     one call. Record the scope under `scopes.<key>` and the name under `names.<key>` in `picks.json` ('Keep ...' is
+     `"keep"`) and in the answers below, and run the command again, because the folder depends on both.
+  3. Ask `targets.<key>.questions` as one call, as printed. When it is empty, make no call. When `targets.<key>.only`
+     is set, one folder is left at the new scope and no location is asked: write it as the target's `"location"`, since
+     the folder it uses now cannot stay there.
+  4. Ask `keyNames.<key>.question` and `settings.<key>.question` as one call (either may be absent; leave out the key
+     name when the API key answer is now 'No key - lower rate limits' or 'Sign in with OAuth'). The name it uses now is
+     first. Another name is `keyNames.<key>.answers.<label>` - 'A name you choose' is asked next - and goes to
+     `"keyNames": {<key>: "<NAME>"}` at the top of `answers.json`. 'Change or add a setting' asks next for `NAME=value`
+     pairs, written to `"settings": {<key>: {"<NAME>": "<value>"}}`; 'Keep these settings' writes nothing.
+
+  Write the answers into `<tmp>/answers.json` as `{"change": {<key>: {"row": <targets.<key>.row>, ...}}}`, mapped as
+  below, and leave out every answer that keeps what the tool has now - the plan reads a missing key as 'keep':
 
 | Answer | Entry |
 |---|---|
 | route 'Hosted' / 'Local', when it is not `current.route` | `"route": "remote"` / `"local"` |
-| scope, the label's first word, when it is not `current.scope` | `"scope": "local"` / `"project"` / `"user"` |
+| scope 'Global' / 'Project' / 'Local', when it is not `current.scope` | `"scope": "user"` / `"project"` / `"local"` |
 | name 'Keep ...' | nothing |
-| name 'Use `x`' or Other | `"name": "x"` |
+| name 'Use `x`', or a name typed | `"name": "x"` |
 | location 'The folder it uses now' | nothing |
 | location, another label | `"location":` the entry `targets.<key>.answers` gives for the label picked |
-| location Other, or 'Another ...folder' | `"location": {"side": "path", "path": "<typed>"}` |
-| browser 'A browser binary I name', or Other | `"executablePath": "<typed>"` |
+| location 'Another ...folder', asked next | `"location": {"side": "path", "path": "<typed>"}` |
+| browser 'A browser binary I name', asked next | `"executablePath": "<typed>"` |
 | browser 'Default for this engine', when it is not first | `"executablePath": ""` (drops `--executable-path`) |
-| API key 'Use `${VAR}`' / 'No key', when it is not first | `"token": true` / `"token": false` |
-| host Other, or the hosted host when it is not first | `"params": {"host": "<that host>"}` |
+| API key 'Use a key from .mcps-secrets' / 'No key - lower rate limits' or 'Sign in with OAuth', when it is not first | `"token": true` / `"token": false` |
+| host 'A self-managed host' asked next, or the hosted host when it is not first | `"params": {"host": "<that host>"}` |
+| key name, when it is not first | top-level `"keyNames": {<key>: "<NAME>"}` |
+| settings, pairs asked next | top-level `"settings": {<key>: {"<NAME>": "<value>"}}` |
+
+A name must match `^[A-Za-z_][A-Za-z0-9_]*$`, and a setting whose name looks like a credential is refused by the plan - a
+key goes in `.mcps-secrets` and is picked as the key's name, never typed here.
 
 A scope change on an MCP server is a move too: the registration picked leaves its old scope, so a copy for every project
-moved to `local` is gone from the other projects. To keep it there and add this project's own copy, use
-`/preferred-tools:install` instead; say so when the user picks another scope for a user-scope registration.
+moved to Local is gone from the other projects. To keep it there and add this project's own copy, use
+`/preferred-tools:install` instead; say so when the user picks another scope for a Global registration.
 
 A plugin has one question, its scope; another scope is a move - the plan installs it there and uninstalls the copy you
 picked once the new one reads back. When claude-hud is picked, run 'claude-hud' now and set `"hud"` in the answers from
@@ -151,16 +184,18 @@ it, and say in the confirmation that it will not start yet.
 ## 7. Plan, then one confirmation
 
 ```
-node "${CLAUDE_PLUGIN_ROOT}/scripts/plan.js" <tmp>/inventory.json <tmp>/answers.json --out <tmp>/plan.json
+node "${CLAUDE_PLUGIN_ROOT}/scripts/plan.js" <tmp>/inventory.json <tmp>/answers.json --out <tmp>/plan.json --data "${CLAUDE_PLUGIN_DATA}"
 ```
 
-Paste the output verbatim in a fenced block: every CLI call, every file it writes, the key file each token route reads
-(at project scope, the variable to set), the sign-in a remote route will ask for, and the tools that can run code. A
-move to project scope writes `${VAR}` into `.mcp.json` in place of the key; one whose entry holds a credential anywhere
-else - a header of its own, a userinfo URL - is a plan error naming the field, never written. A rename or a scope
-move adds the new registration first, reads it back, then removes the old one; a route or location change rewrites it in
-place and keeps the old entry to put back if the add fails. Exit 1 means the plan has errors; show them and go back to
-the ask that causes them, never around them. Then:
+Paste the output verbatim in a fenced block: every CLI call, every file it writes (a root's `.gitignore`,
+`mcp-headers.js`, the key names in `.mcps-secrets`, the record), the `Key:` line of each route that uses a key (never a
+value), the sign-in a remote route will ask for, and the tools that can run code. A move to Project scope takes no key
+in `.mcp.json`; one whose entry holds a credential anywhere else - a header of its own, a userinfo URL - is a plan error
+naming the field, never written. A rename or a scope move adds the new registration first, reads it back, then removes
+the old one; a route, location, key name, settings or root change rewrites it in place and keeps the old entry to put
+back if the add fails. A root change notes that the user copies the values from the old `.mcps-secrets` to the new one
+themselves - say it again after the apply. Exit 1 means the plan has errors; show them and go back to the ask that
+causes them, never around them. Then:
 
 ```ask apply
 Apply this plan?
@@ -174,19 +209,20 @@ A plan that says 'Nothing to do' means every answer kept what is installed; show
 ## 8. Apply
 
 ```
-node "${CLAUDE_PLUGIN_ROOT}/scripts/apply.js" <tmp>/plan.json --tmp <tmp>
+node "${CLAUDE_PLUGIN_ROOT}/scripts/apply.js" <tmp>/plan.json --tmp <tmp> --data "${CLAUDE_PLUGIN_DATA}"
 ```
 
 Run it with the Bash tool's `timeout: 600000` (10 minutes, the most it allows by default); every download is left to the
-fetch below, so the apply ends well inside the limit and its report comes back in this turn. Claude Code asks permission for this call itself - `apply.js` is deliberately not
-in `allowed-tools` - so a skipped ask still cannot change anything. It runs the calls in order, reads each back from the
-file the CLI wrote, and stops at the first failure, leaving what was applied in place and naming it. Paste the output
-verbatim. A failure prints the line that puts a registration back (`RESTORE BY HAND`): give it to the user as written.
-A key in it shows as `${PREFERRED_TOOLS_KEPT}`, never its value: the user puts their key back there.
+fetch below, so the apply ends well inside the limit and its report comes back in this turn. Claude Code asks permission
+for this call itself - `apply.js` is deliberately not in `allowed-tools` - so a skipped ask still cannot change
+anything. It runs the steps in order - the root's files, the CLI calls with their read-back, then the records - and
+stops at the first failure, leaving what was applied in place and naming it. Paste the output verbatim. A failure prints
+the line that puts a registration back (`RESTORE BY HAND`): give it to the user as written. A key in it shows as
+`${PREFERRED_TOOLS_KEPT}`, never its value: the user puts their key back there.
 
-Then report each changed tool as the read-back printed it (name, scope, route). A moved data folder moves no data: the
-plan named the old folder, so name it again. Keys: relay each `key:` line as printed (the key and its file, never a
-value); for a key in none of its files, name the file to fill, and say `/preferred-tools:fix` writes it in once it is
+Then report each changed tool as the read-back printed it (name, scope, route). A moved data folder or root moves no
+data: the plan named the old folder, so name it again. Keys: relay each `key:` line as printed (the name and its file,
+never a value); for a name not filled yet, name the file to fill and what the plan's `Key:` line says happens once it is
 there.
 
 **Fetch.** A change that launches a different package - a hosted route made local, say - prints `Fetch next, in the
@@ -196,7 +232,7 @@ background (...): <file>`. Run, with the Bash tool's `run_in_background`:
 node "${CLAUDE_PLUGIN_ROOT}/scripts/fetch.js" "<file>"
 ```
 
-It is `/preferred-tools:install` step 8, word for word: one server at a time, it fills the runtime's cache and starts the
+It is `/preferred-tools:install` step 9, word for word: one server at a time, it fills the runtime's cache and starts the
 server once with no 30-second limit, so its first-run work (memory's model download) is done before the next session,
 then prints each changed server's status (`claude mcp get`); Claude Code asks permission for it. Tell the user to
 restart only once it reports, paste its output when it finishes, and say a `warn` line changes nothing. An npx server
@@ -218,8 +254,8 @@ Remove what?
 is two options). Each option's description is the exact command, from which you read the target:
 `claude mcp remove <name> -s <scope>` is `{"kind": "mcp", "name": ..., "scope": ...}`, and
 `claude plugin uninstall <id> --scope <scope>` is `{"kind": "plugin", "id": ..., "scope": ...}`. 'None of these', or
-nothing picked: say so and stop. Put them in `answers.json` under `"remove"` and go to step 7. Data folders stay where
-they are; the plan names them.
+nothing picked: say so and stop. Put them in `answers.json` under `"remove"` and go to step 7. Data folders and key
+files stay where they are; the plan names them.
 
 ## claude-hud
 

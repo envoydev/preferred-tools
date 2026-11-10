@@ -62,6 +62,34 @@ for (const file of textFiles)
     for (const block of parseAskBlocks(fs.readFileSync(file, 'utf8')))
         for (const p of problemsOf(block)) problems.push(`${path.relative(root, file)}: ${p}`);
 
+// Every call of a script that reads the roots map and the records carries the plugin's data folder (spec D2, D6), and a
+// read-only flag stays first, so the allowed-tools patterns (`--detect *`, `--questions *`, `--check *`) still match. A
+// call is a line of a code block or a backticked one in prose; the allowed-tools line itself is not a call.
+const DATA = '--data "${CLAUDE_PLUGIN_DATA}"';
+const CALL = /(?:node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/|`)(inventory|plan|apply|fix|update)\.js"?\s+([^`\n]*)/g;
+for (const file of textFiles)
+{
+    fs.readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
+        if (/^allowed-tools:/.test(line)) return;
+        for (const m of line.matchAll(CALL))
+        {
+            const at = `${path.relative(root, file)}:${i + 1}`;
+            if (!m[2].includes(DATA)) problems.push(`${at}: ${m[1]}.js call without ${DATA}`);
+            const ro = /--(?:detect|questions|check)\b/.exec(m[2]);
+            if (ro && ro.index !== 0) problems.push(`${at}: ${m[1]}.js call - ${ro[0]} must be its first argument`);
+        }
+    });
+}
+
+// No text sends the user to the Other field (spec D8): every question the walk can put (tests/ask-texts.js, Task 4's
+// four fixtures), and every line of a command or skill, its ask blocks included - the model repeats what a command says.
+const { sendsToOther, walkTexts } = require('./ask-texts.js');
+for (const { where, text } of walkTexts()) if (sendsToOther(text)) problems.push(`asks.all (${where}): sends the user to Other: ${text}`);
+for (const file of textFiles)
+    fs.readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
+        if (sendsToOther(line)) problems.push(`${path.relative(root, file)}:${i + 1}: sends the user to Other - the walk asks a typed value next in one plain line`);
+    });
+
 // The header helper is copied into the user's root and compared by digest (write-helper, helper-stale): its bytes are pinned
 // per version, its first line carries that version, and it needs nothing but Node.
 const HELPER_SHA256 = { 1: '0e333c88203701f07445ad8e8c8c79cbf74a589c176dc9d1742e9cca26b35178' };

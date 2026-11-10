@@ -547,7 +547,7 @@ function removeQuestions(inv, catalog)
 // The fixed asks of the commands, here so a test holds them to the limits.
 const STATIC = {
     menu: { id: 'menu', header: 'Action', multiSelect: false, question: 'What do you want to change?', options: [
-        { label: `Change tools${REC}`, description: 'pick installed tools, then route, scope, name and location' },
+        { label: `Change tools${REC}`, description: 'pick installed tools, servers on their own or a root folder, then what to change' },
         { label: 'Remove tools', description: 'choose the registrations and plugins to remove' },
         { label: 'claude-hud settings', description: 'the status line and its recommended settings - only shown when claude-hud is installed' },
         { label: 'Done', description: 'nothing changes' } ] },

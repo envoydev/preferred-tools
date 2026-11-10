@@ -63,10 +63,12 @@ test('the walks write the one location left (`only`) and make no call for an emp
     }
 });
 
-test("install maps both API key answers: 'No key' is written, since 'Use ${VAR}' is the default when a key is found", () => {
+test("install maps both API key answers: 'No key' is written, since 'Use a key from .mcps-secrets' is the default when a key is found", () => {
     const text = fs.readFileSync(path.join(__dirname, '..', 'commands', 'install.md'), 'utf8');
     const row = text.split('\n').find((l) => l.startsWith('| API key'));
-    assert.ok(row && row.includes("'No key'") && row.includes('"token": false'), row);
+    // the labels toolAsk prints (scripts/asks.js), each mapped
+    for (const label of ['Use a key from .mcps-secrets', 'No key - lower rate limits', 'Sign in with OAuth']) assert.ok(row && row.includes(`'${label}'`), `${label}: ${row}`);
+    assert.ok(row.includes('"token": true') && row.includes('"token": false'), row);
 });
 
 test('asks.js never requires plan.js: the shared readers (currentOf, logicalRoot) live in entries.js, so there is no require cycle', () => {

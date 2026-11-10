@@ -14,18 +14,20 @@ argument, when given, narrows everything below to one fix id, tool or registrati
 Run, adding `--only "$ARGUMENTS"` when there is an argument:
 
 ```
-node "${CLAUDE_PLUGIN_ROOT}/scripts/fix.js" --detect
+node "${CLAUDE_PLUGIN_ROOT}/scripts/fix.js" --detect --data "${CLAUDE_PLUGIN_DATA}"
 ```
 
 Paste its output verbatim in a fenced block. It lists each problem found - the fix id, the tool by its registration
-name and scope, what was found - and any note. A line ending 'NOT APPLICABLE' has a reason and is never applied. A row
+name and scope, what was found - and any note. A line ending 'NOT APPLICABLE' has a reason and is never applied. A
+server left on its own at install is listed as 'on its own - not checked'; `/preferred-tools:configure` hands it back.
+A `note:` line (a Project-scope key helper waiting for the trust prompt, say) is advice, not a fix: relay it. A row
 named 'Held' is an open decision, not a problem; mention it in one line and leave it.
 
 If it says 'No known problem found.', say so in one line and stop.
 
 ## 2. Ask
 
-Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/fix.js" --questions` (with the same `--only`). It prints the asks as data:
+Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/fix.js" --questions --data "${CLAUDE_PLUGIN_DATA}"` (with the same `--only`). It prints the asks as data:
 `choose` and, for 'Pick which', `pick` - a list of calls, each at most four questions of at most four options.
 
 When `choose` is null, nothing found can be applied: every line is NOT APPLICABLE, and its reason is the advice. Say
@@ -39,18 +41,21 @@ Ask `choose` as one AskUserQuestion, exactly as printed:
 - 'Skip' - say nothing was changed and stop.
 
 A finding that needs a folder from the user (the detect output says 'needs a folder from you') gets one more
-AskUserQuestion before it is applied: the suggested folder as '(Recommended)' listed first, and 'Skip this fix'. The
-user types their own through 'Other'. Pass the answer as `--input serenaHome=<folder>`. Never guess a folder.
+AskUserQuestion before it is applied: the suggested folder as '(Recommended)' listed first, and 'Skip this fix'. A
+folder the user typed as the Other answer is taken the same way. Pass the answer as `--input serenaHome=<folder>`. Never
+guess a folder.
 
 ## 3. Apply
 
 ```
-node "${CLAUDE_PLUGIN_ROOT}/scripts/fix.js" --apply <id,id | all> [--only "$ARGUMENTS"] [--input key=value]
+node "${CLAUDE_PLUGIN_ROOT}/scripts/fix.js" --apply <id,id | all> --data "${CLAUDE_PLUGIN_DATA}" [--only "$ARGUMENTS"] [--input key=value]
 ```
 
 Claude Code asks permission for this call itself - `--apply` is deliberately not in `allowed-tools`. It rewrites each registration through the `claude` CLI (remove, then add with the same name and scope) from the entry as
-it is now, so the user's pin, cut-off and added args stay. Several fixes on one registration are one rewrite. A machine
-fix (a global npm install, a data folder's `.gitignore`, or a broken npx cache folder removed - also for a server a
+it is now, so the user's pin, cut-off and added args stay. Several fixes on one registration are one rewrite. A key moved out of
+a registration (`key-to-helper`) first writes the root's files - its `.gitignore`, `mcp-headers.js` - then rewrites the
+registration to read its key through the helper. A machine fix (a global npm install, a data folder's or a root's
+`.gitignore`, the key helper written or brought current, or a broken npx cache folder removed - also for a server a
 parent folder's `.mcp.json` gives this folder, since that cache is the machine's) runs after. Each fix is read back by running its detector again.
 
 Run it with the Bash tool's `timeout: 600000` (10 minutes, the most it allows by default); a global npm install is the slow part.
@@ -67,12 +72,14 @@ get`). Claude Code asks permission for it. Tell the user
 to restart only once it reports, and paste its output when it finishes; a `warn` line changes nothing. When background
 runs are turned off, run it in the foreground with `timeout: 600000`, and again if the limit stops it.
 
-End with the restart line when the script prints one: the repaired registrations load on the next session start. A run whose only fix wrote a data folder's `.gitignore` prints none, since no session needs it.
+End with the restart line when the script prints one: the repaired registrations load on the next session start. A run
+whose only fixes wrote a `.gitignore` or a key helper prints none, since no session needs it.
 
 ## Rules
 
 - Nothing is applied before step 2's answer. A fix that was not picked is never run.
 - A registration that matches no catalog row is the user's and is never touched.
-- A key is written only by `token-sync`, from its key file into the registration. This command never asks for, prints
-  or edits a key or a key file; a finding names the key and the file.
+- Keys live in `.mcps-secrets` in the root folder, filled by the user. A key is written into a registration only by
+  `token-sync`, for a local route; `key-to-helper` moves a hosted key out of a registration once its name is filled
+  there. This command never asks for, prints or edits a key or a value; a finding names the key and the file.
 - Do not repeat a fix 'STILL FOUND' in a loop. Show it and stop; the finding's note says what is left to do.
