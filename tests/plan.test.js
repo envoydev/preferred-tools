@@ -200,6 +200,29 @@ test('context7 hosted: set - project with the key; in a key file only - local wi
     finally { w.clean(); }
 });
 
+test('context7 at project scope with the key only in a key file: no key by default, and the plan says where the key is', () => {
+    const { world } = require('./helpers.js');
+    const w = world();
+    try
+    {
+        const file = putKeys(w.project, KEY_FILE, ['CONTEXT7_API_KEY=v-not-printed']);
+        const at = (env, pick = {}) => plan(inv({ ...MAC, project: w.project }), pickOne('context7', { route: 'remote', scope: 'project', ...pick }), opts(w.home, { env }));
+        const filed = at({});
+        assert.strictEqual(addStep(filed).entry.headers, undefined, 'project scope reads no key file: a ${VAR} there is an empty Bearer');
+        assert.ok(filed.notes.some((n) => n.includes(file) && /no API key/.test(n)), filed.notes.join('\n'));
+        assert.ok(addStep(at({ CONTEXT7_API_KEY: 'x' })).entry.headers, 'set in this shell: sent');
+        assert.ok(addStep(at({}, { token: true })).entry.headers, 'picked: sent, and the token line says NOT set');
+        assert.strictEqual(asks.keyToSend({ set: false, file }, 'project'), false);
+        assert.strictEqual(asks.keyToSend({ set: false, file }, 'local'), true);
+        // the option names what each scope does with the key, since the scope is answered in the same call
+        const qs = asks.toolQuestions(catalog.byId.get('context7'), inv({ ...MAC, project: w.project }), { route: 'remote', ctx: { project: w.project, platform: 'darwin', home: w.home, env: {} }, catalog });
+        const use = qs.find((q) => q.id === 'token-context7').options.find((o) => o.label.startsWith('Use'));
+        assert.doesNotMatch(use.description, /never written/);
+        assert.match(use.description, /project scope keeps .*local and user scope write the key in/);
+    }
+    finally { w.clean(); }
+});
+
 test('the token line names where the name is, the near-miss, the three ways to reach the children, and no value', () => {
     const { world } = require('./helpers.js');
     const w = world();

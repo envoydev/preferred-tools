@@ -52,8 +52,9 @@ function recommendedScope(row, routeId, keyState = null)
     if (keyState.set) return 'project';
     return auth === 'token' || keyState.file ? 'local' : 'project';
 }
-// a key worth sending by default: set in this shell, or held in a key file the scope reads
-const keyToSend = (keyState) => Boolean(keyState && (keyState.set || keyState.file));
+// a key worth sending by default: set in this shell, or held in a key file the scope reads - project scope reads none, so
+// there only a key set in this shell is sent (a ${VAR} with nothing behind it is an empty Bearer)
+const keyToSend = (keyState, scope) => Boolean(keyState && (keyState.set || (scope !== 'project' && keyState.file)));
 
 function chunk(list, n)
 {
@@ -387,8 +388,8 @@ function toolAsk(row, inv, { route, scope = null, name = null, current = null, c
             id: `token-${row.id}`, header: 'API key', multiSelect: false, question: `${row.label}: send an API key?`,
             options: first([
                 { label: 'No key - low rate limits', description: 'works anonymously' },
-                { label: `Use \${${row.routes[routeId].tokenVar}}`, description: 'registers the variable reference; the value is never written' },
-            ], current ? Boolean(sameRoute && current.token) : keyToSend(keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled))),
+                { label: `Use \${${row.routes[routeId].tokenVar}}`, description: 'project scope keeps the reference, read from the environment Claude Code starts with; local and user scope write the key in from its key file, never printed' },
+            ], current ? Boolean(sameRoute && current.token) : keyToSend(keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled), at)),
         });
     else if (row.params)
     {

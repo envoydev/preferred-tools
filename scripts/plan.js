@@ -216,7 +216,9 @@ function planMcp(row, pick, inv, ctx, catalog, out)
 
     // the answers that edit an entry
     const params = { host: row.params ? (pick.params && pick.params.host) || (cur && cur.host) || row.params[0].default : undefined, ...(pick.params || {}) };
-    const wantToken = pick.token === undefined ? (cur ? Boolean(cur.token) : route.auth === 'optional-token' && asks.keyToSend(keyState)) : Boolean(pick.token);
+    const wantToken = pick.token === undefined ? (cur ? Boolean(cur.token) : route.auth === 'optional-token' && asks.keyToSend(keyState, scope)) : Boolean(pick.token);
+    if (pick.token === undefined && !cur && route.auth === 'optional-token' && scope === 'project' && keyState && keyState.file && !keyState.set)
+        out.notes.push(`${row.id}: no API key sent - ${route.tokenVar} is not set in this shell and project scope reads only the environment Claude Code starts with; the key in ${keyState.file} reaches it at local or user scope`);
     let wantExec = pick.executablePath === undefined ? (cur ? cur.executablePath : undefined) : (pick.executablePath || undefined);
     // the committed .mcp.json carries no machine path: a binary named there is refused, one a move carries is left out
     if (scope === 'project' && E.machinePath(wantExec))
