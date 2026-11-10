@@ -457,10 +457,12 @@ function fileSteps(inv, ctx, out)
     for (const family of ['project', 'global'])
     {
         const list = (ctx.recordEntries && ctx.recordEntries[family]) || [];
-        if (!list.length || !ctx.roots || !ctx.roots[family]) continue;
+        const carry = Boolean(ctx.carryRecord && ctx.carryRecord.has(family));
+        if ((!list.length && !carry) || !ctx.roots || !ctx.roots[family]) continue;
         const file = P.join(ctx.roots[family], roots.FILES.record);
         const found = inv.records && inv.records[family];
         const carried = found && found.file && found.file !== file ? found.servers : [];
+        if (!list.length && !carried.length) continue;
         choices.push({ op: 'record-choice', file, entries: [...carried, ...list], live: ctx.recordLive, why: `${file}: your answers about the servers already set up - names, scopes, fingerprints and choices only` });
     }
     return { before: [...ignore, ...helpers, ...names], after: [...choices, ...records] };
@@ -541,6 +543,7 @@ function plan(inv, answers, opts = {})
     for (const [key, pick] of Object.entries(answers.change || {})) planChange(key, { ...(pick || {}), keyName: keyNames[key], settings: settings[key] }, inv, ctx, catalog, out);
     for (const r of answers.remove || []) planRemove(r, inv, catalog, out);
     planExisting(answers, inv, ctx, catalog, out, opts.connectors === undefined ? null : opts.connectors);
+    planRootChange(answers, inv, ctx, catalog, out);
     if (out.hud && answers.hud) out.hud = answers.hud;
     // 'defer': a claude-hud that is not installed yet cannot be checked, so its settings ask follows the install
     if (out.hud === 'defer') { out.hud = null; out.hudAfter = true; out.notes.push('claude-hud: its statusLine and recommended settings are asked after the install'); }
@@ -550,6 +553,53 @@ function plan(inv, answers, opts = {})
     out.steps = [...files.before, ...out.steps, ...files.after];
     out.noop = out.steps.length === 0 && out.errors.length === 0;
     return out;
+}
+
+// configure's 'Change the root' (spec D7, R3): each managed registration of the family is re-added as read, its data
+// folder - when it sits in the old root - and its helper in the new root; the new root gets its .gitignore, the helper,
+// the names in use (names only) and the record, and the roots map points at it. No data and no key value moves.
+function planRootChange(answers, inv, ctx, catalog, out)
+{
+    const P = E.pathFor(ctx.platform);
+    for (const family of answers.rootChange || [])
+    {
+        if (!['project', 'global'].includes(family)) { out.errors.push(`rootChange: '${family}' is not a root family - project or global`); continue; }
+        const next = ctx.roots && ctx.roots[family];
+        if (!next) continue; // the roots answer's error is already in the plan
+        const used = inv.roots && Object.hasOwn(inv.roots, family) ? inv.roots[family] : roots.inUse(inv, family, { ...ctx, catalog });
+        if (!used) { out.unchanged.push(`rootChange: no ${family} root is in use here - nothing to move`); continue; }
+        if (used.path === next) { out.unchanged.push(`rootChange: the ${family} root is already ${next}`); continue; }
+        const inOld = (p) => { const rel = P.relative(used.path, p); return rel === '' || (!rel.startsWith('..') && !P.isAbsolute(rel)); };
+        const scopes = family === 'global' ? ['user'] : ['project', 'local'];
+        const secretsOld = P.join(used.path, roots.FILES.secrets);
+        const secretsNew = P.join(next, roots.FILES.secrets);
+        let keyed = false;
+        ctx.uses.push({ family, root: next });
+        ctx.carryRecord = ctx.carryRecord || new Set();
+        ctx.carryRecord.add(family);
+        for (const r of inv.registrations.filter((x) => x.rowId && !x.own && !x.alfredRetired && x.choice !== 'own' && scopes.includes(x.scope)))
+        {
+            const row = catalog.byId.get(r.rowId);
+            // a target changed in this run is planned there, into the new root as well
+            if (!row || row.kind !== 'mcp' || ctx.changing.has(keyOf('mcp', r.name, r.scope))) continue;
+            const cur = E.currentOf(row, r);
+            const dataAbs = row.locations && cur.rootStr ? E.formatRoot(E.logicalRoot(cur.rootStr, ctx), 'local', ctx).value : null;
+            const moves = Boolean(dataAbs) && inOld(dataAbs);
+            planMcp(row, { target: { name: r.name, scope: r.scope }, ...(moves ? { location: { side: family === 'global' ? 'account' : 'project' } } : {}) }, inv, ctx, catalog, out);
+            // the name its key goes under: the helper's argument, else the name holding the key it holds, else the catalog's
+            const route = row.routes[cur.route];
+            let name = route && route.helper ? cur.keyName : null;
+            if (route && !route.helper && route.tokenVar && keys.tokenFields(r.entry, route).length)
+            {
+                const held = asks.heldKey(ctx.readLive(r.name, r.scope) || r.entry, route);
+                name = held ? keys.nameOfValue([secretsOld, ...keys.oldFiles(ctx.project, ctx.home)], held) || route.tokenVar : null;
+            }
+            if (!name) continue;
+            ctx.uses.push({ family, root: next, key: { file: secretsNew, name } });
+            keyed = true;
+        }
+        if (keyed) out.notes.push(`copy the values from ${secretsOld} to ${secretsNew} yourself - until then those servers connect without their keys`);
+    }
 }
 
 // The answers about servers already set up (spec D6): each goes to its family's record, the project root's for a project

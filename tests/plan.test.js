@@ -1859,3 +1859,167 @@ test("configure: the 'On their own' group, and 'Let preferred-tools manage it' p
     assert.deepStrictEqual(regSteps(p), []);
     assert.deepStrictEqual(p.steps.filter((s) => s.op === 'record-choice').map((s) => s.entries), [[{ name: 'github', scope: 'user', fingerprint: 'url:api.githubcopilot.com/mcp', choice: 'manage' }]]);
 });
+
+// ---- 0.2.0: configure changes a root folder, a key's name and the settings (spec D7, D9; plan R3) ----------------------
+const OLD_ROOT = '/work/shop/.preferred-tools';
+const ghHelper = (root, name = G) => ({ type: 'http', url: 'https://api.githubcopilot.com/mcp/', headersHelper: `node ${root}/mcp-headers.js ${name} Bearer` });
+const usedRoots = (project, global = null) => ({ map: null, project: project && { path: project, from: 'registration' }, global: global && { path: global, from: 'registration' } });
+
+test('change the root: each managed registration of the family is re-added with its data folder and helper in the new root', () => {
+    const pw = installed('playwright-chrome', { scope: 'local' });
+    pw.entry.args = pw.entry.args.map((a) => a.replace(/^@playwright\/mcp@.+$/, '@playwright/mcp@0.0.90'));
+    const gh = reg('github', 'local', ghHelper(OLD_ROOT), 'github', 'remote');
+    const i = inv(MAC, { registrations: [pw, gh], roots: usedRoots(OLD_ROOT) });
+    // the configure pick: a 'Root folders' group, one option per family in use, its path in the description
+    const ch = asks.changeQuestions(i, catalog);
+    assert.strictEqual(ch.keys['Project root folder'], 'root:project');
+    assert.ok(!('Global root folder' in ch.keys), 'no global root in use: not offered');
+    const opt = ch.calls.flat().flatMap((q) => q.options).find((o) => o.label === 'Project root folder');
+    assert.strictEqual(opt.description, `${OLD_ROOT} - pick it to move this project's keys, key helper and tool data to another folder`);
+    for (const q of ch.calls.flat()) checkQuestion(q);
+    // its pick asks D2's root question, the root in use recommended
+    const t = asks.all(i, { targets: ['root:project'] }, catalog).targets['root:project'];
+    assert.deepStrictEqual([t.kind, t.family], ['root', 'project']);
+    assert.strictEqual(t.root.question.options[0].label, '.preferred-tools in this project (Recommended)');
+    checkQuestion(t.root.question);
+    const p = plan(i, { rootChange: ['project'], roots: { project: { id: 'named', path: 'tools' } } }, opts('/Users/me'));
+    assert.deepStrictEqual(p.errors, []);
+    assert.deepStrictEqual(p.steps.map((s) => [s.op, s.path || s.file || s.name || s.root]), [
+        ['root-ignore', '/work/shop/tools'], ['write-helper', '/work/shop/tools'], ['ensure-key-name', '/work/shop/tools/.mcps-secrets'],
+        ['ensure-dir', '/work/shop/tools/playwright-chrome'], ['mcp-replace', 'playwright-chrome'], ['mcp-replace', 'github'], ['record-root', '/work/shop/tools'],
+    ]);
+    assert.deepStrictEqual(p.steps[2].names, [G], 'the names in use');
+    const e = p.steps[4].entry;
+    assert.ok(e.args.includes('@playwright/mcp@0.0.90'), 'the entry as read: its pin stays');
+    assert.strictEqual(e.args[e.args.indexOf('--user-data-dir') + 1], '/work/shop/tools/playwright-chrome');
+    assert.strictEqual(p.steps[5].entry.headersHelper, `node /work/shop/tools/mcp-headers.js ${G} Bearer`);
+    assert.match(p.notes.join('\n'), /the old data stays at \/work\/shop\/\.preferred-tools\/playwright-chrome; moving a location moves no data/);
+    assert.ok(p.notes.includes(`copy the values from ${OLD_ROOT}/.mcps-secrets to /work/shop/tools/.mcps-secrets yourself - until then those servers connect without their keys`));
+    // the same root again: nothing to do
+    const same = plan(i, { rootChange: ['project'] }, opts('/Users/me'));
+    assert.deepStrictEqual([same.errors, same.steps], [[], []]);
+    assert.match(same.unchanged.join('\n'), /the project root is already .*\.preferred-tools/);
+});
+
+test('change the root: the old data and the old key file stay, the new key file holds the names with empty values, the record\'s entries are copied', () => {
+    const fs = require('node:fs');
+    const { world, writeJson } = require('./helpers.js');
+    const { apply } = require('../scripts/apply.js');
+    const cli = require('../scripts/claude-cli.js');
+    const roots = require('../scripts/roots.js');
+    const keys = require('../scripts/keys.js');
+    const account = require('../scripts/account.js');
+    const w = world();
+    try
+    {
+        const data = path.join(w.dir, 'data');
+        const old = path.join(w.project, '.preferred-tools');
+        const fresh = path.join(w.project, 'tools');
+        const v = `v-${Date.now()}-not-printed`;
+        const install = plan(inventoryLib.buildInventory({ project: w.project, env: w.env, data }), pickOne('playwright-chrome', { scope: 'local' }), { home: w.home, env: w.env });
+        assert.strictEqual(apply(install, { env: w.env, tmp: path.join(w.dir, 'tmp1'), data, log: () => {} }).failed, null);
+        const add = (name, scope, entry) => assert.strictEqual(cli.run(['mcp', 'add-json', name, JSON.stringify(entry), '-s', scope], { cwd: w.project, env: w.env }).status, 0);
+        add('github', 'local', { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headersHelper: `node ${path.join(old, 'mcp-headers.js')} ${G} Bearer` });
+        add('context7', 'local', { command: 'npx', args: ['-y', '@upstash/context7-mcp@2.0.0'] });
+        mcpsAt(old, [`${G}=${v}`]);
+        fs.writeFileSync(path.join(old, 'mcp-headers.js'), roots.helperSource());
+        fs.writeFileSync(path.join(old, 'playwright-chrome', 'kept.txt'), 'old data\n');
+        const record = { version: 1, servers: [{ name: 'context7', scope: 'local', fingerprint: 'pkg:@upstash/context7-mcp', choice: 'own' }] };
+        writeJson(path.join(old, 'preferred-tools.json'), record);
+        const keyBytes = fs.readFileSync(path.join(old, '.mcps-secrets'));
+        const i = inventoryLib.buildInventory({ project: w.project, env: w.env, data });
+        assert.strictEqual(i.roots.project.path, old);
+        const p = plan(i, { rootChange: ['project'], roots: { project: { id: 'named', path: 'tools' } } }, { home: w.home, env: w.env });
+        assert.deepStrictEqual(p.errors, []);
+        assert.ok(p.notes.includes(`copy the values from ${path.join(old, '.mcps-secrets')} to ${path.join(fresh, '.mcps-secrets')} yourself - until then those servers connect without their keys`));
+        assert.ok(!JSON.stringify(p).includes(v), 'no value in the plan');
+        const lines = [];
+        const r = apply(p, { env: w.env, tmp: path.join(w.dir, 'tmp2'), data, log: (...a) => lines.push(a.join(' ')) });
+        assert.strictEqual(r.failed, null, lines.join('\n'));
+        assert.ok(!lines.join('\n').includes(v));
+        assert.deepStrictEqual(fs.readFileSync(path.join(old, '.mcps-secrets')), keyBytes, 'the old key file stays as it was');
+        assert.strictEqual(fs.readFileSync(path.join(old, 'playwright-chrome', 'kept.txt'), 'utf8'), 'old data\n', 'the old data stays');
+        assert.ok(fs.existsSync(path.join(fresh, 'playwright-chrome')), 'the new data folder is made');
+        assert.deepStrictEqual(keys.namesIn(path.join(fresh, '.mcps-secrets')), [G]);
+        assert.strictEqual(keys.valueIn([path.join(fresh, '.mcps-secrets')], G), null, 'the name with an empty value');
+        assert.strictEqual(fs.readFileSync(path.join(fresh, 'mcp-headers.js'), 'utf8'), roots.helperSource());
+        assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(fresh, 'preferred-tools.json'), 'utf8')).servers, record.servers, 'the record\'s entries are copied');
+        assert.strictEqual(roots.readMap(data).projects[roots.mapKey(w.project)], fresh);
+        const local = account.readAccount(w.env, w.project).local;
+        assert.strictEqual(local.github.headersHelper, `node ${path.join(fresh, 'mcp-headers.js')} ${G} Bearer`);
+        assert.deepStrictEqual(local.context7, { command: 'npx', args: ['-y', '@upstash/context7-mcp@2.0.0'] }, 'a server on its own is untouched');
+        assert.ok(local['playwright-chrome'].args.includes(path.join(fresh, 'playwright-chrome')));
+    }
+    finally { w.clean(); }
+});
+
+test('change the root: the other family\'s registrations are untouched', () => {
+    const pw = installed('playwright-chrome', { scope: 'local' });
+    const sentry = reg('sentry', 'user', { type: 'http', url: 'https://mcp.sentry.dev/mcp', headersHelper: 'node /Users/me/.preferred-tools/mcp-headers.js SENTRY_ACCESS_TOKEN Sentry-Bearer' }, 'sentry', 'remote');
+    const i = inv(MAC, { registrations: [pw, sentry], roots: usedRoots(OLD_ROOT, '/Users/me/.preferred-tools') });
+    const ch = asks.changeQuestions(i, catalog);
+    assert.deepStrictEqual(['Project root folder', 'Global root folder'].map((l) => ch.keys[l]), ['root:project', 'root:global']);
+    const project = plan(i, { rootChange: ['project'], roots: { project: { id: 'named', path: 'tools' } } }, opts('/Users/me'));
+    assert.deepStrictEqual(project.errors, []);
+    assert.deepStrictEqual(regSteps(project).map((s) => [s.op, s.name || s.path]), [['ensure-dir', '/work/shop/tools/playwright-chrome'], ['mcp-replace', 'playwright-chrome']]);
+    assert.ok(!JSON.stringify(project.steps).includes('sentry'), 'the global family is untouched');
+    const global = plan(i, { rootChange: ['global'], roots: { global: { id: 'named', path: '/Users/me/keys' } } }, opts('/Users/me'));
+    assert.deepStrictEqual(global.errors, []);
+    assert.deepStrictEqual(regSteps(global).map((s) => [s.op, s.name]), [['mcp-replace', 'sentry']]);
+    assert.strictEqual(regSteps(global)[0].entry.headersHelper, 'node /Users/me/keys/mcp-headers.js SENTRY_ACCESS_TOKEN Sentry-Bearer');
+    assert.ok(!JSON.stringify(global.steps).includes('playwright'), 'the project family is untouched');
+});
+
+test('configure: the key name and the settings start from the registration as read', () => {
+    const gh = reg('gh', 'user', { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headers: { 'X-Team': 'core' }, headersHelper: 'node /Users/me/.preferred-tools/mcp-headers.js ACME_GH Bearer' }, 'github', 'remote');
+    const serena = installed('serena', { scope: 'local' });
+    serena.entry.env = { ...serena.entry.env, MY_FLAG: '1' };
+    const i = inv(MAC, { registrations: [gh, serena] });
+    const q = asks.all(i, { targets: ['mcp:gh~user', 'mcp:serena~local'] }, catalog, { home: '/Users/me' });
+    assert.strictEqual(q.keyNames['mcp:gh~user'].question.options[0].label, 'ACME_GH (Recommended)', 'the name the helper passes now');
+    assert.match(q.settings['mcp:serena~local'].question.options[0].description, /MY_FLAG=1/);
+    const p = plan(i, { change: { 'mcp:gh~user': {} }, keyNames: { 'mcp:gh~user': 'WORK_GH' } }, opts('/Users/me'));
+    assert.deepStrictEqual(p.errors, []);
+    assert.deepStrictEqual(regSteps(p)[0].entry, { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headers: { 'X-Team': 'core' }, headersHelper: 'node /Users/me/.preferred-tools/mcp-headers.js WORK_GH Bearer' });
+    const st = plan(i, { change: { 'mcp:serena~local': {} }, settings: { 'mcp:serena~local': { SERENA_LOG_LEVEL: 'debug' } } }, opts('/Users/me'));
+    assert.deepStrictEqual(st.errors, []);
+    const e = regSteps(st).find((s) => s.op === 'mcp-replace').entry;
+    assert.deepStrictEqual([e.env.MY_FLAG, e.env.SERENA_LOG_LEVEL], ['1', 'debug'], 'the user\'s own setting stays beside the new one');
+    assert.deepStrictEqual(e.args, serena.entry.args);
+});
+
+test('configure: a 0.1.x project-scope github Docker registration keeps Project listed, recommends Local, and the move writes the key from the chain, never ${VAR}', () => {
+    const fs = require('node:fs');
+    const { world } = require('./helpers.js');
+    const { apply } = require('../scripts/apply.js');
+    const cli = require('../scripts/claude-cli.js');
+    const account = require('../scripts/account.js');
+    const fix = require('../scripts/fix.js');
+    const docker = { command: 'docker', args: ['run', '-i', '--rm', '-e', G, 'ghcr.io/github/github-mcp-server:v2.1.0', 'stdio'], env: { [G]: `\${${G}}` } };
+    const t = asks.all(inv(MAC, { registrations: [reg('github', 'project', docker, 'github', 'local')] }), { targets: ['mcp:github~project'] }, catalog).targets['mcp:github~project'];
+    const scopeQ = [...(t.first || []), ...t.questions].find((q) => q.id === 'scope-github');
+    assert.deepStrictEqual(scopeQ.options.map((o) => o.label), ['Local (Recommended)', 'Global', 'Project']);
+    assert.match(scopeQ.options[2].description, /^the scope it has now/);
+    checkQuestion(scopeQ);
+    for (const filled of [true, false])
+    {
+        const w = world();
+        try
+        {
+            const v = `v-${Date.now()}-not-printed`;
+            assert.strictEqual(cli.run(['mcp', 'add-json', 'github', JSON.stringify(docker), '-s', 'project'], { cwd: w.project, env: w.env }).status, 0);
+            mcpsAt(path.join(w.project, '.preferred-tools'), [filled ? `${G}=${v}` : `${G}=`]);
+            const i = inventoryLib.buildInventory({ project: w.project, env: w.env });
+            const ctx = fix.makeCtx({ inv: i, env: w.env, machine: { exists: () => false, realpath: () => null, which: () => null, run: () => ({ status: 1 }) } });
+            assert.deepStrictEqual(fix.detectAll(ctx).found.filter((f) => f.name === 'github'), [], 'fix leaves it as it is');
+            const p = plan(i, { change: { 'mcp:github~project': { scope: 'local' } } }, { home: w.home, env: w.env, machine: { docker: true } });
+            assert.deepStrictEqual(p.errors, []);
+            const r = apply(p, { env: w.env, tmp: path.join(w.dir, 'tmp'), log: () => {} });
+            assert.strictEqual(r.failed, null);
+            const e = account.readAccount(w.env, w.project).local.github;
+            assert.strictEqual(e.env[G], filled ? v : '', filled ? 'the key from the stdio chain' : 'unfilled: empty, never ${VAR}');
+            assert.ok(!fs.existsSync(path.join(w.project, '.mcp.json')) || !JSON.parse(fs.readFileSync(path.join(w.project, '.mcp.json'), 'utf8')).mcpServers.github, 'moved out of the committed file');
+        }
+        finally { w.clean(); }
+    }
+});

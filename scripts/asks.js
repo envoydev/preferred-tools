@@ -14,7 +14,7 @@ const REC = ' (Recommended)';
 // The `remote` route is worded 'hosted' in every ask: alfred-code's stop guard reads a bare 'remote' in an ask as git
 // state and sends Claude to fetch and re-ask (docs/sources.md, 'alfred-code hooks over the commands').
 const ROUTE_WORD = { remote: 'hosted', local: 'local' };
-const HEADER = { code: 'Code', docs: 'Docs, forges', browsers: 'Browsers', machine: 'Machine', own: 'On their own' };
+const HEADER = { code: 'Code', docs: 'Docs, forges', browsers: 'Browsers', machine: 'Machine', own: 'On their own', roots: 'Root folders' };
 const SCOPE_TEXT = {
     local: 'this project, only you (~/.claude.json, under this project)',
     project: "this project, for everyone who opens it (the committed .mcp.json - relative paths and ${VAR} only)",
@@ -226,9 +226,20 @@ function installedItems(inv, catalog, describe)
     return items;
 }
 
-// The configure pick: one option per installed registration or plugin. `keys` maps each label to the key the answers
-// use (`mcp:<name>~<scope>`, `plugin:<id>~<scope>`).
-function changeQuestions(inv, catalog)
+// The root each family uses now (spec D2): the inventory's, else found from the registrations and the standard folders.
+function rootInUse(inv, family, ctx = {})
+{
+    if (inv.roots && Object.hasOwn(inv.roots, family)) return inv.roots[family] || null;
+    return roots.inUse(inv, family, { project: inv.project, platform: inv.os, home: ctx.home || require('./account.js').homeDir(process.env), exists: ctx.exists, catalog: ctx.catalog });
+}
+
+const ROOT_LABEL = { project: 'Project root folder', global: 'Global root folder' };
+const ROOT_MOVES = { project: "this project's keys, key helper and tool data", global: 'the keys, key helper and tool data for every project' };
+
+// The configure pick: one option per installed registration or plugin, then the servers left on their own, then one per
+// root folder in use (spec D7, R3). `keys` maps each label to the key the answers use (`mcp:<name>~<scope>`,
+// `plugin:<id>~<scope>`, `root:<family>`).
+function changeQuestions(inv, catalog, ctx = {})
 {
     const describe = (row, h) =>
     {
@@ -246,9 +257,15 @@ function changeQuestions(inv, catalog)
         const description = it.kind === 'mcp' ? 'left on its own at install - pick it to keep it so or let preferred-tools manage it' : `left with ${X.ownerOf(it)} - pick it to keep it so or let install offer preferred-tools' own beside it`;
         items.push({ group, label, description, h: { kind: 'own', key: it.key } });
     }
+    const rootGroup = { id: 'roots', label: 'Root folders' };
+    for (const family of ['project', 'global'])
+    {
+        const used = rootInUse(inv, family, { ...ctx, catalog });
+        if (used) items.push({ group: rootGroup, label: ROOT_LABEL[family], description: `${used.path} - pick it to move ${ROOT_MOVES[family]} to another folder`, h: { kind: 'root', key: `root:${family}` } });
+    }
     return {
         calls: packed(items, { id: 'change', question: 'which do you want to change?', none: 'change nothing' }),
-        keys: Object.fromEntries(items.map((i) => [i.label, i.h.kind === 'own' ? i.h.key : keyOf(i.h.kind, i.h.name, i.h.scope)])),
+        keys: Object.fromEntries(items.map((i) => [i.label, i.h.key || keyOf(i.h.kind, i.h.name, i.h.scope)])),
     };
 }
 
@@ -284,12 +301,19 @@ function scopesFor(row, routeId, ctx = null)
 function scopeOrder(row, inv, { route, current = null, copyOf = [], ctx = null } = {})
 {
     const routeId = route || (current && current.route) || row.recommendedRoute;
-    const rec = current ? current.scope : recommendedScope(row, routeId, keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled, 'user'));
     const all = scopesFor(row, routeId, ctx);
+    const stranded = strandedScope(row, routeId, current, ctx);
+    const rec = current && !stranded ? current.scope : recommendedScope(row, routeId, keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled, 'user'));
     const free = all.filter((s) => !copyOf.some((c) => c.scope === s));
     const scopes = free.length ? free : all;
-    return [rec, ...SCOPE_ORDER.filter((s) => s !== rec)].filter((s) => scopes.includes(s));
+    const order = [rec, ...SCOPE_ORDER.filter((s) => s !== rec)].filter((s) => scopes.includes(s));
+    return stranded ? [...order, stranded] : order;
 }
+
+// The scope a registration has that is no longer offered for its route (0.1.x put a stdio keyed route at project scope,
+// its key a ${VAR} from the shell): configure lists it last, as the scope it has now, and recommends another.
+const strandedScope = (row, routeId, current, ctx) => (current && current.scope && !scopesFor(row, routeId, ctx).includes(current.scope) ? current.scope : null);
+const STRANDED_TEXT = 'the scope it has now - it reads its key from the environment Claude Code starts with; a keyed local route is not offered here any more, as the committed .mcp.json carries no key';
 
 // The scope question, or null when one scope is left.
 function scopeQuestion(row, inv, { route, current = null, copyOf = [], ctx = null } = {})
@@ -300,7 +324,7 @@ function scopeQuestion(row, inv, { route, current = null, copyOf = [], ctx = nul
     return {
         id: `scope-${row.id}`, header: 'Scope', multiSelect: false,
         question: current ? `${row.label}: which scope? Another one moves '${current.name || row.label}' there; /preferred-tools:install adds a second copy instead.` : `${row.label}: which scope?`,
-        options: order.slice(0, 4).map((s, i) => ({ label: `${SCOPE_LABEL[s]}${i === 0 ? REC : ''}`, description: scopeText(s, row, routeId) })),
+        options: order.slice(0, 4).map((s, i) => ({ label: `${SCOPE_LABEL[s]}${i === 0 ? REC : ''}`, description: s === strandedScope(row, routeId, current, ctx) ? STRANDED_TEXT : scopeText(s, row, routeId) })),
     };
 }
 
@@ -631,12 +655,13 @@ function all(inv, picks, catalog, { env = {}, home = null, connectors = null } =
 {
     const out = {
         static: { ...STATIC, hud: STATIC.hud(0, 0, 0), prereqMissing: STATIC.prereqMissing('<tool>', '<prerequisite>') },
-        pick: pickQuestions(inv, catalog, picks && picks.existing), change: changeQuestions(inv, catalog), remove: removeQuestions(inv, catalog), tools: {}, targets: {},
+        pick: pickQuestions(inv, catalog, picks && picks.existing), change: null, remove: removeQuestions(inv, catalog), tools: {}, targets: {},
     };
     // `exists` reads the disk: alfred-code's .alfred/.gitignore and its 2.x data decide which folders are offered
     const ctx = { project: inv.project, platform: inv.os, arch: inv.arch, home: home || require('./account.js').homeDir(process.env), env, keyHome: home, exists: (p) => fs.existsSync(p) };
     // the roots answered so far (the walk asks them before a tool's folder), else the recommended ones
     ctx.roots = roots.resolve(inv, picks && picks.roots, { ...ctx, catalog }).roots;
+    out.change = changeQuestions(inv, catalog, ctx);
     const routes = (picks && picks.routes) || {};
     const scopes = (picks && picks.scopes) || {};
     const names = (picks && picks.names) || {};
@@ -650,6 +675,14 @@ function all(inv, picks, catalog, { env = {}, home = null, connectors = null } =
     const own = new Map(require('./existing.js').ownItems(inv, catalog).map((it) => [it.key, it]));
     for (const key of (picks && picks.targets) || [])
     {
+        // a root folder: D2's question, the root in use recommended (spec D7)
+        const rm = /^root:(project|global)$/.exec(key);
+        if (rm)
+        {
+            const used = rootInUse(inv, rm[1], { ...ctx, catalog });
+            out.targets[key] = used ? { kind: 'root', family: rm[1], current: { path: used.path }, root: rootQuestion(inv, rm[1], { ...ctx, catalog }) } : { error: `no ${rm[1]} root is in use here` };
+            continue;
+        }
         // a server left on its own: one question, keep it so or hand it over (spec D6)
         if (own.has(key))
         {
