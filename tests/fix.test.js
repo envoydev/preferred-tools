@@ -645,6 +645,30 @@ test('the machine fix runs after the registration edits and is read back; its fa
     finally { w.clean(); }
 });
 
+test('a fix that only writes a data folder\'s .gitignore asks for no restart; the language server fix still does', () =>
+{
+    const fs = require('node:fs');
+    const w = world();
+    try
+    {
+        seed(w, 'playwright-chrome', 'project', { command: 'npx', args: ['-y', '@playwright/mcp@0.0.83', '--browser', 'chrome', '--user-data-dir', '.preferred-tools/playwright-chrome'] });
+        const lines = [];
+        const res = fix.applyFixes(ctxOf(w, { machine: noMachine({ exists: (p) => fs.existsSync(p), run: C.realMachine().run }) }), ['data-folder-ignore'], { log: (...a) => lines.push(a.join(' ')) });
+        assert.strictEqual(res.failed, null, lines.join('\n'));
+        assert.match(lines.join('\n'), /fixed +data-folder-ignore/);
+        assert.ok(!lines.join('\n').includes('Restart Claude Code'), lines.join('\n'));
+        // the language server fix: a restart, as before
+        const plugin = { id: 'typescript-lsp@claude-plugins-official', plugin: 'typescript-lsp', scope: 'project', enabled: true, rowId: 'typescript-lsp', alfredRetired: false };
+        let v = '7.0.2';
+        const machine = noMachine({ run: (c, a) => { if (a[0] === 'ls') return { status: 0, stdout: JSON.stringify({ dependencies: { typescript: { version: v } } }) }; v = '6.0.3'; return { status: 0, stdout: '' }; } });
+        const base = ctxOf(w, { machine });
+        const ts = [];
+        fix.applyFixes({ ...base, inv: { ...base.inv, plugins: [plugin] } }, ['typescript-lsp-ts7'], { log: (...a) => ts.push(a.join(' ')) });
+        assert.match(ts.join('\n'), /Restart Claude Code/);
+    }
+    finally { w.clean(); }
+});
+
 // ---- the CLI --------------------------------------------------------------------------------------------------------
 
 test('CLI: --detect and --questions print; --apply applies; bad arguments exit 2', () =>

@@ -50,7 +50,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/fix.js" --apply <id,id | all> [--only "$ARGU
 
 Claude Code asks permission for this call itself - `--apply` is deliberately not in `allowed-tools`. It rewrites each registration through the `claude` CLI (remove, then add with the same name and scope) from the entry as
 it is now, so the user's pin, cut-off and added args stay. Several fixes on one registration are one rewrite. A machine
-fix (a global npm install) runs after. Each fix is read back by running its detector again.
+fix (a global npm install, or a data folder's `.gitignore`) runs after. Each fix is read back by running its detector again.
 
 Run it with the Bash tool's `timeout: 600000` (10 minutes, the most it allows by default); a global npm install is the slow part.
 Paste the output verbatim. Report each fix as 'fixed' or 'STILL FOUND', each skipped one with its reason, and a failure
@@ -65,7 +65,7 @@ get`). Claude Code asks permission for it. Tell the user
 to restart only once it reports, and paste its output when it finishes; a `warn` line changes nothing. When background
 runs are turned off, run it in the foreground with `timeout: 600000`, and again if the limit stops it.
 
-End with the restart line the script prints: the repaired registrations load on the next session start.
+End with the restart line when the script prints one: the repaired registrations load on the next session start. A run whose only fix wrote a data folder's `.gitignore` prints none, since no session needs it.
 
 ## Rules
 

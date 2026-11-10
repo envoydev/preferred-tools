@@ -9,7 +9,8 @@
 // A detector looks at the inventory and the machine and returns findings; a row that finds nothing is not shown. A
 // registration fix edits the entry AS READ and is written through apply.js (remove, then add-json, with a rollback), one
 // replace per registration however many fixes it takes. A machine fix runs its command. Every fix is read back by running
-// its detector again, and the restart line comes last. A finding with `blocked` is shown and never applied; a row with
+// its detector again, and the restart line comes last - unless every fix applied was one a session does not need to restart
+// for (a data folder's .gitignore). A finding with `blocked` is shown and never applied; a row with
 // `hold` in the catalog is listed as held and never detected.
 const fs = require('node:fs');
 const os = require('node:os');
@@ -153,12 +154,14 @@ function applyFixes(ctx, ids, { only, input = {}, tmp, log = console.log, runCli
         if (report.failed) { res.failed = report.failed.detail; return res; }
     }
 
-    // machine fixes
+    // machine fixes; one that says `restart: false` (a .gitignore written) changes nothing a session has started
+    const noRestart = new Set();
     for (const f of todo.filter((x) => x.kind === 'machine'))
     {
         const r = F[ctx.catalog.fixes.find((x) => x.id === f.id).fix](f, ctx);
         log(`${r.ok ? 'ok    ' : 'FAILED'} ${f.id}: ${r.detail}`);
         if (!r.ok) { res.failed = r.detail; return res; }
+        if (r.restart === false) noRestart.add(f);
     }
 
     // read back: the same detectors, run again on what is installed now
@@ -169,7 +172,7 @@ function applyFixes(ctx, ids, { only, input = {}, tmp, log = console.log, runCli
         (left ? res.remaining : res.applied).push(f);
         log(`${left ? 'STILL FOUND' : 'fixed      '} ${f.id} on ${where(f)}`);
     }
-    if (res.applied.length) log('', 'Restart Claude Code so the repaired registrations and the language server start fresh.');
+    if (res.applied.some((f) => !noRestart.has(f))) log('', 'Restart Claude Code so the repaired registrations and the language server start fresh.');
     return res;
 }
 

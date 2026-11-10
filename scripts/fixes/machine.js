@@ -1,6 +1,7 @@
 'use strict';
-// The machine fixes: a problem in what is installed on this machine, not in a registration. The fix changes the machine
-// (a global npm install), so it runs only when the user picked it, and is read back by running the detector again.
+// The machine fixes: a problem on this machine, not in a registration. The fix changes the machine (a global npm install,
+// a data folder's .gitignore), so it runs only when the user picked it, and is read back by running the detector again.
+// A fix that changes nothing a running session uses returns `restart: false`.
 const fs = require('node:fs');
 const path = require('node:path');
 const C = require('./common.js');
@@ -103,10 +104,10 @@ function dataFolderIgnoreFix(f, ctx)
     const file = path.join(f.proposal.path, '.gitignore');
     try
     {
-        if (fs.existsSync(file)) return { ok: true, detail: `${file} exists - left as it is` };
+        if (fs.existsSync(file)) return { ok: true, restart: false, detail: `${file} exists - left as it is` };
         fs.mkdirSync(f.proposal.path, { recursive: true });
         fs.writeFileSync(file, '*\n');
-        return { ok: true, detail: `wrote ${file} holding *` };
+        return { ok: true, restart: false, detail: `wrote ${file} holding *` };
     }
     catch (e) { return { ok: false, detail: `could not write ${file}: ${e.message}` }; }
 }

@@ -402,7 +402,7 @@ and the machine and prints one table: row, tool (by registration name), what was
 problem can be applied: 'Apply all found (Recommended)', 'Pick which' (the grouped shape), 'Skip'. When every line is NOT
 APPLICABLE, nothing is asked: the lines are the advice. `scripts/fix.js --apply <ids>` applies each pick. A
 registration fix rewrites the entry through the CLI (remove, then add-json with the same name and scope). A file fix
-(the shim patch) edits the package file and keeps a `.bak`. Each fix is read back, then the restart line is printed. A
+(the shim patch) edits the package file and keeps a `.bak`. Each fix is read back, then the restart line is printed - none when every fix applied only wrote a data folder's `.gitignore`. A
 row whose detector finds nothing is not shown. `/preferred-tools:fix <tool or id>` narrows it.
 
 A fix row: `id`, `tool`, `os`, `symptom` (what the user sees), `detect` (the name of a function in `scripts/fixes/`),
