@@ -237,7 +237,16 @@ function planMcp(row, pick, inv, ctx, catalog, out)
         if (!w.existing) ensure = E.formatRoot(w.root, 'local', ctx).value;
         // a relative folder in the committed file lands wherever Claude starts; the plan creates and ignores only this one
         if (scope === 'project' && w.root.kind === 'project')
+        {
             out.notes.push(`${row.id}: a session started in another folder - a child or a subfolder - creates ${rootStr} there; run /preferred-tools:fix once in each such folder where alfred-code's .alfred/.gitignore does not cover it`);
+            // the ensure step's .gitignore holds * and so ignores itself: only alfred-code's .alfred/.gitignore is committed
+            const rel = w.root.rel.replace(/\\/g, '/');
+            if (!(rel.startsWith('.alfred/') && ctx.alfredHere))
+            {
+                const line = rel.startsWith('.preferred-tools/') ? '.preferred-tools/' : `${rel}/`;
+                out.notes.push(`${row.id}: another clone of this project creates ${rootStr} unignored - its .gitignore holds * and is never committed: add ${line} to the project's .gitignore, or run /preferred-tools:fix there`);
+            }
+        }
     }
 
     let entry;

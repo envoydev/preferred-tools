@@ -248,6 +248,8 @@ const SIDE_TAIL = {
     account: 'one folder for every project on this machine',
     alfred: "carries over the data alfred-code 2.x left there; the folder is alfred-code's, so deleting it erases this tool's data",
 };
+// at project scope the folder is made in every clone, and the plugin's .gitignore (it holds *) is never committed
+const COMMITTED_PROJECT_TAIL = "the plugin's own folder; its .gitignore is never committed, so another clone needs .preferred-tools/ in the project's .gitignore";
 // serena's home holds its language servers (docs/build-prompt.md, the serena-windows-home row): a home per project
 // downloads them once per project
 const SERENA_PER_PROJECT = 'its language servers (about 327MB) download once per project';
@@ -324,7 +326,8 @@ function locationQuestion(row, inv, { scope, name = null, current = null, copyOf
         if (p.description) return p.description;
         const text = placeText(p.root, scope, ctx, serenaWin);
         if (p.side === 'keep') return text;
-        const tail = row.id === 'serena' && ['alfred-data', 'project'].includes(p.side) ? `${SIDE_TAIL[p.side]}; ${SERENA_PER_PROJECT}` : SIDE_TAIL[p.side];
+        const base = p.side === 'project' && scope === 'project' ? COMMITTED_PROJECT_TAIL : SIDE_TAIL[p.side];
+        const tail = row.id === 'serena' && ['alfred-data', 'project'].includes(p.side) ? `${base}; ${SERENA_PER_PROJECT}` : base;
         return `${text} - ${tail}`;
     };
     const options = order.map((p, i) => ({ label: `${label(p)}${i === 0 ? REC : ''}`, description: describe(p) }));

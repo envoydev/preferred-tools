@@ -1230,3 +1230,17 @@ test("a move to project scope carries no machine path in env: appium's SDK homes
     assert.match(refused.errors.join(' '), /appium: '.*' holds a machine path in env\.MY_TOOL, which the committed \.mcp\.json must not carry - keep it at local scope, or put a \$\{VAR\} there first/);
     assert.strictEqual(refused.steps.length, 0);
 });
+
+test('project scope in .preferred-tools: the plan and the option say another clone needs the folder git-ignored', () => {
+    const own = plan(inv(MAC), pickOne('playwright-chrome', { scope: 'project', location: { side: 'project' } }), opts('/Users/me'));
+    assert.deepStrictEqual(own.errors, []);
+    assert.ok(own.notes.some((n) => /another clone of this project creates \.preferred-tools\/playwright-chrome unignored - its \.gitignore holds \* and is never committed: add \.preferred-tools\/ to the project's \.gitignore, or run \/preferred-tools:fix there/.test(n)), own.notes.join('\n'));
+    // alfred-code's .alfred/.gitignore is committed, so every clone has it
+    const alfred = plan(inv(MAC, { alfredCodeEnabled: true }), pickOne('playwright-chrome', { scope: 'project', location: { side: 'alfred-data' } }), opts('/Users/me', { exists: ALFRED }));
+    assert.deepStrictEqual(alfred.errors, []);
+    assert.ok(!alfred.notes.some((n) => /another clone/.test(n)), alfred.notes.join('\n'));
+    const q = asks.locationQuestion(catalog.byId.get('playwright-chrome'), inv(MAC), { scope: 'project', ctx: { project: '/work/shop', platform: 'darwin', home: '/Users/me', env: {}, exists: () => false } });
+    assert.match(q.question.options.find((o) => o.label.startsWith('.preferred-tools')).description, /its \.gitignore is never committed, so another clone needs \.preferred-tools\/ in the project's \.gitignore$/);
+    const local = asks.locationQuestion(catalog.byId.get('playwright-chrome'), inv(MAC), { scope: 'local', ctx: { project: '/work/shop', platform: 'darwin', home: '/Users/me', env: {}, exists: () => false } });
+    assert.match(local.question.options[0].description, /the plugin's own folder, with its \.gitignore$/);
+});
