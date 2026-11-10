@@ -8,8 +8,10 @@
 // catalog } - so the options and the root in use are tested without a disk.
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const account = require('./account.js');
 const E = require('./entries.js');
+const helper = require('./mcp-headers.js');
 
 const FILES = { secrets: '.mcps-secrets', helper: 'mcp-headers.js', record: 'preferred-tools.json', map: 'roots.json' };
 const GITIGNORE = '*\n!.gitignore\n!mcp-headers.js\n';
@@ -250,7 +252,109 @@ function readRecord(file)
     return { version: RECORD_VERSION, servers: doc.servers.filter((s) => s && typeof s === 'object') };
 }
 
+// The record's key for one entry (R6): `mcp:<name>~<scope>`, `plugin-mcp:<plugin>/<server>`, `connector:<Name>`; null
+// for an entry of none of those shapes.
+function recordKey(e)
+{
+    if (!e || typeof e !== 'object') return null;
+    if (typeof e.name === 'string' && typeof e.scope === 'string') return `mcp:${e.name}~${e.scope}`;
+    if (typeof e.plugin === 'string' && typeof e.server === 'string') return `plugin-mcp:${e.plugin}/${e.server}`;
+    if (typeof e.connector === 'string') return `connector:${e.connector}`;
+    return null;
+}
+
+const sameFingerprint = (a, b) => JSON.stringify(sortKeys(a)) === JSON.stringify(sortKeys(b));
+function sortKeys(v)
+{
+    if (Array.isArray(v)) return v.map(sortKeys);
+    if (v && typeof v === 'object') return Object.fromEntries(Object.keys(v).sort().map((k) => [k, sortKeys(v[k])]));
+    return v;
+}
+
+// The record with this run's entries merged in (D6). An entry replaces the one with its key, in place; a new key is
+// appended. Then an entry is dropped when its server is gone: a server's key missing from `live.servers`, or there with
+// another fingerprint (null: present, not compared); a connector only when `live.connectors` is a list that lacks it -
+// a run that did not pass the connectors keeps every one (R14). An entry of no known shape is dropped.
+// live: { servers: { <key>: fingerprint | null }, connectors: string[] | null }
+function mergeRecord(record, entries, live)
+{
+    const out = [];
+    const at = new Map();
+    for (const e of [...((record && record.servers) || []), ...(entries || [])])
+    {
+        const key = recordKey(e);
+        if (!key) continue;
+        if (at.has(key)) out[at.get(key)] = e;
+        else { at.set(key, out.length); out.push(e); }
+    }
+    const servers = (live && live.servers) || {};
+    const connectors = live && Array.isArray(live.connectors) ? live.connectors : null;
+    const kept = out.filter((e) =>
+    {
+        if (typeof e.connector === 'string') return !connectors || connectors.includes(e.connector);
+        const key = recordKey(e);
+        if (!Object.hasOwn(servers, key)) return false;
+        return servers[key] === null || sameFingerprint(servers[key], e.fingerprint);
+    });
+    return { version: RECORD_VERSION, servers: kept };
+}
+
+// ---- git and the helper on disk -------------------------------------------------------------------------------------
+
+const isDir = (p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } };
+
+// Would git ignore this path? Run from its nearest folder on disk, so a file not written yet is asked about too. -> true,
+// false, or null outside a git work tree or with git absent.
+function gitIgnores(file)
+{
+    let dir = path.dirname(file);
+    while (!isDir(dir))
+    {
+        const up = path.dirname(dir);
+        if (up === dir) return null;
+        dir = up;
+    }
+    const r = spawnSync('git', ['-C', dir, 'check-ignore', '-q', '--', path.relative(dir, file)], { windowsHide: true });
+    if (r.error) return null;
+    return r.status === 0 ? true : r.status === 1 ? false : null;
+}
+
+// R13's check for a root that exists: git would commit its key file, or - a project root other than .alfred - would
+// ignore the helper a project-scope server needs committed. -> null | { reason }; null outside a work tree or with no git.
+function ignoreGap(root, family)
+{
+    const secrets = path.join(root, FILES.secrets);
+    const s = gitIgnores(secrets);
+    if (s === false) return { reason: `git would commit ${secrets}` };
+    if (s === null) return null;
+    const file = path.join(root, FILES.helper);
+    if (family === 'project' && path.basename(root) !== '.alfred' && gitIgnores(file) === true)
+        return { reason: `git ignores ${file}, which a project-scope server needs committed` };
+    return null;
+}
+
+const HELPER_LINE = /^\/\/ preferred-tools mcp-headers (\d+)\s*$/;
+let helperText = null;
+const helperSource = () => (helperText = helperText || fs.readFileSync(path.join(__dirname, FILES.helper), 'utf8'));
+
+// The helper at `file` against this plugin's (D4): 'absent', 'lower' (rewrite it), 'same', 'edited' (the same number with
+// other bytes, or no number line - a hand edit, left), 'higher' (a newer plugin wrote it - left). A CRLF copy of the same
+// text is the same helper (digestOf). -> { state, number }
+function helperState(file, exists = (p) => fs.existsSync(p))
+{
+    if (!exists(file)) return { state: 'absent', number: null };
+    let text;
+    try { text = fs.readFileSync(file, 'utf8'); }
+    catch { return { state: 'absent', number: null }; }
+    const m = HELPER_LINE.exec(text.split('\n')[0]);
+    if (!m) return { state: 'edited', number: null };
+    const number = Number(m[1]);
+    if (number < helper.HELPER_VERSION) return { state: 'lower', number };
+    if (number > helper.HELPER_VERSION) return { state: 'higher', number };
+    return { state: helper.digestOf(text) === helper.digestOf(helperSource()) ? 'same' : 'edited', number };
+}
+
 module.exports = {
     FILES, GITIGNORE, familyOf, readMap, mapKey, withRoot, inUse, options, resolveNamed, resolve, rootStrFor, recordFiles, readRecord,
-    helperPathOf, registrationRoots, standard,
+    helperPathOf, registrationRoots, standard, recordKey, mergeRecord, gitIgnores, ignoreGap, helperState, helperSource,
 };

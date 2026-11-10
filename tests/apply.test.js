@@ -70,7 +70,10 @@ test('a fresh install writes through the CLI at each scope, and every add is rea
         // the slow half is handed to fetch.js, never run here: no download and no `claude mcp get` inside the apply
         assert.ok(!w.calls().some((a) => a[0] === 'mcp' && a[1] === 'get'), 'apply asks the CLI for no status');
         assert.deepStrictEqual(w.fetches(), [], 'apply runs no runtime');
-        assert.match(r.text, /3\. later  serena: fetch serena-agent@/);
+        assert.match(r.text, /5\. later  serena: fetch serena-agent@/);
+        // each root got its .gitignore first (R13): the project root for serena, the global root for playwright-chrome
+        const { GITIGNORE } = require('../scripts/roots.js');
+        for (const root of [path.join(w.project, '.preferred-tools'), path.join(w.home, '.preferred-tools')]) assert.strictEqual(fs.readFileSync(path.join(root, '.gitignore'), 'utf8'), GITIGNORE, root);
         assert.match(r.text, /Fetch next, in the background \(a first download can take minutes\): .*fetch\.json/);
         const job = readJson(r.report.fetchFile);
         assert.deepStrictEqual(job.fetch.map((s) => s.name), ['serena', 'playwright-chrome']);
@@ -748,6 +751,237 @@ test('a replace or a move keeps the stdio key the registration holds when the ch
         const v = keptWalk(w, { change: { 'mcp:gh-var~project': { scope: 'user' } } });
         assert.strictEqual(v.report.failed, null, v.text);
         assert.strictEqual(accountDoc(w).mcpServers['gh-var'].env[G], '');
+    }
+    finally { w.clean(); }
+});
+
+// ---- 0.2.0: the apply's file steps (spec D2-D4, D6, D8; plan R8, R13) -------------------------------------------------
+const HELPER_SRC = path.join(__dirname, '..', 'scripts', 'mcp-headers.js');
+const KEY_HEAD = '# preferred-tools MCP keys - fill in each value; this file is never committed';
+function runSteps(w, list, opts = {})
+{
+    const lines = [];
+    const report = apply({ version: 1, project: w.project, steps: list, errors: [] }, { env: w.env, tmp: path.join(w.dir, 'tmp'), log: (...a) => lines.push(a.join(' ')), ...opts });
+    return { report, text: lines.join('\n') };
+}
+const git = (dir, ...args) => spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
+
+test('write-helper: absent is written; a lower number is rewritten; the same number is left; a higher number is left with the note', () => {
+    const w = world();
+    try
+    {
+        const src = fs.readFileSync(HELPER_SRC, 'utf8');
+        const root = path.join(w.project, '.preferred-tools');
+        const dest = path.join(root, 'mcp-headers.js');
+        const step = { op: 'write-helper', path: root };
+        let r = runSteps(w, [step]);
+        assert.strictEqual(r.report.failed, null, r.text);
+        assert.strictEqual(fs.readFileSync(dest, 'utf8'), src);
+        assert.ok(r.text.includes(`wrote ${dest} (helper 1)`), r.text);
+        fs.writeFileSync(dest, src.replace(/^\/\/ preferred-tools mcp-headers \d+/, '// preferred-tools mcp-headers 0'));
+        r = runSteps(w, [step]);
+        assert.strictEqual(fs.readFileSync(dest, 'utf8'), src);
+        assert.ok(r.text.includes(`rewrote ${dest} (helper 0 -> 1)`), r.text);
+        r = runSteps(w, [step]);
+        assert.ok(r.text.includes(`${dest} is up to date - left as it is`), r.text);
+        const edited = `${src}// mine\n`;
+        fs.writeFileSync(dest, edited);
+        r = runSteps(w, [step]);
+        assert.strictEqual(fs.readFileSync(dest, 'utf8'), edited);
+        assert.ok(r.text.includes(`${dest} changed since preferred-tools wrote it - left; /preferred-tools:fix rewrites it`), r.text);
+        const newer = src.replace(/^\/\/ preferred-tools mcp-headers \d+/, '// preferred-tools mcp-headers 9');
+        fs.writeFileSync(dest, newer);
+        r = runSteps(w, [step]);
+        assert.strictEqual(fs.readFileSync(dest, 'utf8'), newer);
+        assert.ok(r.text.includes(`mcp-headers.js in ${root} is newer than this plugin - update preferred-tools`), r.text);
+        assert.strictEqual(r.report.failed, null);
+    }
+    finally { w.clean(); }
+});
+
+test('write-helper leaves a CRLF copy of the same helper as it is', () => {
+    const w = world();
+    try
+    {
+        const root = path.join(w.project, '.preferred-tools');
+        const crlf = fs.readFileSync(HELPER_SRC, 'utf8').replace(/\n/g, '\r\n');
+        fs.mkdirSync(root, { recursive: true });
+        fs.writeFileSync(path.join(root, 'mcp-headers.js'), crlf);
+        const r = runSteps(w, [{ op: 'write-helper', path: root }]);
+        assert.strictEqual(fs.readFileSync(path.join(root, 'mcp-headers.js'), 'utf8'), crlf);
+        assert.match(r.text, /is up to date - left as it is/);
+    }
+    finally { w.clean(); }
+});
+
+test('ensure-key-name: names appended, existing lines byte-identical, no value written, refused when git would not ignore the file', () => {
+    const w = world();
+    try
+    {
+        const root = path.join(w.project, '.preferred-tools');
+        const file = path.join(root, '.mcps-secrets');
+        let r = runSteps(w, [{ op: 'ensure-key-name', file, names: [G, 'CONTEXT7_API_KEY'] }]);
+        assert.strictEqual(r.report.failed, null, r.text);
+        assert.strictEqual(fs.readFileSync(file, 'utf8'), `${KEY_HEAD}\n${G}=\nCONTEXT7_API_KEY=\n`);
+        assert.match(r.text, /names only, you fill in each value/);
+        // an existing file: each line byte-identical, the missing name appended in the file's own line ending
+        const mine = `# mine\r\n${G}=fake-${hex(6)}\r\nexport OTHER="x"`;
+        fs.writeFileSync(file, mine);
+        r = runSteps(w, [{ op: 'ensure-key-name', file, names: [G, S] }]);
+        assert.strictEqual(fs.readFileSync(file, 'utf8'), `${mine}\r\n${S}=\r\n`);
+        assert.ok(r.text.includes(`appended ${S}= to ${file} - names only`), r.text);
+        r = runSteps(w, [{ op: 'ensure-key-name', file, names: [G] }]);
+        assert.strictEqual(fs.readFileSync(file, 'utf8'), `${mine}\r\n${S}=\r\n`, 'nothing missing: left');
+        // inside a git work tree that would commit it: refused, nothing written
+        assert.strictEqual(git(w.project, 'init', '-q').status, 0);
+        const loose = path.join(w.project, 'keys', '.mcps-secrets');
+        r = runSteps(w, [{ op: 'ensure-key-name', file: loose, names: [G] }]);
+        assert.strictEqual(r.report.failed.op, 'ensure-key-name');
+        assert.ok(r.report.failed.detail.includes(`git would commit ${loose} - not written`), r.report.failed.detail);
+        assert.ok(!fs.existsSync(loose));
+        // the root's .gitignore makes git ignore it
+        r = runSteps(w, [{ op: 'root-ignore', path: root }, { op: 'ensure-key-name', file, names: ['NEW_GITHUB_TOKEN'] }]);
+        assert.strictEqual(r.report.failed, null, r.text);
+        assert.ok(fs.readFileSync(file, 'utf8').endsWith('NEW_GITHUB_TOKEN=\r\n'));
+    }
+    finally { w.clean(); }
+});
+
+test('ensure-key-name creates the key file readable by its owner only', { skip: process.platform === 'win32' }, () => {
+    const w = world();
+    try
+    {
+        const file = path.join(w.project, '.preferred-tools', '.mcps-secrets');
+        runSteps(w, [{ op: 'ensure-key-name', file, names: [G] }]);
+        assert.strictEqual(fs.statSync(file).mode & 0o777, 0o600);
+        fs.chmodSync(file, 0o640);
+        runSteps(w, [{ op: 'ensure-key-name', file, names: [S] }]);
+        assert.strictEqual(fs.statSync(file).mode & 0o777, 0o640, "an existing file's mode is the user's");
+    }
+    finally { w.clean(); }
+});
+
+test('root-ignore: written once, left when present, never under .alfred', () => {
+    const w = world();
+    try
+    {
+        const { GITIGNORE } = require('../scripts/roots.js');
+        const root = path.join(w.project, '.preferred-tools');
+        const file = path.join(root, '.gitignore');
+        let r = runSteps(w, [{ op: 'root-ignore', path: root }]);
+        assert.strictEqual(r.report.failed, null, r.text);
+        assert.strictEqual(fs.readFileSync(file, 'utf8'), GITIGNORE);
+        r = runSteps(w, [{ op: 'root-ignore', path: root }]);
+        assert.strictEqual(fs.readFileSync(file, 'utf8'), GITIGNORE);
+        assert.ok(r.text.includes(`${file} has every line it needs - left as it is`), r.text);
+        // a 0.1.x .gitignore holding *: the lines it lacks appended, none rewritten
+        fs.writeFileSync(file, '*\n');
+        runSteps(w, [{ op: 'root-ignore', path: root }]);
+        assert.strictEqual(fs.readFileSync(file, 'utf8'), '*\n!.gitignore\n!mcp-headers.js\n');
+        // a folder holding the user's own files: only the key file and the record, never *
+        const named = path.join(w.project, 'tools');
+        fs.mkdirSync(named, { recursive: true });
+        fs.writeFileSync(path.join(named, 'notes.txt'), 'mine');
+        runSteps(w, [{ op: 'root-ignore', path: named }]);
+        assert.strictEqual(fs.readFileSync(path.join(named, '.gitignore'), 'utf8'), '.mcps-secrets\npreferred-tools.json\n');
+        // .alfred is alfred-code's: nothing written
+        const alfred = path.join(w.project, '.alfred');
+        r = runSteps(w, [{ op: 'root-ignore', path: alfred }]);
+        assert.strictEqual(r.report.failed, null);
+        assert.ok(!fs.existsSync(path.join(alfred, '.gitignore')));
+        assert.match(r.text, /alfred-code's - its own \.gitignore covers it/);
+    }
+    finally { w.clean(); }
+});
+
+test('record-root: the entry written, a second project beside it, the key normalised', () => {
+    const w = world();
+    try
+    {
+        const roots = require('../scripts/roots.js');
+        const data = path.join(w.dir, 'data');
+        const other = path.join(w.dir, 'other');
+        fs.mkdirSync(other, { recursive: true });
+        const r1 = path.join(w.project, 'keys-root');
+        let r = runSteps(w, [{ op: 'record-root', family: 'project', project: `${w.project}${path.sep}.${path.sep}`, root: r1 }], { data });
+        assert.strictEqual(r.report.failed, null, r.text);
+        const file = path.join(data, 'roots.json');
+        assert.deepStrictEqual(readJson(file), { version: 1, global: null, projects: { [roots.mapKey(w.project)]: r1 } });
+        runSteps(w, [{ op: 'record-root', family: 'project', project: other, root: path.join(other, '.preferred-tools') }, { op: 'record-root', family: 'global', project: other, root: path.join(w.home, 'keys') }], { data });
+        assert.deepStrictEqual(readJson(file), { version: 1, global: path.join(w.home, 'keys'), projects: { [roots.mapKey(w.project)]: r1, [roots.mapKey(other)]: path.join(other, '.preferred-tools') } });
+        // without --data (R8): ok, with the note
+        r = runSteps(w, [{ op: 'record-root', family: 'project', project: w.project, root: r1 }]);
+        assert.strictEqual(r.report.failed, null);
+        assert.match(r.text, /no plugin data folder given - the root is found from its files next time/);
+    }
+    finally { w.clean(); }
+});
+
+test('record-choice merges by key and drops an entry whose server is gone; a malformed record is replaced only by the merge of its readable entries', () => {
+    const w = world();
+    try
+    {
+        const roots = require('../scripts/roots.js');
+        const file = path.join(w.project, '.preferred-tools', 'preferred-tools.json');
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        const a = { name: 'a', scope: 'local', fingerprint: { pkg: 'x' }, choice: 'own' };
+        const gone = { name: 'gone', scope: 'local', fingerprint: { pkg: 'y' }, choice: 'own' };
+        const moved = { name: 'moved', scope: 'local', fingerprint: { pkg: 'old' }, choice: 'own' };
+        const plug = { plugin: 'p@m', server: 's', fingerprint: { host: 'h' }, choice: 'add' };
+        const conn = { connector: 'Notion', choice: 'own' };
+        writeJson(file, { version: 1, servers: [a, gone, moved, 'junk', plug, conn] });
+        const b = { name: 'b', scope: 'user', fingerprint: { pkg: 'z' }, choice: 'manage' };
+        const a2 = { ...a, choice: 'manage' };
+        const live = { servers: { 'mcp:a~local': { pkg: 'x' }, 'mcp:b~user': { pkg: 'z' }, 'mcp:moved~local': { pkg: 'new' }, 'plugin-mcp:p@m/s': { host: 'h' } }, connectors: null };
+        let r = runSteps(w, [{ op: 'record-choice', file, entries: [b, a2], live }]);
+        assert.strictEqual(r.report.failed, null, r.text);
+        assert.deepStrictEqual(readJson(file), { version: 1, servers: [a2, plug, conn, b] }, 'a replaced in place; gone, moved and junk dropped; the connector kept with no list');
+        // a run that passed the connectors drops one it lacks (R14)
+        runSteps(w, [{ op: 'record-choice', file, entries: [], live: { ...live, connectors: ['Linear'] } }]);
+        assert.deepStrictEqual(readJson(file).servers.map(roots.recordKey), ['mcp:a~local', 'plugin-mcp:p@m/s', 'mcp:b~user']);
+        // a record that is not JSON: replaced by the merge alone
+        fs.writeFileSync(file, '{oops');
+        r = runSteps(w, [{ op: 'record-choice', file, entries: [b], live }]);
+        assert.deepStrictEqual(readJson(file), { version: 1, servers: [b] });
+        assert.match(r.text, /is not JSON - read as empty/);
+        assert.deepStrictEqual([roots.recordKey(a), roots.recordKey(plug), roots.recordKey(conn), roots.recordKey({ x: 1 })], ['mcp:a~local', 'plugin-mcp:p@m/s', 'connector:Notion', null]);
+    }
+    finally { w.clean(); }
+});
+
+test('a new root gets root-ignore with GITIGNORE before any other step', () => {
+    const w = world();
+    try
+    {
+        const r = walk(w, { picks: { github: { route: 'remote', scope: 'local' } } });
+        assert.strictEqual(r.report.failed, null, r.text);
+        assert.strictEqual(r.p.steps[0].op, 'root-ignore');
+        const root = path.join(w.project, '.preferred-tools');
+        assert.strictEqual(fs.readFileSync(path.join(root, '.gitignore'), 'utf8'), require('../scripts/roots.js').GITIGNORE);
+        assert.match(r.text, /^1\. ok {5}wrote .*\.gitignore \(\*, !\.gitignore, !mcp-headers\.js\)$/m);
+    }
+    finally { w.clean(); }
+});
+
+test('a re-run after a failed add writes no file again', () => {
+    const w = world();
+    try
+    {
+        const inv = inventory.buildInventory({ project: w.project, env: w.env });
+        const p = plan(inv, { picks: { github: { route: 'remote', scope: 'local' } } }, { home: w.home, env: w.env });
+        assert.deepStrictEqual(p.steps.map((s) => s.op), ['root-ignore', 'write-helper', 'ensure-key-name', 'mcp-add', 'record-root']);
+        const data = path.join(w.dir, 'data');
+        const root = path.join(w.project, '.preferred-tools');
+        const first = apply(p, { env: { ...w.env, FAKE_CLAUDE_FAIL: 'add-json github' }, tmp: path.join(w.dir, 'tmp'), log: () => {}, data });
+        assert.strictEqual(first.failed.op, 'mcp-add');
+        const snap = () => ['.gitignore', 'mcp-headers.js', '.mcps-secrets'].map((f) => [f, fs.readFileSync(path.join(root, f), 'utf8'), fs.statSync(path.join(root, f)).mtimeMs]);
+        const before = snap();
+        const lines = [];
+        const second = apply(p, { env: w.env, tmp: path.join(w.dir, 'tmp'), log: (...a) => lines.push(a.join(' ')), data });
+        assert.strictEqual(second.failed, null, lines.join('\n'));
+        assert.deepStrictEqual(snap(), before, 'byte-identical and untouched');
+        assert.ok(accountDoc(w).projects[accountKey(w.project)].mcpServers.github.headersHelper.endsWith(`mcp-headers.js ${G} Bearer`));
+        assert.deepStrictEqual(readJson(path.join(data, 'roots.json')).projects, { [require('../scripts/roots.js').mapKey(w.project)]: root });
     }
     finally { w.clean(); }
 });

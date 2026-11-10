@@ -2,7 +2,7 @@
 'use strict';
 // APPLY - runs a plan's operations in order through the `claude` CLI, reads each back, and stops at the first failure.
 //
-//   node apply.js <plan.json> [--tmp <dir>]
+//   node apply.js <plan.json> [--tmp <dir>] [--data <plugin data dir>]
 //
 // The CLI is the only writer of .mcp.json and the account file; this file only reads them back. Everything applied
 // before a failure stays in place and is named. An empty plan makes no call at all and says so.
@@ -31,6 +31,7 @@ const kept = require('./kept.js');
 const keys = require('./keys.js');
 const catalogLib = require('./catalog.js');
 const tmpdir = require('./tmpdir.js');
+const roots = require('./roots.js');
 
 const SCRIPTS = __dirname;
 const quote = (s) => (/^[A-Za-z0-9_\-./:=@,+]+$/.test(s) ? s : `'${s.replace(/'/g, "'\\''")}'`);
@@ -128,6 +129,105 @@ function pluginState(ctx, id, scope)
     return inv.plugins.find((p) => p.id === id && p.scope === scope);
 }
 
+// ---- the file steps (spec D2-D4, D6, D8): each skips what is in place, so a re-run after a failed add writes nothing again
+
+// A text file's line ending, and the text with each line appended in it; existing bytes are never rewritten.
+const eolOf = (text) => (/\r\n/.test(text) ? '\r\n' : '\n');
+const appendLines = (text, lines) => { const eol = eolOf(text); return `${text}${text && !/\r?\n$/.test(text) ? eol : ''}${lines.map((l) => `${l}${eol}`).join('')}`; };
+
+// What the plugin itself writes in a root (R13): a folder holding anything else holds the user's files.
+const PLUGIN_FILES = new Set(['.gitignore', ...Object.values(roots.FILES), ['.', 'secrets'].join('')]);
+function pluginWritten(root, name)
+{
+    if (PLUGIN_FILES.has(name)) return true;
+    try { return fs.readFileSync(path.join(root, name, '.gitignore'), 'utf8').trim() === '*'; }
+    catch { return false; }
+}
+
+// <root>/.gitignore: GITIGNORE when absent, else each of its lines the file lacks appended; in a folder holding the
+// user's own files, only the key file and the record - never `*`, so their files stay visible to git. Never under .alfred.
+function rootIgnore(root)
+{
+    if (path.basename(root) === '.alfred') return { ok: true, detail: `${root} is alfred-code's - its own .gitignore covers it; nothing written` };
+    let names = [];
+    try { names = fs.readdirSync(root); } catch { /* a new root */ }
+    const mine = names.every((n) => pluginWritten(root, n));
+    const want = mine ? roots.GITIGNORE.trim().split('\n') : [roots.FILES.secrets, roots.FILES.record];
+    const file = path.join(root, '.gitignore');
+    let text = null;
+    try { text = fs.readFileSync(file, 'utf8'); } catch { /* absent */ }
+    if (text === null)
+    {
+        fs.mkdirSync(root, { recursive: true });
+        fs.writeFileSync(file, appendLines('', want));
+        return { ok: true, detail: `wrote ${file} (${want.join(', ')})` };
+    }
+    const have = new Set(text.split(/\r?\n/).map((l) => l.trim()));
+    const lack = want.filter((l) => !have.has(l));
+    if (!lack.length) return { ok: true, detail: `${file} has every line it needs - left as it is` };
+    fs.writeFileSync(file, appendLines(text, lack));
+    return { ok: true, detail: `appended ${lack.join(', ')} to ${file}` };
+}
+
+// <root>/mcp-headers.js: copied when absent or its number is lower (D4); a hand edit or a newer copy is left.
+function writeHelper(root)
+{
+    const file = path.join(root, roots.FILES.helper);
+    const { state, number } = roots.helperState(file);
+    const version = require('./mcp-headers.js').HELPER_VERSION;
+    if (state === 'same') return { ok: true, detail: `${file} is up to date - left as it is` };
+    if (state === 'higher') return { ok: true, detail: `mcp-headers.js in ${root} is newer than this plugin - update preferred-tools` };
+    if (state === 'edited') return { ok: true, detail: `${file} changed since preferred-tools wrote it - left; /preferred-tools:fix rewrites it` };
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(file, roots.helperSource());
+    return { ok: true, detail: state === 'lower' ? `rewrote ${file} (helper ${number} -> ${version})` : `wrote ${file} (helper ${version})` };
+}
+
+// The key file's names (D3): created with its comment line, readable by its owner only; `NAME=` appended for each name it
+// lacks. Its values are never read out of this process, and no line is rewritten. Refused where git would commit it.
+const KEY_HEAD = '# preferred-tools MCP keys - fill in each value; this file is never committed';
+function ensureKeyName(file, names)
+{
+    if (roots.gitIgnores(file) === false) return { ok: false, detail: `git would commit ${file} - not written; /preferred-tools:fix (root-ignore) covers it` };
+    let buf = null;
+    try { buf = fs.readFileSync(file); } catch { /* absent */ }
+    if (buf && buf[0] === 0xff && buf[1] === 0xfe) return { ok: false, detail: `${file} is UTF-16 - add ${names.map((n) => `${n}=`).join(', ')} to it yourself; nothing written` };
+    const text = buf ? buf.toString('utf8') : null;
+    const have = new Set(keys.namesIn(file));
+    const lack = [...new Set(names)].filter((n) => !have.has(n));
+    const list = lack.map((n) => `${n}=`).join(', ');
+    if (text === null)
+    {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, appendLines('', [KEY_HEAD, ...lack.map((n) => `${n}=`)]), process.platform === 'win32' ? {} : { mode: 0o600 });
+        return { ok: true, detail: `created ${file} with ${list || 'no name'} - names only, you fill in each value` };
+    }
+    if (!lack.length) return { ok: true, detail: `${file} has ${names.join(', ')} - left as it is` };
+    fs.writeFileSync(file, appendLines(text, lack.map((n) => `${n}=`)));
+    return { ok: true, detail: `appended ${list} to ${file} - names only, you fill in each value` };
+}
+
+// <root>/preferred-tools.json: this run's answers merged in, a server gone since dropped (D6).
+function recordChoice(file, entries, live)
+{
+    const record = roots.readRecord(file);
+    const merged = roots.mergeRecord(record, entries, live);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${JSON.stringify(merged, null, 2)}\n`);
+    return { ok: true, detail: `wrote ${file} (${merged.servers.length} server${merged.servers.length === 1 ? '' : 's'})${record && record.note ? ` - ${record.note}` : ''}` };
+}
+
+// <data>/roots.json: the family's root for this project (D2). No data folder given: nothing to write (R8).
+function recordRoot(step, data)
+{
+    if (!data) return { ok: true, detail: `${step.family} root ${step.root}: no plugin data folder given - the root is found from its files next time` };
+    const map = roots.readMap(data);
+    const file = path.join(data, roots.FILES.map);
+    fs.mkdirSync(data, { recursive: true });
+    fs.writeFileSync(file, `${JSON.stringify(roots.withRoot(map, step.family, path.resolve(step.project), step.root), null, 2)}\n`);
+    return { ok: true, detail: `recorded the ${step.family} root ${step.root} in ${file}${map.note ? ` - ${map.note}` : ''}` };
+}
+
 // One operation. { ok, detail, extra[] }
 function runStep(step, ctx)
 {
@@ -140,13 +240,11 @@ function runStep(step, ctx)
             if (!existed) fs.writeFileSync(path.join(step.path, '.gitignore'), '*\n');
             return { ok: true, detail: existed ? `${step.path} exists - left as it is` : `created ${step.path} with a .gitignore holding *` };
         }
-        case 'ensure-ignore': {
-            const file = path.join(step.path, '.gitignore');
-            if (fs.existsSync(file)) return { ok: true, detail: `${file} exists - left as it is` };
-            fs.mkdirSync(step.path, { recursive: true });
-            fs.writeFileSync(file, '*\n');
-            return { ok: true, detail: `wrote ${file} holding *` };
-        }
+        case 'root-ignore': return rootIgnore(step.path);
+        case 'write-helper': return writeHelper(step.path);
+        case 'ensure-key-name': return ensureKeyName(step.file, step.names);
+        case 'record-choice': return recordChoice(step.file, step.entries, step.live);
+        case 'record-root': return recordRoot(step, ctx.data);
         case 'mcp-add': return addAndVerify(call, ctx, step.name, step.scope, step.entry, rowOf(ctx, step));
         case 'mcp-remove': return removeAndVerify(call, ctx, step.name, step.scope);
         case 'mcp-replace': {
@@ -200,7 +298,7 @@ function runStep(step, ctx)
 // halfway. The slow half - the fetch steps and the `claude mcp get` status, minutes on a first install - goes to
 // <tmp>/fetch.json (or `fetchFile`; false writes none, for a caller that collects several applies) for fetch.js, which
 // the command runs in the background.
-function apply(plan, { env = process.env, tmp, runCli = cli.run, log = console.log, fetchFile } = {})
+function apply(plan, { env = process.env, tmp, runCli = cli.run, log = console.log, fetchFile, data = null } = {})
 {
     const project = plan.project;
     const report = { applied: [], failed: null, notRun: [], readback: [], keys: [], noop: false, toFetch: [], fetch: null, fetchFile: null, tmp: tmp || null };
@@ -210,7 +308,7 @@ function apply(plan, { env = process.env, tmp, runCli = cli.run, log = console.l
         log('Nothing to apply: every answer already matches what is installed. No claude call was made.');
         return report;
     }
-    const ctx = { project, env, tmp: tmp || fs.mkdtempSync(path.join(os.tmpdir(), 'preferred-tools-')), runCli, catalog: catalogLib.load(), alfredEnabled: Boolean(plan.alfredCodeEnabled) };
+    const ctx = { project, env, tmp: tmp || fs.mkdtempSync(path.join(os.tmpdir(), 'preferred-tools-')), runCli, catalog: catalogLib.load(), alfredEnabled: Boolean(plan.alfredCodeEnabled), data };
     ctx.call = makeRunner(ctx);
     report.tmp = ctx.tmp;
     for (let i = 0; i < plan.steps.length; i++)
@@ -271,12 +369,12 @@ function main(argv)
 {
     blockingStdio();
     const file = argv[0];
-    if (!file) { console.error('usage: apply.js <plan.json> [--tmp <dir>]'); return 2; }
+    if (!file) { console.error('usage: apply.js <plan.json> [--tmp <dir>] [--data <plugin data dir>]'); return 2; }
     const plan = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (plan.errors && plan.errors.length) { console.error(`apply: the plan has errors - nothing applied:\n${plan.errors.map((e) => `  ! ${e}`).join('\n')}`); return 1; }
-    const at = argv.indexOf('--tmp');
+    const flag = (name) => { const at = argv.indexOf(name); return at >= 0 ? argv[at + 1] : undefined; };
     const log = (...a) => console.log(a.join('\n'));
-    const report = apply(plan, { tmp: at >= 0 ? argv[at + 1] : undefined, log });
+    const report = apply(plan, { tmp: flag('--tmp'), data: flag('--data') || null, log });
     // the last script on <tmp> removes it: this one, unless fetch.js takes it on
     if (!report.fetchFile) tmpdir.release(report.tmp, log);
     return report.failed ? 1 : 0;

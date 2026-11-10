@@ -242,6 +242,7 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     }
     let rootStr;
     let ensure = null;
+    let dataAbs = null;
     if (row.locations)
     {
         const w = wantedRoot(row, pick, cur, name, scope, ctx, !cur && here.length > 0);
@@ -249,7 +250,8 @@ function planMcp(row, pick, inv, ctx, catalog, out)
         const f = E.formatRoot(w.root, scope, ctx, { backslash: w.backslash });
         if (f.error) return out.errors.push(`${row.id}: ${f.error}`);
         rootStr = f.value;
-        if (!w.existing) ensure = E.formatRoot(w.root, 'local', ctx).value;
+        dataAbs = E.formatRoot(w.root, 'local', ctx).value;
+        if (!w.existing) ensure = dataAbs;
         // a relative folder in the committed file lands wherever Claude starts; the plan creates and ignores only this one
         if (scope === 'project' && w.root.kind === 'project')
         {
@@ -332,10 +334,13 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     // key is written in by the apply from the stdio chain. The line names the files, never a value; a name found only in
     // a file 0.1.x read names that file.
     const keyed = ks && !(entry.headers && entry.headers.Authorization) ? ks : null;
+    let keyFile = null;
     if (keyed && !(keyed.kind === 'stdio' && scope === 'project'))
     {
         const filled = keys.filledNames(keyed.files).some((f) => f.names.includes(keyName));
         out.keys.push({ row: row.id, name, scope, variable: keyName, kind: keyed.kind, files: keyed.files, filled, old: filled ? null : keys.oldHolding(ctx.project, ctx.home, keyName) });
+        // a name filled nowhere in the chain is written, empty, into the chain's first file (D3)
+        if (!filled) keyFile = keyed.files[0];
     }
     // a stdio key at local or global scope: the apply writes it in from the stdio chain under the key's name (R7); configure
     // rewrites a registration whose key differs from the chosen name's filled value, even when nothing else changed
@@ -359,8 +364,10 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     // a launch the cache may not hold yet is fetched once it is written (entries.js fetchStep says why); a change that
     // keeps the package, such as a location or a name, fetches nothing
     const fetch = E.fetchStep(name, entry, row.id, cur && cur.entry);
+    const uses = { helper: Boolean(entry.headersHelper), keyFile, keyName, data: dataAbs };
     if (!cur)
     {
+        useRoots(ctx, scope, uses);
         if (ensure) out.steps.push({ op: 'ensure-dir', path: ensure, why: `${row.id}: data folder, with a .gitignore holding * so the project's own .gitignore is never edited` });
         out.steps.push({ op: 'mcp-add', name, scope, entry, row: row.id, route: routeId, ...withKey, why: `${row.id}: add (${routeId}) at ${scope} scope` });
         if (fetch) out.steps.push(fetch);
@@ -369,6 +376,7 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     const moved = cur.name !== name || cur.scope !== scope;
     const edited = !deepEqual(entry, cur.entry);
     if (!moved && !edited && !fresh && !staleKey) return out.unchanged.push(`${row.id}: '${name}' at ${scope} scope already as answered`);
+    useRoots(ctx, scope, uses);
     if (row.locations && cur.rootStr && rootStr !== cur.rootStr && E.formatRoot(E.logicalRoot(cur.rootStr, ctx), 'local', ctx).value !== ensure)
         out.notes.push(`${row.id}: the old data stays at ${cur.rootStr}; moving a location moves no data`);
     if (ensure && (!cur.rootStr || rootStr !== cur.rootStr)) out.steps.push({ op: 'ensure-dir', path: ensure, why: `${row.id}: new data folder` });
@@ -378,6 +386,72 @@ function planMcp(row, pick, inv, ctx, catalog, out)
         out.steps.push({ op: 'mcp-replace', name, scope, entry, old: cur.entry, row: row.id, route: routeId, ...withKey, why: `${row.id}: rewrite '${name}' from the registration as read${staleKey && !edited && !fresh ? ` - writes in the key ${keyName} holds in ${chosen.file}` : ''}` });
     if (fetch) out.steps.push(fetch);
     return undefined;
+}
+
+// The roots a registration step writes into (spec D2-D4): its helper's - the scope's family root - its key file's and its
+// data folder's. Only a step that is planned uses a root, so a plan with no change writes no file.
+function useRoots(ctx, scope, { helper, keyFile, keyName, data })
+{
+    const P = E.pathFor(ctx.platform);
+    const r = ctx.roots || {};
+    const inside = (root, p) => { if (!root || !p) return false; const rel = P.relative(root, p); return rel === '' || (!rel.startsWith('..') && !P.isAbsolute(rel)); };
+    const familyOf = (p) => ['project', 'global'].find((f) => inside(r[f], p)) || null;
+    const family = roots.familyOf(scope);
+    if (helper && r[family]) ctx.uses.push({ family, root: r[family], helper: true });
+    const kf = familyOf(keyFile);
+    if (kf) ctx.uses.push({ family: kf, root: r[kf], key: { file: keyFile, name: keyName } });
+    const df = familyOf(data);
+    if (df) ctx.uses.push({ family: df, root: r[df] });
+}
+
+// The file steps of the roots the plan writes into, in D8's order - each root's .gitignore, the helpers, the key names -
+// and the records that go last. A root this apply creates gets its .gitignore (R13), never one named .alfred; a root that
+// exists is asked of git, and with a gap gets no key file and a note naming the fix.
+function fileSteps(inv, ctx, out)
+{
+    const P = E.pathFor(ctx.platform);
+    const exists = ctx.exists || ((p) => fs.existsSync(p));
+    const byRoot = new Map();
+    for (const family of ['project', 'global'])
+        for (const u of ctx.uses.filter((x) => x.family === family))
+        {
+            const r = byRoot.get(u.root) || { family, root: u.root, helper: false, keys: new Map() };
+            byRoot.set(u.root, r);
+            if (u.helper) r.helper = true;
+            if (u.key) r.keys.set(u.key.file, [...new Set([...(r.keys.get(u.key.file) || []), u.key.name])]);
+        }
+    const ignore = [];
+    const helpers = [];
+    const names = [];
+    const records = [];
+    const map = (inv.roots && inv.roots.map) || null;
+    for (const r of byRoot.values())
+    {
+        const existed = exists(r.root);
+        if (!existed && P.basename(r.root) !== '.alfred')
+            ignore.push({ op: 'root-ignore', path: r.root, why: `the new root ${r.root}: its .gitignore keeps the key file, the record and the data out of git` });
+        const gap = existed ? roots.ignoreGap(r.root, r.family) : null;
+        if (gap) out.notes.push(`${r.root}: ${gap.reason} - no key file is written there; /preferred-tools:fix (root-ignore) covers it`);
+        if (r.helper)
+        {
+            const { state } = roots.helperState(P.join(r.root, roots.FILES.helper), exists);
+            if (state === 'absent' || state === 'lower')
+                helpers.push({ op: 'write-helper', path: r.root, why: `${r.root}: mcp-headers.js, which reads a hosted key from .mcps-secrets each time Claude Code connects` });
+            else if (state === 'higher') out.notes.push(`mcp-headers.js in ${r.root} is newer than this plugin - update preferred-tools`);
+            else if (state === 'edited') out.notes.push(`mcp-headers.js in ${r.root} changed since preferred-tools wrote it - left as it is; /preferred-tools:fix (helper-stale) rewrites it`);
+        }
+        if (!gap)
+            for (const [file, want] of r.keys)
+            {
+                const have = new Set(exists(file) ? keys.namesIn(file) : []);
+                const lack = want.filter((n) => !have.has(n));
+                if (lack.length) names.push({ op: 'ensure-key-name', file, names: lack, why: `${file}: the key's name - names only, you fill in each value` });
+            }
+        const mapped = !map ? null : r.family === 'global' ? map.global : (Object.keys(map.projects || {}).length ? map.projects[roots.mapKey(ctx.project)] : null);
+        if (mapped !== r.root)
+            records.push({ op: 'record-root', family: r.family, project: ctx.project, root: r.root, why: `the ${r.family} root ${r.root}: written to the roots map, so the commands find it again` });
+    }
+    return { before: [...ignore, ...helpers, ...names], after: records };
 }
 
 // ---- one plugin pick ------------------------------------------------------------------------------------------------
@@ -434,7 +508,7 @@ function plan(inv, answers, opts = {})
 {
     const catalog = opts.catalog || catalogLib.load();
     // answers.machine: what prereq.js found (docker: false picks github's binary fallback); an explicit option wins
-    const ctx = { ...makeCtx(inv, { ...opts, machine: opts.machine || answers.machine }), changing: new Set(Object.keys(answers.change || {})) };
+    const ctx = { ...makeCtx(inv, { ...opts, machine: opts.machine || answers.machine }), changing: new Set(Object.keys(answers.change || {})), uses: [] };
     const out = { version: 1, project: inv.project, os: inv.os, alfredCodeEnabled: Boolean(inv.alfredCodeEnabled), steps: [], notes: [], errors: [], unchanged: [], keys: [], oauth: [], dangerous: [], expect: [], hud: null };
     // the root folders (spec D2): every data folder, key file and helper of a family sits in its root
     const resolved = roots.resolve(inv, answers.roots, { ...ctx, catalog });
@@ -458,6 +532,9 @@ function plan(inv, answers, opts = {})
     // 'defer': a claude-hud that is not installed yet cannot be checked, so its settings ask follows the install
     if (out.hud === 'defer') { out.hud = null; out.hudAfter = true; out.notes.push('claude-hud: its statusLine and recommended settings are asked after the install'); }
     if (out.hud) out.steps.push({ op: 'hud', mode: out.hud, why: `claude-hud: ${out.hud === 'skip' ? 'statusLine only' : out.hud === 'replace' ? 'statusLine plus recommended settings, replacing differing keys' : 'statusLine plus recommended settings, add-only'}` });
+    // the file steps first, the records last (D8): a failed add leaves files a re-run finds in place
+    const files = fileSteps(inv, ctx, out);
+    out.steps = [...files.before, ...out.steps, ...files.after];
     out.noop = out.steps.length === 0 && out.errors.length === 0;
     return out;
 }
@@ -514,6 +591,7 @@ function keyLine(k)
 function render(p)
 {
     const lines = [];
+    const P = E.pathFor(p.os);
     if (p.errors.length) lines.push('Cannot plan:', ...p.errors.map((e) => `  ! ${e}`), '');
     if (!p.steps.length && !p.errors.length) lines.push('Nothing to do: every answer already matches what is installed - no claude call, no file written.');
     p.steps.forEach((s, i) =>
@@ -523,7 +601,12 @@ function render(p)
         if (argv) lines.push(`   claude ${argv.map(shq).join(' ')}`);
         else if (s.op === 'mcp-move') lines.push(`   claude mcp add-json ${shq(s.to.name)} ${shq(JSON.stringify(s.entry))} -s ${s.to.scope}`, '   (read back)', `   claude mcp remove ${shq(s.from.name)} -s ${s.from.scope}`);
         else if (s.op === 'mcp-replace') lines.push(`   claude mcp remove ${shq(s.name)} -s ${s.scope}`, `   claude mcp add-json ${shq(s.name)} ${shq(JSON.stringify(s.entry))} -s ${s.scope}`, `   (the old entry is saved to rollback.json and re-added if the add fails)`);
-        else if (s.op === 'ensure-dir' || s.op === 'ensure-ignore') lines.push(`   writes ${s.path}/.gitignore  (contents: *)`);
+        else if (s.op === 'ensure-dir') lines.push(`   writes ${s.path}/.gitignore  (contents: *)`);
+        else if (s.op === 'root-ignore') lines.push(`   writes ${P.join(s.path, '.gitignore')}  (${roots.GITIGNORE.trim().split('\n').join(', ')} - or the lines it lacks, appended)`);
+        else if (s.op === 'write-helper') lines.push(`   writes ${P.join(s.path, roots.FILES.helper)}  (this plugin's header helper)`);
+        else if (s.op === 'ensure-key-name') lines.push(`   writes ${s.file}  (names only: ${s.names.join(', ')} - you fill in each value)`);
+        else if (s.op === 'record-choice') lines.push(`   writes ${s.file}  (names, scopes, fingerprints and choices only)`);
+        else if (s.op === 'record-root') lines.push(`   writes ${roots.FILES.map} in the plugin's data folder  (the ${s.family} root: ${s.root})`);
         else if (s.op === 'fetch') lines.push(`   ${s.argv.map(shq).join(' ')}`, '   (after the apply, in the background: fills the cache only; if it fails the registration stays and the first start tries again)');
         else if (s.op === 'hud') lines.push(`   node scripts/hud-statusline.js ${s.mode === 'replace' ? '--replace' : s.mode === 'skip' ? '--statusline-only' : ''}`.trimEnd());
     });

@@ -297,6 +297,8 @@ function valueIn(files, name)
 }
 
 // The names each file holds with a value -> [{ file, names }]. Every value is dropped here.
+// The names a key file defines, filled or not - the values stay in this process. [] when the file cannot be read.
+const namesIn = (file) => Object.keys(readDotenv(file) || {});
 const filledNames = (files) => files.map((file) => ({ file, names: Object.entries(readDotenv(file) || {}).filter(([, v]) => v !== '').map(([k]) => k) }));
 
 // The key files 0.1.x read, which 0.2.0 reads for names only: alfred-code's store in the project and in each parent folder
@@ -337,5 +339,5 @@ const credentialName = (n) => /TOKEN|SECRET|PASSWORD|KEY|AUTH/i.test(String(n));
 
 module.exports = {
     readDotenv, alfredPresent, filesFor, plainFilesFor, presence, keysFor, tokenFields, fillKeys, keysInto, homeFile, projectFile, PLACEHOLDER,
-    SECRETS, NAME_RULE, hostedChain, stdioChain, valueIn, filledNames, oldFiles, oldHolding, offeredName, nameOfValue, credentialName,
+    SECRETS, NAME_RULE, hostedChain, stdioChain, valueIn, filledNames, namesIn, oldFiles, oldHolding, offeredName, nameOfValue, credentialName,
 };
