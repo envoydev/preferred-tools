@@ -50,9 +50,14 @@ names, else `docs/superpowers/<YYYY-MM-DD>-auto-run.md` under the project root.
   the act under `Left for you`. Only the user's own pick of its unsafe option opens it; a reply that merely implies it
   does not (2026-11-04: a discard guard refused a receipt written on such a reply).
 - A plan so broken that every path forward is a guess.
-- The approval of a design - a graded spec or plan, or a bounded in-chat design (the user's ruling). Only words that
-  name those approvals - 'approve the graded specs and plans yourself' - waive them, all kinds at once, never the
-  trigger words above; with the waiver, the score path or the design is reported in place of the ask.
+- A bounded in-chat design: it carries no grade, so it waits for the user's yes.
+- A graded spec or plan does NOT stop (the user's ruling, 2026-11-10: 'when I enabled it you must approve plans by your
+  own, not wait for me'). Once the refining-plans loop passes it - 90 or more, no BLOCKER open - the run approves it:
+  the ledger gets `Ruling: approval of <path> - approved by the run at <score path> - <cost if wrong>`, the file's
+  status line says 'approved by the run under auto-run', and the next stage starts in the same turn - a spec's plan, a
+  plan's build with the execution method its handoff recommends. A skill's own 'ask the user to review' step, writing
+  the plan's handoff included, is that approval and is not put. A draft the loop leaves under 90 is handed over and
+  waits.
 - A stop names the one decision it needs.
 
 ## Scope
@@ -70,5 +75,6 @@ Changed: <files, and each commit with its subject>
 Checks: <each command run, with its result line>
 Decisions auto-mode made for you:
 - <the ask> - <the option taken>
+- approval of <path> - approved by the run at <score path>
 Left for you: <each outward act, each NOT RUN and why> | none
 ```
