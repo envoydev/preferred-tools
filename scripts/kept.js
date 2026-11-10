@@ -136,4 +136,7 @@ function credentialPaths(entry, row)
     return out;
 }
 
-module.exports = { MARKER, keep, restore, holdsKept, credKey, credentialPaths };
+// A value shaped like a known key (SHAPE) or a PEM block - tested in this process, never returned.
+const looksLikeKey = (v) => new RegExp(SHAPE.source).test(String(v)) || new RegExp(PEM.source).test(String(v));
+
+module.exports = { MARKER, keep, restore, holdsKept, credKey, credentialPaths, looksLikeKey };

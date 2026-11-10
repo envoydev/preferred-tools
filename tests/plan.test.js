@@ -1761,6 +1761,14 @@ test('a credential-shaped setting is refused; a machine path is refused at proje
     assert.strictEqual(addStep(v).entry.env.TOOL_DIR, '${HOME}/tools');
     assert.deepStrictEqual(at('local', { TOOL_DIR: '/Users/me/tools' }).errors, []);
     assert.match(plan(inv(MAC), { picks: { github: { route: 'remote', scope: 'user' } }, settings: { github: { A: '1' } } }, opts('/Users/me')).errors.join(), /github: a hosted route takes no settings/);
+    // a key typed as a setting's value, under a name that does not look like one: refused at every scope, never echoed
+    const pat = `ghp_${'a1B2'.repeat(9)}`;
+    for (const scope of ['project', 'local'])
+    {
+        const r = at(scope, { WORKSPACE: pat });
+        assert.match(r.errors.join(), /appium: WORKSPACE's value looks like a key - keep a key in \.mcps-secrets and pick its name as the key's name/, scope);
+        assert.ok(!JSON.stringify(r).includes(pat), 'the value is not in the plan');
+    }
 });
 
 // ---- 0.2.0: the file steps (spec D2-D4, D8; plan R13) ----------------------------------------------------------------
@@ -2025,6 +2033,22 @@ test('change the root: the other family\'s registrations are untouched', () => {
     assert.ok(!JSON.stringify(global.steps).includes('playwright'), 'the project family is untouched');
 });
 
+test('change the global root: a local helper that names the old global root is re-pointed here, and the plan names those elsewhere', () => {
+    const OLD = '/Users/me/keys';
+    const sentry = reg('sentry', 'user', { type: 'http', url: 'https://mcp.sentry.dev/mcp', headersHelper: `node ${OLD}/mcp-headers.js SENTRY_ACCESS_TOKEN Sentry-Bearer` }, 'sentry', 'remote');
+    const gh = reg('github', 'local', { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headersHelper: `node /work/shop/.preferred-tools/mcp-headers.js ${G} Bearer ${OLD}` }, 'github', 'remote');
+    const i = inv(MAC, { registrations: [sentry, gh], roots: usedRoots('/work/shop/.preferred-tools', OLD) });
+    const named = plan(i, { rootChange: ['global'], roots: { global: { id: 'named', path: '/Users/me/vault' } } }, opts('/Users/me'));
+    assert.deepStrictEqual(named.errors, []);
+    assert.deepStrictEqual(regSteps(named).map((s) => [s.op, s.name, s.scope]), [['mcp-replace', 'sentry', 'user'], ['mcp-replace', 'github', 'local']]);
+    assert.strictEqual(regSteps(named)[1].entry.headersHelper, `node /work/shop/.preferred-tools/mcp-headers.js ${G} Bearer /Users/me/vault`);
+    assert.ok(named.notes.includes(`a local server in another project whose helper names ${OLD} keeps reading its .mcps-secrets until /preferred-tools:configure runs there`), named.notes.join('\n'));
+    // the standard global root: the helper reads it itself, so the third argument goes
+    const standard = plan(i, { rootChange: ['global'], roots: { global: { id: 'preferred-tools' } } }, opts('/Users/me'));
+    assert.deepStrictEqual(standard.errors, []);
+    assert.strictEqual(regSteps(standard).find((s) => s.name === 'github').entry.headersHelper, `node /work/shop/.preferred-tools/mcp-headers.js ${G} Bearer`);
+});
+
 test('configure: the key name and the settings start from the registration as read', () => {
     const gh = reg('gh', 'user', { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headers: { 'X-Team': 'core' }, headersHelper: 'node /Users/me/.preferred-tools/mcp-headers.js ACME_GH Bearer' }, 'github', 'remote');
     const serena = installed('serena', { scope: 'local' });
@@ -2041,6 +2065,34 @@ test('configure: the key name and the settings start from the registration as re
     const e = regSteps(st).find((s) => s.op === 'mcp-replace').entry;
     assert.deepStrictEqual([e.env.MY_FLAG, e.env.SERENA_LOG_LEVEL], ['1', 'debug'], 'the user\'s own setting stays beside the new one');
     assert.deepStrictEqual(e.args, serena.entry.args);
+});
+
+test('the 0.1.x key files are read for names only: a held key is never matched against their values', () => {
+    const fs = require('node:fs');
+    const { world } = require('./helpers.js');
+    const cli = require('../scripts/claude-cli.js');
+    const keys = require('../scripts/keys.js');
+    const w = world();
+    try
+    {
+        const v = `v-${Date.now()}-not-printed`;
+        const entry = installed('sentry', { route: 'local', scope: 'local' }).entry;
+        entry.env = { ...entry.env, SENTRY_ACCESS_TOKEN: v };
+        assert.strictEqual(cli.run(['mcp', 'add-json', 'sentry', JSON.stringify(entry), '-s', 'local'], { cwd: w.project, env: w.env }).status, 0);
+        // the project's 0.1.x key file holds the same value under a name of the user's own
+        const old = keys.oldFiles(w.project, w.home).find((f) => f.startsWith(path.join(w.project, '.preferred-tools')));
+        fs.mkdirSync(path.dirname(old), { recursive: true });
+        fs.writeFileSync(old, `ACME_SENTRY_TOKEN=${v}\n`);
+        const i = inventoryLib.buildInventory({ project: w.project, env: w.env });
+        const q = asks.all(i, { targets: ['mcp:sentry~local'] }, catalog, { env: w.env, home: w.home });
+        const opts2 = q.keyNames['mcp:sentry~local'].question.options;
+        assert.strictEqual(opts2[0].label, 'SENTRY_ACCESS_TOKEN (Recommended)', JSON.stringify(opts2));
+        assert.ok(opts2.some((o) => o.label === 'ACME_SENTRY_TOKEN' && o.description === `in ${old} - move it to .mcps-secrets under this name`), 'its name is still offered');
+        const p = plan(i, { change: { 'mcp:sentry~local': {} } }, { home: w.home, env: w.env });
+        assert.deepStrictEqual(p.errors, []);
+        assert.deepStrictEqual(p.keys.map((k) => k.variable), ['SENTRY_ACCESS_TOKEN']);
+    }
+    finally { w.clean(); }
 });
 
 test('configure: a 0.1.x project-scope github Docker registration keeps Project listed, recommends Local, and the move writes the key from the chain, never ${VAR}', () => {

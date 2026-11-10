@@ -557,7 +557,7 @@ test('a configure move local -> project of a github remote re-adds its helper wi
         const g = `g-${hex(12)}`;
         register(w, 'gh-old', { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headers: { Authorization: `Bearer ${g}` } });
         const old = keptWalk(w, { change: { 'mcp:gh-old~local': { scope: 'project' } } });
-        assert.match(old.p.errors.join(), /'gh-old' holds a credential in headers\.Authorization, which the committed \.mcp\.json must not carry/);
+        assert.match(old.p.errors.join(), /'gh-old' holds a credential in headers\.Authorization, which the committed \.mcp\.json must not carry - keep it at local scope, or run \/preferred-tools:fix first: key-to-helper moves the key into mcp-headers\.js/);
         assert.ok(!fs.readFileSync(path.join(w.project, '.mcp.json'), 'utf8').includes(g));
         noValueIn(w, old, [g]);
     }
@@ -576,7 +576,8 @@ test('a configure move to project scope is refused while the entry holds a crede
         assert.strictEqual(r.p.errors.length, 3, r.p.errors.join('\n'));
         assert.match(r.p.errors[0], /context7: 'context7' holds a credential in headers\.CONTEXT7_API_KEY, which the committed \.mcp\.json must not carry/);
         assert.match(r.p.errors[1], /context7: 'ctx-x' holds a credential in headers\.X-API-Key/);
-        assert.match(r.p.errors[2], /gitlab: 'gitlab' holds a credential in url/);
+        assert.match(r.p.errors[2], /gitlab: 'gitlab' holds a credential in url, which the committed \.mcp\.json must not carry - keep it at local scope, or take it out of url first/);
+        assert.ok(!r.p.errors.some((e) => /\$\{VAR\}/.test(e)), 'a key never becomes a ${VAR} in the committed file');
         assert.ok(!fs.existsSync(path.join(w.project, '.mcp.json')) || ![k, x, u].some((v) => fs.readFileSync(path.join(w.project, '.mcp.json'), 'utf8').includes(v)));
         const local = accountDoc(w).projects[accountKey(w.project)].mcpServers;
         assert.deepStrictEqual(Object.keys(local).sort(), ['context7', 'ctx-x', 'gitlab'], 'each stays where it is');
@@ -945,6 +946,74 @@ test('record-choice merges by key and drops an entry whose server is gone; a mal
         assert.deepStrictEqual(readJson(file), { version: 1, servers: [b] });
         assert.match(r.text, /is not JSON - read as empty/);
         assert.deepStrictEqual([roots.recordKey(a), roots.recordKey(plug), roots.recordKey(conn), roots.recordKey({ x: 1 })], ['mcp:a~local', 'plugin-mcp:p@m/s', 'connector:Notion', null]);
+    }
+    finally { w.clean(); }
+});
+
+test('ensure-key-name: a UTF-16 key file is left as it is and the apply goes on', () => {
+    const w = world();
+    try
+    {
+        const file = path.join(w.project, '.preferred-tools', '.mcps-secrets');
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        const bytes = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('OTHER=x\r\n', 'utf16le')]);
+        fs.writeFileSync(file, bytes);
+        const r = runSteps(w, [{ op: 'ensure-key-name', file, names: [G] }, { op: 'record-root', family: 'project', project: w.project, root: path.dirname(file) }], { data: path.join(w.dir, 'data') });
+        assert.strictEqual(r.report.failed, null, r.text);
+        assert.match(r.text, new RegExp(`${file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} is UTF-16 - add ${G}= to it yourself; nothing written`));
+        assert.ok(fs.readFileSync(file).equals(bytes), 'byte-identical');
+        assert.ok(fs.existsSync(path.join(w.dir, 'data', 'roots.json')), 'the next step ran');
+    }
+    finally { w.clean(); }
+});
+
+test('record-choice and record-root: a newer version is left as it is, an unreadable file is kept as .bak before the merge replaces it, and an unchanged merge writes nothing', () => {
+    const w = world();
+    try
+    {
+        const file = path.join(w.project, '.preferred-tools', 'preferred-tools.json');
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        const b = { name: 'b', scope: 'user', fingerprint: { pkg: 'z' }, choice: 'manage' };
+        const live = { servers: { 'mcp:b~user': { pkg: 'z' } }, connectors: null };
+        // a newer record: never replaced
+        const newer = '{ "version": 2, "servers": [], "more": true }\n';
+        fs.writeFileSync(file, newer);
+        let r = runSteps(w, [{ op: 'record-choice', file, entries: [b], live }]);
+        assert.strictEqual(r.report.failed, null, r.text);
+        assert.strictEqual(fs.readFileSync(file, 'utf8'), newer);
+        assert.match(r.text, /is version 2, newer than this plugin's 1 - left as it is; update preferred-tools/);
+        // not JSON: the old bytes kept beside it, then the merge written
+        fs.writeFileSync(file, '{oops');
+        r = runSteps(w, [{ op: 'record-choice', file, entries: [b], live }]);
+        assert.strictEqual(fs.readFileSync(`${file}.bak`, 'utf8'), '{oops');
+        assert.deepStrictEqual(readJson(file), { version: 1, servers: [b] });
+        assert.match(r.text, /the old file kept as .*preferred-tools\.json\.bak/);
+        // the same answers again: nothing written
+        const before = fs.statSync(file).mtimeMs;
+        fs.utimesSync(file, new Date(0), new Date(0));
+        r = runSteps(w, [{ op: 'record-choice', file, entries: [b], live }]);
+        assert.match(r.text, /already holds these answers - left as it is/);
+        assert.strictEqual(fs.statSync(file).mtimeMs, 0, `not rewritten (was ${before})`);
+        assert.deepStrictEqual(fs.readdirSync(path.dirname(file)).filter((f) => f.endsWith('.tmp')), [], 'no temporary file left');
+
+        // the roots map, the same three ways
+        const data = path.join(w.dir, 'data');
+        const map = path.join(data, 'roots.json');
+        fs.mkdirSync(data, { recursive: true });
+        const root = path.join(w.project, '.preferred-tools');
+        const newerMap = '{ "version": 2, "global": null, "projects": {} }\n';
+        fs.writeFileSync(map, newerMap);
+        r = runSteps(w, [{ op: 'record-root', family: 'project', project: w.project, root }], { data });
+        assert.strictEqual(fs.readFileSync(map, 'utf8'), newerMap);
+        assert.match(r.text, /is version 2, newer than this plugin's 1 - left as it is; update preferred-tools/);
+        fs.writeFileSync(map, 'nope');
+        runSteps(w, [{ op: 'record-root', family: 'project', project: w.project, root }], { data });
+        assert.strictEqual(fs.readFileSync(`${map}.bak`, 'utf8'), 'nope');
+        assert.strictEqual(Object.values(readJson(map).projects)[0], root);
+        fs.utimesSync(map, new Date(0), new Date(0));
+        r = runSteps(w, [{ op: 'record-root', family: 'project', project: w.project, root }], { data });
+        assert.match(r.text, /already names the project root .* - left as it is/);
+        assert.strictEqual(fs.statSync(map).mtimeMs, 0, 'not rewritten');
     }
     finally { w.clean(); }
 });

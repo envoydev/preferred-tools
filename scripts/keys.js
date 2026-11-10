@@ -19,9 +19,15 @@ const alfredStores = (project) => ['.secrets', '.sensitive-data'].map((n) => pat
 // alfred-code's dotenv grammar (v3.2.1 stack/hooks/layout.js readDotenv): `KEY=value`, `export ` allowed before it, one
 // pair of matching quotes around the trimmed value dropped; `#` and `;` lines and blank lines are comments, any other line
 // is skipped. A BOM decides UTF-16 or UTF-8. -> { KEY: value } | null when the file cannot be read
-const LINE = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/;
+const LINE = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/;
 const COMMENT = /^\s*(?:[#;]|$)/;
-const unquote = (v) => v.trim().replace(/^(["'])(.*)\1$/, '$2');
+// A value as written: inside matching quotes it stands as it is; unquoted, a note after whitespace and # is dropped -
+// `NAME=abc # work` is abc, `NAME=abc#1` is abc#1
+const unquote = (raw) =>
+{
+    const q = /^\s*(["'])(.*?)\1(?:\s+#.*)?\s*$/.exec(raw);
+    return q ? q[2] : raw.replace(/\s+#.*$/, '').trim();
+};
 function readDotenv(file)
 {
     let buf;

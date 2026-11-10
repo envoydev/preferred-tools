@@ -92,7 +92,7 @@ for (const file of textFiles)
 
 // The header helper is copied into the user's root and compared by digest (write-helper, helper-stale): its bytes are pinned
 // per version, its first line carries that version, and it needs nothing but Node.
-const HELPER_SHA256 = { 1: '0e333c88203701f07445ad8e8c8c79cbf74a589c176dc9d1742e9cca26b35178' };
+const HELPER_SHA256 = { 1: '958abe0bf59ab7ef2551573e3105ab7766036c31fc21d19bb0fcf58675e87719' };
 {
     const rel = path.join('scripts', 'mcp-headers.js');
     const text = fs.readFileSync(path.join(root, rel), 'utf8');

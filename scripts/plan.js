@@ -212,15 +212,15 @@ function planMcp(row, pick, inv, ctx, catalog, out)
         wantToken = false;
     }
     // the key's name (spec D9): answered, else the name the registration uses - the helper's argument, or for a stdio key
-    // the name whose value equals the key it holds, read from the live registration in this process (R1) - else the
-    // catalog's
+    // the name whose value equals the key it holds, read from the live registration in this process (R1) and compared
+    // with the chain's .mcps-secrets only - the 0.1.x key files are read for names, never values - else the catalog's
     const keyVar = route.helper ? route.helper.var : route.tokenVar;
     if (pick.keyName !== undefined && !keys.NAME_RULE.test(String(pick.keyName))) return out.errors.push(`${row.id}: '${pick.keyName}' is not a key name - a name matches ${keys.NAME_RULE.source}`);
     const usesKey = Boolean(keyVar) && (route.auth === 'token' || (route.auth === 'optional-token' && wantToken));
     const ks = usesKey ? asks.keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled, scope) : null;
     const sameRoute = Boolean(cur) && cur.route === routeId;
     const liveKey = sameRoute && ks && ks.kind === 'stdio' ? asks.heldKey(ctx.readLive(cur.name, cur.scope) || {}, route) : null;
-    const keyName = pick.keyName || (sameRoute && route.helper ? cur.keyName : null) || (liveKey ? keys.nameOfValue([...ks.files, ...keys.oldFiles(ctx.project, ctx.home)], liveKey) : null) || keyVar;
+    const keyName = pick.keyName || (sameRoute && route.helper ? cur.keyName : null) || (liveKey ? keys.nameOfValue(ks.files, liveKey) : null) || keyVar;
     // the server's settings (spec D9): pairs merged into a stdio route's env - never a key, and no machine path in the
     // committed file
     if (pick.settings)
@@ -230,6 +230,7 @@ function planMcp(row, pick, inv, ctx, catalog, out)
         {
             if (!keys.NAME_RULE.test(k)) return out.errors.push(`${row.id}: '${k}' is not a setting name - a name matches ${keys.NAME_RULE.source}`);
             if (keys.credentialName(k)) return out.errors.push(`${row.id}: ${k} looks like a key - keep a key in .mcps-secrets and pick it as the key's name`);
+            if (kept.looksLikeKey(v)) return out.errors.push(`${row.id}: ${k}'s value looks like a key - keep a key in .mcps-secrets and pick its name as the key's name`);
             if (scope === 'project' && E.machinePath(String(v))) return out.errors.push(`${row.id}: ${k} - the committed .mcp.json takes no machine path - use \${VAR}`);
         }
     }
@@ -314,12 +315,14 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     if (pick.settings) entry = E.mergeSettings(entry, route, pick.settings);
 
     // .mcp.json is committed: a move into it never carries a credential the route's own token field does not take - a
-    // header of the user's own, a userinfo URL (D7); the token field itself becomes ${VAR} at apply (keys.js)
+    // header of the user's own, a userinfo URL, a 0.1.x Authorization header (D7). A key never becomes a ${VAR} there: a
+    // hosted key goes through the helper (key-to-helper moves a 0.1.x header first), and a stdio key never moves in (D5).
     if (scope === 'project' && cur && cur.scope !== 'project')
     {
         const own = new Set(keys.tokenFields(entry, route).map((f) => f.at.join('.')));
         const held = kept.credentialPaths(entry, row).filter((p) => !own.has(p));
-        if (held.length) return out.errors.push(`${row.id}: '${cur.name}' holds a credential in ${held.join(', ')}, which the committed .mcp.json must not carry - keep it at ${cur.scope} scope, or put a \${VAR} there first`);
+        const viaFix = route.helper && held.every((p) => /^headers\.authorization$/i.test(p));
+        if (held.length) return out.errors.push(`${row.id}: '${cur.name}' holds a credential in ${held.join(', ')}, which the committed .mcp.json must not carry - keep it at ${cur.scope} scope, or ${viaFix ? 'run /preferred-tools:fix first: key-to-helper moves the key into mcp-headers.js' : `take it out of ${held.join(', ')} first`}`);
         // nor a machine path: appium's SDK homes (appium-sdk-env writes them in at local and user scope) are read from
         // the environment Claude Code starts with there; any other is the user's to replace
         const env = { ...(entry.env || {}) };
@@ -601,13 +604,27 @@ function planRootChange(answers, inv, ctx, catalog, out)
             if (route && !route.helper && route.tokenVar && keys.tokenFields(r.entry, route).length)
             {
                 const held = asks.heldKey(ctx.readLive(r.name, r.scope) || r.entry, route);
-                name = held ? keys.nameOfValue([secretsOld, ...keys.oldFiles(ctx.project, ctx.home)], held) || route.tokenVar : null;
+                name = held ? keys.nameOfValue([secretsOld], held) || route.tokenVar : null;
             }
             if (!name) continue;
             ctx.uses.push({ family, root: next, key: { file: secretsNew, name } });
             keyed = true;
         }
         if (keyed) out.notes.push(`copy the values from ${secretsOld} to ${secretsNew} yourself - until then those servers connect without their keys`);
+        // a local helper's third argument names a named global root: this project's are re-pointed (or lose it, for a
+        // standard root the helper reads itself); a local server elsewhere is configured in its own project
+        if (family === 'global' && !roots.standard('global', ctx).some((x) => x.root === used.path))
+        {
+            for (const r of inv.registrations.filter((x) => x.rowId && !x.own && !x.alfredRetired && x.choice !== 'own' && x.scope === 'local'))
+            {
+                const parts = E.helperParts(r.entry && r.entry.headersHelper);
+                const row = catalog.byId.get(r.rowId);
+                if (!row || !parts || parts.args.length < 3 || ctx.changing.has(keyOf('mcp', r.name, r.scope))) continue;
+                if (P.resolve(roots.absOf(parts.args[2], ctx)) !== P.resolve(used.path)) continue;
+                planMcp(row, { target: { name: r.name, scope: r.scope } }, inv, ctx, catalog, out);
+            }
+            out.notes.push(`a local server in another project whose helper names ${used.path} keeps reading its .mcps-secrets until /preferred-tools:configure runs there`);
+        }
     }
 }
 

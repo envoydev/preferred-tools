@@ -54,8 +54,9 @@ in `docs/sources.md`.
   tools' data folders (`<root>/<name>`), the key file `.mcps-secrets`, the key helper `mcp-headers.js`, the record of
   your answers `preferred-tools.json` and a `.gitignore` that keeps everything but itself and the helper out of git (alfred-code's own
   `.gitignore` covers `.alfred`). Each root is asked once, not per tool; `/preferred-tools:configure` moves one.
-- Keys live in `.mcps-secrets` (`NAME=value` lines), which you fill by hand: the plugin writes names only, and never
-  asks for, prints or puts a key in a file a command names. A hosted route reads its key through `mcp-headers.js` each
+- Keys live in `.mcps-secrets` (`NAME=value` lines; a note goes after whitespace and `#`, or on its own `#` line),
+  which you fill by hand: the plugin writes names only, and never asks for, prints or puts a key in a file a command
+  names. A hosted route reads its key through `mcp-headers.js` each
   time Claude Code connects, so the registration holds no key and no `${VAR}`; a Project-scope server's helper runs once
   you accept the folder's trust prompt. A local route's key is written into the registration at Local and Global scope
   (`/preferred-tools:fix`, `token-sync`, writes it again after you change it); such a route is not offered at Project

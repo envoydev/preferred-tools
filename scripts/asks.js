@@ -732,13 +732,14 @@ function all(inv, picks, catalog, { env = {}, home = null, connectors = null } =
         if (!route) continue;
         const scope = scopes[key] || current.scope;
         const same = routeId === current.route;
-        // the name it uses: the helper's argument; for a stdio key, the name whose value equals the key it holds
+        // the name it uses: the helper's argument; for a stdio key, the name whose value equals the key it holds in the
+        // chain's .mcps-secrets (the 0.1.x key files are read for names only)
         let name = same && route.helper ? current.keyName : null;
         if (same && !route.helper && route.tokenVar)
         {
             const held = heldKey(live(t.item.name, t.item.scope) || {}, route);
             const ks = keyStateOf(row, routeId, ctx, null, scope);
-            name = held && ks ? keys.nameOfValue([...ks.files, ...keys.oldFiles(ctx.project, ctx.home)], held) : null;
+            name = held && ks ? keys.nameOfValue(ks.files, held) : null;
         }
         const k = keyNameQuestion(row, routeId, scope, ctx, { current: name });
         if (k) out.keyNames[key] = k;

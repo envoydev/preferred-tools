@@ -133,6 +133,28 @@ test('it reads the grammar readDotenv reads', () => {
     finally { w.clean(); }
 });
 
+test('a note after the value is not part of the key, in the helper and in keys.js; inside quotes, or with no space before #, it is', () => {
+    const w = world();
+    try
+    {
+        const forms = [
+            [`${G}=abc123 # work\n`, 'abc123'],
+            [`${G}="abc 123" # work\n`, 'abc 123'],
+            [`${G}='a # b'\n`, 'a # b'],
+            [`${G}=abc#123\n`, 'abc#123'],
+            [`${G}=abc123\t# tab\r\n`, 'abc123'],
+            [`${G}= # nothing yet\n`, null],
+        ];
+        for (const [text, want] of forms)
+        {
+            put(sec(w.root), Buffer.from(text));
+            assert.strictEqual(keys.readDotenv(sec(w.root))[G], want === null ? '' : want, `keys.js: ${JSON.stringify(text)}`);
+            assert.deepStrictEqual(w.run(G, 'Bearer').json, want === null ? {} : { Authorization: `Bearer ${want}` }, `helper: ${JSON.stringify(text)}`);
+        }
+    }
+    finally { w.clean(); }
+});
+
 test('digestOf reads a CRLF copy as the same helper', () => {
     const helper = require('../scripts/mcp-headers.js');
     const text = fs.readFileSync(SOURCE, 'utf8');

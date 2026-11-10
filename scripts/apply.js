@@ -198,7 +198,9 @@ function ensureKeyName(file, names)
     if (roots.gitIgnores(file) === false) return { ok: false, detail: `git would commit ${file} - not written; /preferred-tools:fix (root-ignore) covers it` };
     let buf = null;
     try { buf = fs.readFileSync(file); } catch { /* absent */ }
-    if (buf && buf[0] === 0xff && buf[1] === 0xfe) return { ok: false, detail: `${file} is UTF-16 - add ${names.map((n) => `${n}=`).join(', ')} to it yourself; nothing written` };
+    // a UTF-16 file (Windows PowerShell 5.1's `>`) is read by both readers but never appended to in UTF-8: the user adds the
+    // line, as the plan's Key: line says, and the apply goes on
+    if (buf && buf[0] === 0xff && buf[1] === 0xfe) return { ok: true, detail: `${file} is UTF-16 - add ${names.map((n) => `${n}=`).join(', ')} to it yourself; nothing written` };
     const text = buf ? buf.toString('utf8') : null;
     const have = new Set(keys.namesIn(file));
     const lack = [...new Set(names)].filter((n) => !have.has(n));
@@ -214,14 +216,40 @@ function ensureKeyName(file, names)
     return { ok: true, detail: `appended ${list} to ${file} - names only, you fill in each value` };
 }
 
-// <root>/preferred-tools.json: this run's answers merged in, a server gone since dropped (D6).
+// A record or map read as empty that a write must not replace: a later version's, or one that cannot be opened.
+// -> null | { ok, detail }
+function keepAsIs(read)
+{
+    if (!read || (read.state !== 'newer' && read.state !== 'unreadable')) return null;
+    const what = read.note.replace(/ - read as empty$/, '');
+    return { ok: true, detail: `${what} - left as it is; ${read.state === 'newer' ? 'update preferred-tools' : 'check its permissions'}, then run the command again` };
+}
+
+// A JSON file written whole: through a temporary file and a rename, so a stop midway never leaves half a file. A file
+// read as 'bad' (not JSON, not this shape) is kept as <file>.bak first. -> the .bak path | null
+function writeJson(file, doc, read)
+{
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    let bak = null;
+    if (read && read.state === 'bad' && fs.existsSync(file)) { bak = `${file}.bak`; fs.copyFileSync(file, bak); }
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, `${JSON.stringify(doc, null, 2)}\n`);
+    fs.renameSync(tmp, file);
+    return bak;
+}
+const readNote = (read, bak) => (read && read.note ? ` - ${read.note}${bak ? `; the old file kept as ${bak}` : ''}` : '');
+
+// <root>/preferred-tools.json: this run's answers merged in, a server gone since dropped (D6). An unchanged merge writes
+// nothing (D8: each step skips what is in place).
 function recordChoice(file, entries, live)
 {
     const record = roots.readRecord(file);
+    const kept = keepAsIs(record);
+    if (kept) return kept;
     const merged = roots.mergeRecord(record, entries, live);
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, `${JSON.stringify(merged, null, 2)}\n`);
-    return { ok: true, detail: `wrote ${file} (${merged.servers.length} server${merged.servers.length === 1 ? '' : 's'})${record && record.note ? ` - ${record.note}` : ''}` };
+    if (record && !record.state && JSON.stringify(merged) === JSON.stringify({ version: record.version, servers: record.servers })) return { ok: true, detail: `${file} already holds these answers - left as it is` };
+    const bak = writeJson(file, merged, record);
+    return { ok: true, detail: `wrote ${file} (${merged.servers.length} server${merged.servers.length === 1 ? '' : 's'})${readNote(record, bak)}` };
 }
 
 // <data>/roots.json: the family's root for this project (D2). No data folder given: nothing to write (R8).
@@ -229,10 +257,13 @@ function recordRoot(step, data)
 {
     if (!data) return { ok: true, detail: `${step.family} root ${step.root}: no plugin data folder given - the root is found from its files next time` };
     const map = roots.readMap(data);
+    const kept = keepAsIs(map);
+    if (kept) return kept;
     const file = path.join(data, roots.FILES.map);
-    fs.mkdirSync(data, { recursive: true });
-    fs.writeFileSync(file, `${JSON.stringify(roots.withRoot(map, step.family, path.resolve(step.project), step.root), null, 2)}\n`);
-    return { ok: true, detail: `recorded the ${step.family} root ${step.root} in ${file}${map.note ? ` - ${map.note}` : ''}` };
+    const next = roots.withRoot(map, step.family, path.resolve(step.project), step.root);
+    if (!map.state && fs.existsSync(file) && JSON.stringify(next) === JSON.stringify(map)) return { ok: true, detail: `${file} already names the ${step.family} root ${step.root} - left as it is` };
+    const bak = writeJson(file, next, map);
+    return { ok: true, detail: `recorded the ${step.family} root ${step.root} in ${file}${readNote(map, bak)}` };
 }
 
 // One operation. { ok, detail, extra[] }

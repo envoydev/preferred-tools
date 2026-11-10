@@ -250,8 +250,10 @@ with, while the key sat in a file (the user's Windows workspace, 2026-11-10).
   use is listed first. Each root is asked once a run, only when a pick or an answer needs it. The roots map
   `${CLAUDE_PLUGIN_DATA}/roots.json` (folder paths only) finds a named root again; the commands pass
   `--data "${CLAUDE_PLUGIN_DATA}"` to every script that reads it.
-- **D3 - The key file, `.mcps-secrets`.** The dotenv grammar; the user writes every value. The apply's
-  `ensure-key-name` appends empty `NAME=` lines only, and refuses when git would not ignore the file. A hosted route's
+- **D3 - The key file, `.mcps-secrets`.** The dotenv grammar - a value inside quotes stands as it is, and an unquoted
+  value ends before a note after whitespace and `#` (`NAME=abc # work` is `abc`), the same in the helper and `keys.js`;
+  the user writes every value. The apply's `ensure-key-name` appends empty `NAME=` lines only, refuses when git would
+  not ignore the file, and leaves a UTF-16 file as it is (the plan's `Key:` line names the line to add). A hosted route's
   key is read by the helper from the root beside it (at local scope then a named global root), then
   `~/.preferred-tools/.mcps-secrets`, then `~/.alfred/.mcps-secrets`; a stdio route's by the apply (local: the project
   root, then the global root; global: the global root). The 0.1.x files (alfred-code's store, `.preferred-tools/.secrets`,
@@ -280,16 +282,19 @@ with, while the key sat in a file (the user's Windows workspace, 2026-11-10).
 - **D7 - Fix, update and configure.** Fix rows `key-to-helper`, `helper-missing`, `helper-stale` and `root-ignore`;
   `token-sync` narrowed to stdio routes; a trust note for a project or local helper. update rewrites a helper copy
   with a lower number. configure changes a root (each managed registration of the family re-added pointing into the
-  new root; no data and no key value moves), a key's name and a server's settings.
+  new root - and, for the global root, this project's local helpers that name it; no data and no key value moves), a
+  key's name and a server's settings.
 - **D8 - The walk.** install: servers already set up, the picks, per tool the route then the scope, the roots, then
   the rest (key, key name, settings, folder, extras); 'Use the recommended settings for all' asks the first only. A
   typed value is asked next in one plain line; no text tells the user to type into Other (`tests/lint.js`, with
   alfred-code's `OTHER_RE`). The apply writes the root's `.gitignore`, the helper and the key names first, the records
-  last.
+  last. A record or roots map from a newer version is never replaced, one that is not JSON is kept as `<file>.bak`
+  first, each is written through a temporary file, and an unchanged one is not rewritten.
 - **D9 - The key's name and the settings.** 'Which name holds <tool>'s key in .mcps-secrets?' - the catalog's name, up to
   two near-miss names found in the files, or a name asked next; a name filled in the chain is recommended. The server's
-  own variable keeps its name. A stdio route's settings: keep them, or `NAME=value` pairs asked next; a name that looks
-  like a credential is refused, and a machine path at project scope too.
+  own variable keeps its name; a held key is matched by value against `.mcps-secrets` only, never the 0.1.x files. A
+  stdio route's settings: keep them, or `NAME=value` pairs asked next; a name or a value that looks like a credential
+  is refused, and a machine path at project scope too.
 
 ## The install command - `commands/install.md`
 

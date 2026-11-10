@@ -29,19 +29,26 @@ const catalogOf = (ctx) => ctx.catalog || (loaded = loaded || require('./catalog
 
 const emptyMap = () => ({ version: MAP_VERSION, global: null, projects: {} });
 
-// The map in the plugin's data folder. Missing: empty. Malformed or another version: empty with a note. Never throws.
+// A file read as empty says why (`state`, beside the note): 'newer' - a later version of this plugin wrote it, so it is
+// never replaced; 'unreadable' - it cannot be opened; 'bad' - not JSON, not this shape, or an older version, so a write
+// keeps it as <file>.bak first.
+const newerOrBad = (version, current) => (typeof version === 'number' && version > current ? 'newer' : 'bad');
+const versionNote = (file, version, current) => (newerOrBad(version, current) === 'newer' ? `${file} is version ${version}, newer than this plugin's ${current}` : `${file} is version ${JSON.stringify(version)}, not ${current}`);
+
+// The map in the plugin's data folder. Missing: empty. Malformed or another version: empty with a note and its state.
+// Never throws.
 function readMap(dataDir)
 {
     if (!dataDir) return emptyMap();
     const file = path.join(dataDir, FILES.map);
     let text;
     try { text = fs.readFileSync(file, 'utf8'); }
-    catch (err) { return err.code === 'ENOENT' ? emptyMap() : { ...emptyMap(), note: `${file} cannot be read (${err.code}) - read as empty` }; }
+    catch (err) { return err.code === 'ENOENT' ? emptyMap() : { ...emptyMap(), note: `${file} cannot be read (${err.code}) - read as empty`, state: 'unreadable' }; }
     let doc;
     try { doc = JSON.parse(text); }
-    catch { return { ...emptyMap(), note: `${file} is not JSON - read as empty` }; }
-    if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return { ...emptyMap(), note: `${file} is not a roots map - read as empty` };
-    if (doc.version !== MAP_VERSION) return { ...emptyMap(), note: `${file} is version ${JSON.stringify(doc.version)}, not ${MAP_VERSION} - read as empty` };
+    catch { return { ...emptyMap(), note: `${file} is not JSON - read as empty`, state: 'bad' }; }
+    if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return { ...emptyMap(), note: `${file} is not a roots map - read as empty`, state: 'bad' };
+    if (doc.version !== MAP_VERSION) return { ...emptyMap(), note: `${versionNote(file, doc.version, MAP_VERSION)} - read as empty`, state: newerOrBad(doc.version, MAP_VERSION) };
     const projects = {};
     if (doc.projects && typeof doc.projects === 'object' && !Array.isArray(doc.projects))
         for (const [k, v] of Object.entries(doc.projects)) if (typeof v === 'string' && v) projects[k] = v;
@@ -266,17 +273,20 @@ function recordFiles(inv, family, ctx)
     return [...new Set(dirs)].map((d) => P.join(d, FILES.record));
 }
 
-// The record file. Missing: null. Malformed or another version: empty with a note. Never throws.
+// The record file. Missing: null. Malformed or another version: empty with a note and its state (see readMap). Never
+// throws.
 function readRecord(file)
 {
     let text;
     try { text = fs.readFileSync(file, 'utf8'); }
-    catch (err) { return err.code === 'ENOENT' || err.code === 'ENOTDIR' ? null : { version: RECORD_VERSION, servers: [], note: `${file} cannot be read (${err.code}) - read as empty` }; }
+    catch (err) { return err.code === 'ENOENT' || err.code === 'ENOTDIR' ? null : { version: RECORD_VERSION, servers: [], note: `${file} cannot be read (${err.code}) - read as empty`, state: 'unreadable' }; }
     let doc;
     try { doc = JSON.parse(text); }
-    catch { return { version: RECORD_VERSION, servers: [], note: `${file} is not JSON - read as empty` }; }
+    catch { return { version: RECORD_VERSION, servers: [], note: `${file} is not JSON - read as empty`, state: 'bad' }; }
+    if (doc && typeof doc === 'object' && doc.version !== RECORD_VERSION && newerOrBad(doc.version, RECORD_VERSION) === 'newer')
+        return { version: RECORD_VERSION, servers: [], note: `${versionNote(file, doc.version, RECORD_VERSION)} - read as empty`, state: 'newer' };
     if (!doc || typeof doc !== 'object' || doc.version !== RECORD_VERSION || !Array.isArray(doc.servers))
-        return { version: RECORD_VERSION, servers: [], note: `${file} is version ${JSON.stringify(doc && doc.version)} or has no servers list - read as empty` };
+        return { version: RECORD_VERSION, servers: [], note: `${file} is version ${JSON.stringify(doc && doc.version)} or has no servers list - read as empty`, state: 'bad' };
     return { version: RECORD_VERSION, servers: doc.servers.filter((s) => s && typeof s === 'object') };
 }
 
