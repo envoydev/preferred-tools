@@ -588,3 +588,26 @@ test('the inventory reads trust and the roots map from --data', () => {
     }
     finally { w.clean(); }
 });
+
+test("the inventory reads each enabled plugin's MCP servers, matched to a row, and the kept file masks them", () => {
+    const w = world();
+    try
+    {
+        const value = `fake-${require('node:crypto').randomBytes(8).toString('hex')}`;
+        const docs = path.join(w.dir, 'cache', 'docs');
+        writeJson(path.join(docs, '.mcp.json'), { mcpServers: { c7: { ...URL_('https://mcp.context7.com/mcp'), headers: { Authorization: `Bearer ${value}` } }, mine: { command: 'my-server' } } });
+        const off = path.join(w.dir, 'cache', 'off');
+        writeJson(path.join(off, '.mcp.json'), { mcpServers: { gh: URL_('https://api.githubcopilot.com/mcp/') } });
+        writeJson(path.join(w.dir, 'state', 'plugins.json'), { marketplaces: [], installed: [
+            { id: 'docs@m', version: '1.0.0', scope: 'user', enabled: true, installPath: docs },
+            { id: 'off@m', version: '1.0.0', scope: 'user', enabled: false, installPath: off },
+        ] });
+        const i = build(w);
+        assert.deepStrictEqual(i.pluginServers.map((s) => [s.plugin, s.server, s.rowId, s.route, s.choice]), [['docs@m', 'c7', 'context7', 'remote', null], ['docs@m', 'mine', null, null, null]]);
+        assert.ok(JSON.stringify(i).includes(value), 'read in this process');
+        assert.ok(!JSON.stringify(inv.keptOf(i)).includes(value), 'never in the kept file');
+        assert.deepStrictEqual(i.records, { project: null, global: null });
+        assert.ok(i.registrations.every((r) => r.choice === null));
+    }
+    finally { w.clean(); }
+});

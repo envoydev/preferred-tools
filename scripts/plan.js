@@ -28,6 +28,7 @@ const account = require('./account.js');
 const keys = require('./keys.js');
 const kept = require('./kept.js');
 const roots = require('./roots.js');
+const existing = require('./existing.js');
 const { installedOf, keyOf, targetOf, fromHere, otherWindowsMcp } = require('./inventory.js');
 const { blockingStdio } = require('./json-file.js');
 
@@ -451,7 +452,18 @@ function fileSteps(inv, ctx, out)
         if (mapped !== r.root)
             records.push({ op: 'record-root', family: r.family, project: ctx.project, root: r.root, why: `the ${r.family} root ${r.root}: written to the roots map, so the commands find it again` });
     }
-    return { before: [...ignore, ...helpers, ...names], after: records };
+    // each family's answers, merged into its record in the root this run uses; a record found in another root comes along
+    const choices = [];
+    for (const family of ['project', 'global'])
+    {
+        const list = (ctx.recordEntries && ctx.recordEntries[family]) || [];
+        if (!list.length || !ctx.roots || !ctx.roots[family]) continue;
+        const file = P.join(ctx.roots[family], roots.FILES.record);
+        const found = inv.records && inv.records[family];
+        const carried = found && found.file && found.file !== file ? found.servers : [];
+        choices.push({ op: 'record-choice', file, entries: [...carried, ...list], live: ctx.recordLive, why: `${file}: your answers about the servers already set up - names, scopes, fingerprints and choices only` });
+    }
+    return { before: [...ignore, ...helpers, ...names], after: [...choices, ...records] };
 }
 
 // ---- one plugin pick ------------------------------------------------------------------------------------------------
@@ -528,6 +540,7 @@ function plan(inv, answers, opts = {})
     }
     for (const [key, pick] of Object.entries(answers.change || {})) planChange(key, { ...(pick || {}), keyName: keyNames[key], settings: settings[key] }, inv, ctx, catalog, out);
     for (const r of answers.remove || []) planRemove(r, inv, catalog, out);
+    planExisting(answers, inv, ctx, catalog, out, opts.connectors === undefined ? null : opts.connectors);
     if (out.hud && answers.hud) out.hud = answers.hud;
     // 'defer': a claude-hud that is not installed yet cannot be checked, so its settings ask follows the install
     if (out.hud === 'defer') { out.hud = null; out.hudAfter = true; out.notes.push('claude-hud: its statusLine and recommended settings are asked after the install'); }
@@ -537,6 +550,25 @@ function plan(inv, answers, opts = {})
     out.steps = [...files.before, ...out.steps, ...files.after];
     out.noop = out.steps.length === 0 && out.errors.length === 0;
     return out;
+}
+
+// The answers about servers already set up (spec D6): each goes to its family's record, the project root's for a project
+// or local registration and a plugin's server, the global root's for a user registration and a connector. A row answered
+// 'add' and picked runs beside the other server: the plan says so.
+function planExisting(answers, inv, ctx, catalog, out, connectors)
+{
+    ctx.recordEntries = { project: [], global: [] };
+    for (const [key, choice] of Object.entries(answers.existing || {}))
+    {
+        const item = existing.itemOf(inv, key, catalog);
+        if (!item) { out.errors.push(`existing: '${key}' is not a server found here`); continue; }
+        const allowed = existing.CHOICES[item.kind];
+        if (!allowed.includes(choice)) { out.errors.push(`existing: '${choice}' is not an answer for ${key} - ${allowed.join(' or ')}`); continue; }
+        ctx.recordEntries[item.family].push(existing.recordEntry(item, choice));
+        if (ctx.roots && ctx.roots[item.family]) ctx.uses.push({ family: item.family, root: ctx.roots[item.family] });
+        if (choice === 'add' && Object.hasOwn(answers.picks || {}, item.rowId)) out.notes.push(`${item.rowId}: ${existing.twoServers(item.label, existing.ownerOf(item))}`);
+    }
+    ctx.recordLive = existing.liveOf(inv, catalog, connectors);
 }
 
 function planRemove(r, inv, catalog, out)
@@ -647,6 +679,17 @@ function parseArgs(argv)
     return out;
 }
 
+// D6's questions: the servers already set up, each with fix's registration detectors run read-only on the registrations
+// as they are, read unmasked in this process (R1) and never written. fix.js requires this file, so it is required here.
+function existingBlock(inv, args, catalog)
+{
+    const fix = require('./fix.js');
+    const live = require('./inventory.js').buildInventory({ project: inv.project, env: process.env, data: args.data, catalog });
+    const registrationFixes = { ...catalog, fixes: catalog.fixes.filter((f) => f.kind === 'registration') };
+    const found = fix.detectAll(fix.makeCtx({ inv: live, catalog: registrationFixes, env: process.env })).found;
+    return existing.questions(existing.items(live, existing.parseConnectors(args.connectors), catalog, { home: account.homeDir(process.env) }), found);
+}
+
 const USAGE = 'usage: plan.js <inventory.json> <answers.json> [--out plan.json] [--data <dir>]\n       plan.js --questions <inventory.json> [<picks.json>] [--data <dir>] [--connectors <Name>,<Name>]';
 
 function main(argv)
@@ -663,10 +706,14 @@ function main(argv)
     if (args.questions)
     {
         const picks = second ? read(second) : null;
-        console.log(JSON.stringify(asks.all(inv, picks, catalogLib.load(), { env: process.env, home: account.homeDir(process.env), connectors: args.connectors }), null, 2));
+        const catalog = catalogLib.load();
+        const q = asks.all(inv, picks, catalog, { env: process.env, home: account.homeDir(process.env), connectors: args.connectors });
+        // the walk's first call carries --connectors (R12): only it reads the live registrations and runs the detectors
+        if (args.connectors !== null) q.existing = existingBlock(inv, args, catalog);
+        console.log(JSON.stringify(q, null, 2));
         return 0;
     }
-    const p = plan(inv, read(second), { env: process.env });
+    const p = plan(inv, read(second), { env: process.env, connectors: args.connectors !== null ? existing.parseConnectors(args.connectors) : null });
     if (args.out) fs.writeFileSync(args.out, JSON.stringify(p, null, 2));
     console.log(render(p));
     return p.errors.length ? 1 : 0;

@@ -177,7 +177,7 @@ function buildInventory({ project, env = process.env, platform = process.platfor
 {
     const proj = path.resolve(project);
     const out = {
-        version: 1, project: proj, os: platform, arch, cli: null, unreadable: [], registrations: [], plugins: [], marketplaces: [], alfredCodeEnabled: false,
+        version: 1, project: proj, os: platform, arch, cli: null, unreadable: [], registrations: [], plugins: [], pluginServers: [], marketplaces: [], alfredCodeEnabled: false,
         sources: {},
     };
 
@@ -234,6 +234,16 @@ function buildInventory({ project, env = process.env, platform = process.platfor
     out.roots = { map: roots.readMap(data) };
     out.roots.project = roots.inUse(out, 'project', rootCtx);
     out.roots.global = roots.inUse(out, 'global', rootCtx);
+    // the answers about servers already set up (spec D6): each family's record, and each registration's choice - null when
+    // never answered or when its launch changed since
+    const existing = require('./existing.js');
+    out.records = { project: recordOf(out, 'project', rootCtx), global: recordOf(out, 'global', rootCtx) };
+    const fp = (entry) => existing.fingerprintOf(entry, catalog);
+    for (const r of out.registrations)
+    {
+        const rec = r.scope === 'inherited' || !r.rowId ? null : out.records[roots.familyOf(r.scope)];
+        r.choice = choiceIn(rec, (e) => e.name === r.name && e.scope === r.scope, fp(r.entry), ['own', 'manage']);
+    }
 
     const version = cli.available({ env, cwd: proj });
     out.cli = version ? { ok: true, version } : { ok: false, version: null };
@@ -244,6 +254,15 @@ function buildInventory({ project, env = process.env, platform = process.platfor
     try { listJson = JSON.parse(list.stdout || '[]'); } catch { out.unreadable.push({ scope: 'plugins', file: 'claude plugin list --json', state: 'malformed', error: 'not JSON' }); }
     out.plugins = pluginRows(listJson, proj, env, catalog);
     out.alfredCodeEnabled = out.plugins.some((p) => p.plugin === 'alfred-code' && p.enabled);
+    // each MCP server a plugin that loads here provides, read from its install folder and matched as a registration is
+    const installPath = new Map((Array.isArray(listJson) ? listJson : []).map((r) => [`${r.id}~${r.scope}`, r.installPath]));
+    for (const p of out.plugins.filter((x) => x.enabledHere))
+        for (const s of existing.pluginServers(installPath.get(`${p.id}~${p.scope}`)))
+        {
+            const m = matchEntry(s.entry, catalog);
+            const choice = m ? choiceIn(out.records.project, (e) => e.plugin === p.id && e.server === s.server, fp(s.entry), ['own', 'add']) : null;
+            out.pluginServers.push({ plugin: p.id, server: s.server, entry: s.entry, rowId: m ? m.rowId : null, route: m ? m.route : null, choice });
+        }
 
     const mk = run(['plugin', 'marketplace', 'list', '--json'], { cwd: proj, env });
     try { out.marketplaces = JSON.parse(mk.stdout || '[]').map((m) => ({ name: m.name, source: m.repo || m.url || m.path || '', installLocation: m.installLocation || '' })); }
@@ -251,12 +270,31 @@ function buildInventory({ project, env = process.env, platform = process.platfor
     return out;
 }
 
+// The family's record: the first the commands' order finds (roots.recordFiles). -> { file, servers, note? } | null
+function recordOf(inv, family, ctx)
+{
+    for (const file of roots.recordFiles(inv, family, ctx))
+    {
+        const r = roots.readRecord(file);
+        if (r) return { file, servers: r.servers, ...(r.note ? { note: r.note } : {}) };
+    }
+    return null;
+}
+
+// A recorded choice that still holds: the entry found, its fingerprint the launch's now, its choice one of `allowed`.
+function choiceIn(record, match, fingerprint, allowed)
+{
+    const e = record ? record.servers.find(match) : null;
+    return e && e.fingerprint === fingerprint && allowed.includes(e.choice) ? e.choice : null;
+}
+
 // The inventory as a file or a print holds it: every credential value as kept.js's marker, so no command line names a
 // file with a live one (alfred-code's guard refuses it) and nothing printed puts one in the chat. apply.js takes the
 // real values back from the registrations themselves.
 function keptOf(inv, catalog = catalogLib.load())
 {
-    return { ...inv, registrations: inv.registrations.map((r) => ({ ...r, entry: kept.keep(r.entry, r.rowId ? catalog.byId.get(r.rowId) : null) })) };
+    const keep = (x) => ({ ...x, entry: kept.keep(x.entry, x.rowId ? catalog.byId.get(x.rowId) : null) });
+    return { ...inv, registrations: inv.registrations.map(keep), ...(inv.pluginServers ? { pluginServers: inv.pluginServers.map(keep) } : {}) };
 }
 
 // A parent folder as the project names it: '..', '../..', from the real folder, as the walk found it.
@@ -337,5 +375,6 @@ function main(argv)
     return 0;
 }
 
-if (require.main === module) process.exit(main(process.argv.slice(2)));
+// exported before main runs: existing.js, required while main runs, reads matchesFingerprint from here
 module.exports = { launchTokens, bareName, matchEntry, matchesFingerprint, ancestorMcpFiles, buildInventory, keptOf, fromHere, installedOf, windowsMcpServers, otherWindowsMcp, keyOf, targetOf, pluginRows };
+if (require.main === module) process.exit(main(process.argv.slice(2)));

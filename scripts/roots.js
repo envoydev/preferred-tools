@@ -226,6 +226,26 @@ function resolve(inv, answers, ctx)
 
 // ---- the record -----------------------------------------------------------------------------------------------------
 
+// D6's 'not asked': the root a registration's helper or data folder points into - a standard root, a mapped one, or a
+// folder holding one of a root's files - else null. A tool's default folder in the home (~/.serena) is not a root.
+function pointsIntoRoot(reg, inv, ctx)
+{
+    const P = pathFor(ctx.platform);
+    const file = helperPathOf(reg.entry && reg.entry.headersHelper);
+    if (file) return P.dirname(absOf(file, ctx));
+    const row = reg.rowId ? catalogOf(ctx).byId.get(reg.rowId) : null;
+    if (!row || !row.locations || !reg.entry) return null;
+    let rootStr;
+    try { rootStr = E.rootOfEntry(row, reg.entry); }
+    catch { rootStr = null; }
+    if (!rootStr || rootStr.includes('${') && !/^\$\{(?:HOME|USERPROFILE)\}/.test(rootStr)) return null;
+    const parent = P.dirname(absOf(rootStr, ctx));
+    const map = (inv.roots && inv.roots.map) || emptyMap();
+    const known = [...standard('project', ctx), ...standard('global', ctx)].map((s) => s.root).concat([map.global, ...Object.values(map.projects || {})].filter(Boolean));
+    const exists = existsOf(ctx);
+    return known.includes(parent) || [FILES.secrets, FILES.helper, FILES.record].some((f) => exists(P.join(parent, f))) ? parent : null;
+}
+
 // Where the commands look for the record (D6): the mapped root, the two standard folders, then every root a managed
 // registration points into.
 function recordFiles(inv, family, ctx)
@@ -356,5 +376,5 @@ function helperState(file, exists = (p) => fs.existsSync(p))
 
 module.exports = {
     FILES, GITIGNORE, familyOf, readMap, mapKey, withRoot, inUse, options, resolveNamed, resolve, rootStrFor, recordFiles, readRecord,
-    helperPathOf, registrationRoots, standard, recordKey, mergeRecord, gitIgnores, ignoreGap, helperState, helperSource,
+    helperPathOf, registrationRoots, standard, pointsIntoRoot, absOf, recordKey, mergeRecord, gitIgnores, ignoreGap, helperState, helperSource,
 };

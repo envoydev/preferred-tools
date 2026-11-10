@@ -186,11 +186,15 @@ const offeredForInstall = (row, inv) =>
     return !at.includes('local') && !at.includes('project') && !at.includes(recommendedScope(row, row.recommendedRoute));
 };
 
-function pickQuestions(inv, catalog)
+// `existing`: the answers about servers already set up so far (spec D6). A row whose server was left on its own -
+// answered now or recorded - is not offered; one answered 'add' is, with the two servers named.
+function pickQuestions(inv, catalog, existing = {})
 {
+    const X = require('./existing.js');
+    const rule = X.offerRule(inv, catalog, existing);
     const items = [];
     for (const g of catalog.groups)
-        for (const row of catalog.tools.filter((r) => r.group === g.id && r.os.includes(inv.os) && offeredForInstall(r, inv)))
+        for (const row of catalog.tools.filter((r) => r.group === g.id && r.os.includes(inv.os) && offeredForInstall(r, inv) && !rule.own.has(r.id)))
         {
             const have = installedOf(inv, row.id);
             const inherited = have.filter((h) => h.scope === 'inherited');
@@ -201,7 +205,7 @@ function pickQuestions(inv, catalog)
             const keep = `${stays.join(' and ')} ${stays.length > 1 ? 'stay' : 'stays'}${user.length ? '' : stays.length > 1 ? ' in their folders' : ' in its folder'}`;
             // windows-mcp 0.8.8 keeps one per desktop healthy; a copy under the row's own name replaces that one here
             const others = row.id === 'windows-control' ? otherWindowsMcp(inv, row.name) : [];
-            const warn = others.length ? `; another windows-mcp already starts here (${others.join(', ')}) - keep one per desktop` : '';
+            const warn = `${others.length ? `; another windows-mcp already starts here (${others.join(', ')}) - keep one per desktop` : ''}${rule.add.has(row.id) ? `; ${X.twoServers(row.label, rule.add.get(row.id))}` : ''}`;
             items.push({ group: g, label: `${row.label}${tags.length ? ` (${tags.join('; ')})` : ''}`, description: `${have.length ? `adds this project's own copy; ${keep} - ${row.summary}` : row.summary}${warn}` });
         }
     return packed(items, { id: 'pick', question: 'which tools do you want to install?', none: 'install nothing' });
@@ -615,7 +619,7 @@ function all(inv, picks, catalog, { env = {}, home = null, connectors = null } =
 {
     const out = {
         static: { ...STATIC, hud: STATIC.hud(0, 0, 0), prereqMissing: STATIC.prereqMissing('<tool>', '<prerequisite>') },
-        pick: pickQuestions(inv, catalog), change: changeQuestions(inv, catalog), remove: removeQuestions(inv, catalog), tools: {}, targets: {},
+        pick: pickQuestions(inv, catalog, picks && picks.existing), change: changeQuestions(inv, catalog), remove: removeQuestions(inv, catalog), tools: {}, targets: {},
     };
     // `exists` reads the disk: alfred-code's .alfred/.gitignore and its 2.x data decide which folders are offered
     const ctx = { project: inv.project, platform: inv.os, arch: inv.arch, home: home || require('./account.js').homeDir(process.env), env, keyHome: home, exists: (p) => fs.existsSync(p) };

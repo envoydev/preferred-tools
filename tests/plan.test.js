@@ -1775,3 +1775,61 @@ test('the file steps come before the registration steps and the records last', (
     assert.ok(!a.steps.some((s) => s.op === 'root-ignore'), a.steps.map((s) => s.op).join());
 });
 const S_VAR = 'SENTRY_ACCESS_TOKEN';
+
+// ---- 0.2.0: servers already set up (spec D6; plan R12) ---------------------------------------------------------------
+test("a tool answered 'own' is not offered; 'add' is offered with the two-servers note", () => {
+    const asks = require('../scripts/asks.js');
+    const labels = (calls) => calls.flat().flatMap((x) => x.options.map((o) => o.label));
+    const has = (calls, id) => labels(calls).some((l) => l === id || l.startsWith(`${id} (`));
+    const sentry = reg('sentry', 'user', { type: 'http', url: 'https://mcp.sentry.dev/mcp' }, 'sentry', 'remote', { choice: null });
+    const c7 = { plugin: 'docs@m', server: 'c7', entry: { type: 'http', url: 'https://mcp.context7.com/mcp' }, rowId: 'context7', route: 'remote', choice: null };
+    const i = inv(MAC, { registrations: [sentry], pluginServers: [c7], records: { project: null, global: null } });
+    for (const id of ['sentry', 'context7', 'atlassian']) assert.ok(has(asks.pickQuestions(i, catalog), id), id);
+    const own = asks.pickQuestions(i, catalog, { 'mcp:sentry~user': 'own', 'plugin-mcp:docs@m/c7': 'own', 'connector:Atlassian': 'own' });
+    for (const id of ['sentry', 'context7', 'atlassian']) assert.ok(!has(own, id), id);
+    assert.ok(has(own, 'github'), 'a tool not answered is still offered');
+    // recorded on their own: the same
+    const recorded = inv(MAC, { registrations: [{ ...sentry, choice: 'own' }], pluginServers: [{ ...c7, choice: 'own' }], records: { project: null, global: { file: '/Users/me/.preferred-tools/preferred-tools.json', servers: [{ connector: 'Atlassian', choice: 'own' }] } } });
+    for (const id of ['sentry', 'context7', 'atlassian']) assert.ok(!has(asks.pickQuestions(recorded, catalog), id), id);
+    // 'add' and 'manage': offered; 'add' says two servers then run
+    const add = asks.pickQuestions(i, catalog, { 'plugin-mcp:docs@m/c7': 'add', 'connector:Atlassian': 'add', 'mcp:sentry~user': 'manage' });
+    const opt = (id) => add.flat().flatMap((x) => x.options).find((o) => o.label === id || o.label.startsWith(`${id} (`));
+    assert.match(opt('context7').description, /two servers of context7 then run - docs's and this one/);
+    assert.match(opt('atlassian').description, /two servers of atlassian then run - claude\.ai's and this one/);
+    assert.doesNotMatch(opt('sentry').description, /two servers/);
+    // the plan says it too, and records the answer
+    const p = plan(i, { picks: { context7: { route: 'remote', scope: 'project' } }, existing: { 'plugin-mcp:docs@m/c7': 'add' } }, opts('/Users/me'));
+    assert.deepStrictEqual(p.errors, []);
+    assert.ok(p.notes.includes("context7: two servers of context7 then run - docs's and this one"), p.notes.join('\n'));
+    assert.deepStrictEqual(p.steps.filter((s) => s.op === 'record-choice').map((s) => [s.file, s.entries]), [['/work/shop/.preferred-tools/preferred-tools.json', [{ plugin: 'docs@m', server: 'c7', fingerprint: 'url:mcp.context7.com/mcp', choice: 'add' }]]]);
+    // an answer the server cannot take, or a server not here: refused
+    assert.match(plan(i, { existing: { 'mcp:sentry~user': 'add' } }, opts('/Users/me')).errors.join(), /'add' is not an answer for mcp:sentry~user - own or manage/);
+    assert.match(plan(i, { existing: { 'mcp:gone~user': 'own' } }, opts('/Users/me')).errors.join(), /'mcp:gone~user' is not a server found here/);
+});
+
+test('the existing block, and the detector run, come only with --connectors', () => {
+    const fs = require('node:fs');
+    const { spawnSync } = require('node:child_process');
+    const { world } = require('./helpers.js');
+    const inventoryLib = require('../scripts/inventory.js');
+    const cli = require('../scripts/claude-cli.js');
+    const w = world();
+    try
+    {
+        assert.strictEqual(cli.run(['mcp', 'add-json', 'github', JSON.stringify({ type: 'http', url: 'https://api.githubcopilot.com/mcp/' }), '-s', 'user'], { cwd: w.project, env: w.env }).status, 0);
+        const invFile = path.join(w.dir, 'inv.json');
+        fs.writeFileSync(invFile, JSON.stringify(inventoryLib.keptOf(inventoryLib.buildInventory({ project: w.project, env: w.env }))));
+        const run = (...extra) => spawnSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'plan.js'), '--questions', invFile, ...extra], { encoding: 'utf8', env: w.env, cwd: w.project });
+        const before = w.calls().length;
+        const without = run();
+        assert.strictEqual(without.status, 0, without.stderr);
+        assert.ok(!('existing' in JSON.parse(without.stdout)));
+        assert.strictEqual(w.calls().length, before, 'no inventory read, no detector run');
+        const withC = run('--connectors', '');
+        assert.strictEqual(withC.status, 0, withC.stderr);
+        const q = JSON.parse(withC.stdout).existing;
+        assert.deepStrictEqual(q.calls.flat().map((x) => x.question), ['github (global) is already set up here. Who looks after it? - connectors this session has not loaded are not seen']);
+        assert.ok(w.calls().length > before, 'the live inventory the detectors read');
+    }
+    finally { w.clean(); }
+});
