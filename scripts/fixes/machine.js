@@ -45,8 +45,16 @@ function typescriptLspTs7Fix(f, ctx)
 // A project-scope registration writes its data folder relative, so it lands in whichever folder Claude starts in: a
 // child or a subfolder gets its own copy, which nothing there keeps out of git. This row reads every registration that
 // starts here - this folder's own project-scope ones and those inherited from a parent's .mcp.json (the other rows
-// leave those to fix run in the parent) - and finds each relative data folder that is neither ignored by a .gitignore
-// of its own nor, under .alfred/, by alfred-code's .alfred/.gitignore.
+// leave those to fix run in the parent) - and finds each relative data folder whose contents git does not ignore. In a
+// git work tree git decides (`git check-ignore` on a file inside the folder, as keys.js tests a key file); where git
+// cannot answer, the folder's own .gitignore, or alfred-code's .alfred/.gitignore under .alfred/, counts as covering.
+const PROBE = 'preferred-tools-probe';
+function ignoredByGit(ctx, rel)
+{
+    const r = ctx.machine.run('git', ['check-ignore', '-q', `${rel}/${PROBE}`], { cwd: ctx.inv.project });
+    return r && (r.status === 0 || r.status === 1) ? r.status === 0 : null;
+}
+
 function dataFolderIgnoreDetect(ctx)
 {
     const P = ctx.platform === 'win32' ? path.win32 : path.posix;
@@ -65,8 +73,21 @@ function dataFolderIgnoreDetect(ctx)
         const folder = P.resolve(ctx.inv.project, ...rel.split('/'));
         if (seen.has(folder)) continue;
         seen.add(folder);
-        if (ctx.machine.exists(P.join(folder, '.gitignore'))) continue;
-        if (/^\.alfred\//.test(rel) && ctx.machine.exists(P.join(ctx.inv.project, '.alfred', '.gitignore'))) continue;
+        const own = P.join(folder, '.gitignore');
+        const git = ignoredByGit(ctx, rel);
+        if (git === true) continue;
+        if (git === null && ctx.machine.exists(own)) continue;
+        if (git === null && /^\.alfred\//.test(rel) && ctx.machine.exists(P.join(ctx.inv.project, '.alfred', '.gitignore'))) continue;
+        // a .gitignore of the user's that leaves the data out is theirs to change: the fix never writes over it
+        if (git === false && ctx.machine.exists(own))
+        {
+            out.push({
+                id: 'data-folder-ignore', row: r.rowId, name: r.name, scope: r.scope,
+                found: `${rel} - its data folder when Claude starts here - is not git-ignored`,
+                blocked: `${rel}/.gitignore is there but does not ignore the folder's data - add * to it, or ignore ${rel}/ in the project's .gitignore`,
+            });
+            continue;
+        }
         out.push({
             id: 'data-folder-ignore', row: r.rowId, name: r.name, scope: r.scope,
             found: `${rel} - its data folder when Claude starts here - is not git-ignored: ${folder} gets no .gitignore of its own${/^\.alfred\//.test(rel) ? ' and no .alfred/.gitignore covers it' : ''}`,

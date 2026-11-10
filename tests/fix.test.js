@@ -12,6 +12,7 @@ const cli = require('../scripts/claude-cli.js');
 const account = require('../scripts/account.js');
 const F = require('../scripts/fixes/index.js');
 const fix = require('../scripts/fix.js');
+const C = require('../scripts/fixes/common.js');
 
 const catalog = catalogLib.load();
 const row = (id) => catalog.byId.get(id);
@@ -280,7 +281,8 @@ test('data-folder-ignore: a relative folder here with no ignore is found and fix
         const pw = (root) => ({ command: 'npx', args: ['-y', '@playwright/mcp@0.0.83', '--browser', 'chrome', '--user-data-dir', root] });
         // a parent's .mcp.json server: it starts here too, and this row reads it (the other rows never do)
         const parent = (root, extra = {}) => ({ ...reg('playwright-chrome', pw(root), { scope: 'inherited' }), from: path.dirname(w.project), approval: 'pending', shadowed: null, ...extra });
-        const ctx = (registrations) => ctxFor({ platform: process.platform, project: w.project, registrations, machine: noMachine({ exists: (p) => fs.existsSync(p) }) });
+        // a real git: this world is no work tree, so git cannot answer and the folder's own files decide
+        const ctx = (registrations) => ctxFor({ platform: process.platform, project: w.project, registrations, machine: noMachine({ exists: (p) => fs.existsSync(p), run: C.realMachine().run }) });
         const found = (registrations) => F.dataFolderIgnoreDetect(ctx(registrations));
         const folder = path.join(w.project, '.preferred-tools', 'playwright-chrome');
 
@@ -402,6 +404,34 @@ test('questions: only NOT APPLICABLE findings give no apply ask', () =>
 });
 
 // ---- narrowing and rendering ----------------------------------------------------------------------------------------
+
+test('data-folder-ignore: in a git work tree git decides - the project\'s own ignore covers the folder, a .gitignore that leaves its data out does not', () =>
+{
+    const fs = require('node:fs');
+    const { spawnSync } = require('node:child_process');
+    const w = world();
+    try
+    {
+        spawnSync('git', ['init', '-q'], { cwd: w.project });
+        const pw = (root) => reg('playwright-chrome', { command: 'npx', args: ['-y', '@playwright/mcp@0.0.83', '--browser', 'chrome', '--user-data-dir', root] }, { scope: 'project' });
+        const found = (root) => F.dataFolderIgnoreDetect(ctxFor({ platform: process.platform, project: w.project, registrations: [pw(root)], machine: noMachine({ exists: (p) => fs.existsSync(p), run: C.realMachine().run }) }));
+        // the project ignores .preferred-tools/: covered, though the folder has no .gitignore of its own
+        fs.writeFileSync(path.join(w.project, '.gitignore'), '.preferred-tools/\n');
+        assert.deepStrictEqual(found('.preferred-tools/playwright-chrome'), []);
+        // a folder's own .gitignore that ignores only logs: its data is not covered, and the fix leaves the user's file
+        const own = path.join(w.project, 'tools', 'pw');
+        fs.mkdirSync(own, { recursive: true });
+        fs.writeFileSync(path.join(own, '.gitignore'), '*.log\n');
+        const [f] = found('tools/pw');
+        assert.ok(f, 'a .gitignore that leaves the data out is a finding');
+        assert.match(f.blocked, /tools\/pw\/\.gitignore .*does not ignore .*add \*/);
+        // alfred-code's .alfred/.gitignore, when git reads it, covers .alfred/<name>
+        fs.mkdirSync(path.join(w.project, '.alfred'));
+        fs.writeFileSync(path.join(w.project, '.alfred', '.gitignore'), '*\n');
+        assert.deepStrictEqual(found('.alfred/playwright-chrome'), []);
+    }
+    finally { w.clean(); }
+});
 
 test('fix detectors never return an inherited registration (data-folder-ignore reads relative folders from the parents, in its own test)', () =>
 {
