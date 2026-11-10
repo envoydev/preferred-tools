@@ -102,15 +102,15 @@ test('desktop control is offered only on its own OS', () => {
 test('npx rows: pinned, with the cut-off in npm_config_before; native Windows gets the cmd /c precaution', () => {
     const mac = addStep(plan(inv(MAC), pickOne('playwright-chrome'), opts('/Users/me'))).entry;
     assert.strictEqual(mac.command, 'npx');
-    assert.deepStrictEqual(mac.args.slice(0, 4), ['-y', '@playwright/mcp@0.0.83', '--browser', 'chrome']);
+    assert.deepStrictEqual(mac.args.slice(0, 4), ['-y', '@playwright/mcp@0.0.84', '--browser', 'chrome']);
     assert.ok(mac.args.includes('--no-webmcp'));
-    assert.strictEqual(mac.env.npm_config_before, '2026-10-20T23:59:59Z');
+    assert.strictEqual(mac.env.npm_config_before, '2026-11-10T23:59:59Z');
     const win = addStep(plan(inv(WIN), pickOne('playwright-chrome'), opts('C:\\Users\\me'))).entry;
     assert.strictEqual(win.command, 'cmd');
     assert.deepStrictEqual(win.args.slice(0, 3), ['/c', 'npx', '-y']);
-    assert.strictEqual(win.env.npm_config_before, '2026-10-20T23:59:59Z');
+    assert.strictEqual(win.env.npm_config_before, '2026-11-10T23:59:59Z');
     const ap = addStep(plan(inv(MAC), pickOne('appium'), opts('/Users/me'))).entry;
-    assert.deepStrictEqual(ap.args, ['-y', 'appium-mcp@1.99.1']);
+    assert.deepStrictEqual(ap.args, ['-y', 'appium-mcp@1.99.2']);
     assert.strictEqual(ap.env.SCREENSHOTS_DIR, '/work/shop/.preferred-tools/appium-mcp/screenshots');
     assert.strictEqual(ap.env.PAGE_SOURCES_DIR, '/work/shop/.preferred-tools/appium-mcp/page-sources');
     assert.strictEqual(ap.env.ALLOW_REMOTE_APP_URLS, 'false');
@@ -122,9 +122,9 @@ test('routes: context7, github and sentry each build both ways; the others have 
     const c7k = addStep(plan(inv(MAC), pickOne('context7', { route: 'remote', token: true }), opts('/h'))).entry;
     assert.deepStrictEqual(c7k.headers, { Authorization: 'Bearer ${CONTEXT7_API_KEY}' });
     const c7l = addStep(plan(inv(MAC), pickOne('context7', { route: 'local', token: true }), opts('/h'))).entry;
-    assert.deepStrictEqual(c7l.args, ['-y', '@upstash/context7-mcp@4.4.4', '--api-key', '${CONTEXT7_API_KEY}']);
+    assert.deepStrictEqual(c7l.args, ['-y', '@upstash/context7-mcp@4.5.0', '--api-key', '${CONTEXT7_API_KEY}']);
     const gh = addStep(plan(inv(MAC), pickOne('github', { route: 'local' }), opts('/h'))).entry;
-    assert.deepStrictEqual(gh.args, ['run', '-i', '--rm', '-e', 'GITHUB_PERSONAL_ACCESS_TOKEN', 'ghcr.io/github/github-mcp-server:v2.0.3', 'stdio']);
+    assert.deepStrictEqual(gh.args, ['run', '-i', '--rm', '-e', 'GITHUB_PERSONAL_ACCESS_TOKEN', 'ghcr.io/github/github-mcp-server:v2.1.0', 'stdio']);
     assert.deepStrictEqual(gh.env, { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_PERSONAL_ACCESS_TOKEN}' });
     const ghb = addStep(plan(inv(MAC), pickOne('github', { route: 'local' }), opts('/h', { machine: { docker: false } }))).entry;
     assert.deepStrictEqual([ghb.command, ghb.args], ['github-mcp-server', ['stdio']]);
@@ -479,7 +479,7 @@ test('a rename starts from the registration as read: an updated pin and a user-a
 
 test('a location change edits only the paths and keeps the pin; the old data is named and left', () => {
     const r = installed('playwright-chrome');
-    r.entry.args = r.entry.args.map((a) => a.replace('0.0.83', '0.0.90'));
+    r.entry.args = r.entry.args.map((a) => a.replace(/^@playwright\/mcp@.+$/, '@playwright/mcp@0.0.90'));
     const p = plan(inv(MAC, { registrations: [r] }), changeOf(r, { location: { side: 'account' } }), opts('/Users/me'));
     assert.deepStrictEqual(p.steps.map((s) => s.op), ['ensure-dir', 'mcp-replace']);
     const e = p.steps[1].entry;

@@ -154,7 +154,7 @@ test('a statusLine that is not claude-hud\'s is kept, reported with the /claude-
     const res = applyHud(plan);
     assert.deepStrictEqual(read(dir, 'settings.json').statusLine, mine, 'kept byte for byte - no refreshInterval invented on someone else\'s line');
     const kept = res.lines.find((l) => l.startsWith('hud: statusLine kept'));
-    assert.match(kept, /not claude-hud's \(source: statusline script\); \/claude-hud:setup replaces it/);
+    assert.match(kept, /not claude-hud's \(source: statusline script\); \/hud \(claude-hud 0\.15\+; \/claude-hud:setup before it\) replaces it/);
     assert.ok(!kept.includes('statusline.sh'), 'the command itself is never printed - it may carry a token');
     assert.strictEqual(hudConfig(dir).lineLayout, 'compact', 'the layout still lands - it is the hud\'s own file');
     // The other upstream labels.
@@ -570,8 +570,9 @@ test('PL7 claude-hud 0.11\'s own launcher lines read as current on darwin, linux
 });
 
 // PL7: the claude-hud row of catalog/plugin-settings.json names the version its keys were read from, and /preferred-tools:update
-// is what moves claude-hud. A cached claude-hud newer than that version goes red here: re-read its dist/config.js and
-// scripts/setup.mjs, re-stamp `verified`, and teach classify() any new launcher line. Reads this machine's account cache;
+// is what moves claude-hud. A cached claude-hud newer than that version goes red here: re-read its config defaults
+// (src/config.ts from 0.15.0, dist/config.js before) and its launcher lines (install.mjs from 0.15.0, scripts/setup.mjs
+// before), re-stamp `verified`, and teach classify() any new launcher line. Reads this machine's account cache;
 // with none (CI), nothing to compare.
 test('PL7 the claude-hud row was verified on a version no older than the newest claude-hud cached in this account', (t) =>
 {
@@ -780,9 +781,9 @@ test('Windows (mocked platform): --check and a run name the refresh-interval cav
     const exists = winDisk(CMD_EXE, WIN_NODE);
     const opts = { configDir: dir, platform: 'win32', runtime: WIN_NODE, env: WIN_ENV, exists };
     const res = checkHud(planHud(opts));
-    assert.ok(lineOf(res, /^hud: note - claude-hud's README advises no refresh interval, or 30 seconds or more, on Windows/), res.lines.join('\n'));
+    assert.ok(lineOf(res, /^hud: note - claude-hud advises a refresh interval of 30 seconds or more on Windows Git Bash/), res.lines.join('\n'));
     const applied = applyHud(planHud(opts));
-    assert.ok(lineOf(applied, /^hud: note - claude-hud's README advises/), applied.lines.join('\n'));
+    assert.ok(lineOf(applied, /^hud: note - claude-hud advises/), applied.lines.join('\n'));
     assert.ok(!lineOf(check(account()), /^hud: note/), 'no caveat off Windows');
 });
 

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "note": "The 17 rows of preferred-tools. Facts are checked against the vendor docs in docs/sources.md (read 2026-10-27; pins refreshed 2026-11-04). Placeholders: {root} location root, {name} registration name, {host}, {value}. No secret in this file: a token is only ever a ${VAR} reference.",
+  "note": "The 17 rows of preferred-tools. Facts are checked against the vendor docs in docs/sources.md (read 2026-10-27; pins refreshed 2026-11-10). Placeholders: {root} location root, {name} registration name, {host}, {value}. No secret in this file: a token is only ever a ${VAR} reference.",
   "rules": {
     "ageGateDays": 7,
     "cutoff": "2026-10-20T23:59:59Z",
@@ -233,8 +233,8 @@
           "package": {
             "registry": "npm",
             "name": "@upstash/context7-mcp",
-            "version": "4.4.4",
-            "cutoff": "2026-10-20T23:59:59Z"
+            "version": "4.5.0",
+            "cutoff": "2026-11-10T23:59:59Z"
           },
           "run": [],
           "optionalArgs": {
@@ -292,7 +292,7 @@
           "tokenVar": "GITHUB_PERSONAL_ACCESS_TOKEN",
           "image": {
             "name": "ghcr.io/github/github-mcp-server",
-            "tag": "v2.0.3"
+            "tag": "v2.1.0"
           },
           "run": [
             "stdio"
@@ -406,8 +406,8 @@
           "package": {
             "registry": "npm",
             "name": "@playwright/mcp",
-            "version": "0.0.83",
-            "cutoff": "2026-10-20T23:59:59Z"
+            "version": "0.0.84",
+            "cutoff": "2026-11-10T23:59:59Z"
           },
           "run": [
             "--browser",
@@ -477,8 +477,8 @@
           "package": {
             "registry": "npm",
             "name": "@playwright/mcp",
-            "version": "0.0.83",
-            "cutoff": "2026-10-20T23:59:59Z"
+            "version": "0.0.84",
+            "cutoff": "2026-11-10T23:59:59Z"
           },
           "run": [
             "--browser",
@@ -548,8 +548,8 @@
           "package": {
             "registry": "npm",
             "name": "@playwright/mcp",
-            "version": "0.0.83",
-            "cutoff": "2026-10-20T23:59:59Z"
+            "version": "0.0.84",
+            "cutoff": "2026-11-10T23:59:59Z"
           },
           "run": [
             "--browser",
@@ -618,8 +618,8 @@
           "package": {
             "registry": "npm",
             "name": "@playwright/mcp",
-            "version": "0.0.83",
-            "cutoff": "2026-10-20T23:59:59Z"
+            "version": "0.0.84",
+            "cutoff": "2026-11-10T23:59:59Z"
           },
           "run": [
             "--browser",
@@ -688,8 +688,8 @@
           "package": {
             "registry": "npm",
             "name": "appium-mcp",
-            "version": "1.99.1",
-            "cutoff": "2026-11-04T23:59:59Z"
+            "version": "1.99.2",
+            "cutoff": "2026-11-10T23:59:59Z"
           },
           "run": [],
           "env": {
@@ -748,9 +748,9 @@
           "package": {
             "registry": "pypi",
             "name": "macos-mcp",
-            "version": "0.4.6",
+            "version": "0.4.7",
             "fromSpec": "macos-mcp=={version}",
-            "cutoff": "2026-10-20T23:59:59Z"
+            "cutoff": "2026-11-10T23:59:59Z"
           },
           "run": [
             "macos-mcp",

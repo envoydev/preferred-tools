@@ -56,6 +56,57 @@ only if published on or before 2026-10-28. Every other pin is unchanged.
   `docker manifest inspect ghcr.io/github/github-mcp-server:v2.0.3` succeeds; the release (https://github.com/github/github-mcp-server/releases/tag/v2.0.3) has the same binary asset
   names and changes no flag or tool name (bug fixes, `list_label` cursor pagination, Go 1.27.3).
 
+## Pins - refresh on 2026-11-10
+
+`npm run refresh-pins -- --write` moved four package pins (seven routes), and their cut-off to `2026-11-10T23:59:59Z`.
+The GitHub image tag was moved by hand. With today 2026-11-10, a release counts only if published on or before
+2026-11-03. Each new release was unpacked and read, never run (npm tarballs, the PyPI wheel, the image's manifest and
+config); `serena-agent` 2.1.0, `windows-mcp` 0.8.8, `mcp-memory-service` 12.4.0 and `@sentry/mcp-server` 0.42.0 are
+unchanged (every newer release is under 7 days old).
+
+| Package | Was | Now (published) | Held back by the age gate |
+|---|---|---|---|
+| `@upstash/context7-mcp` | 4.4.4 | 4.5.0 (2026-11-03) | 4.5.1 (2026-11-06), 4.6.0 (2026-11-09) |
+| `@playwright/mcp` | 0.0.83 | 0.0.84 (2026-10-31) | 0.0.85 (2026-11-09) |
+| `appium-mcp` | 1.99.1 | 1.99.2 (2026-11-01) | 1.99.3 (2026-11-04) |
+| `macos-mcp` | 0.4.6 | 0.4.7 (2026-11-02) | - |
+| `ghcr.io/github/github-mcp-server` | v2.0.3 | v2.1.0 (2026-11-03) | - |
+| `mcp-memory-service` | 12.4.0 | 12.4.0 | 12.5.0 and newer (12.7.0 2026-11-07) |
+| `@sentry/mcp-server` | 0.42.0 | 0.42.0 | two releases, 0.49.0 (2026-11-07) the newest |
+
+- `@upstash/context7-mcp` 4.5.0 - CONFIRMED from the tarball: `--api-key <key>` (`dist/index.js:52`), stdio the
+  default, tools `query-docs` and `resolve-library-id` unchanged. New: an unfilled `${CONTEXT7_API_KEY}` placeholder now
+  counts as no key (`dist/index.js:675-679`; before, it was sent and every call returned 401), and an opt-in
+  `--research-preview`. Release notes:
+  https://github.com/upstash/context7/releases/tag/%40upstash/context7-mcp%404.5.0 ('The HTTP transport is unchanged').
+- `@playwright/mcp` 0.0.84 (bundles playwright-core 1.65.0-alpha-2026-10-30) - CONFIRMED from the tarball:
+  `--browser` (chrome, firefox, webkit, msedge), `--no-webmcp`, `--user-data-dir`, `--output-dir`, `--executable-path`
+  as documented; a relative `--user-data-dir` and `--output-dir` still resolve with `path.resolve` against the process
+  cwd (`lib/coreBundle.js`, same code as 0.0.83); the 83 `browser_*` tool names are the same, `browser_run_code_unsafe`
+  included. Two new opt-in flags, `--ignore-roots` and `--redact-url-params`. Release notes:
+  https://github.com/microsoft/playwright-mcp/releases/tag/v0.0.84.
+- `appium-mcp` 1.99.2 - CONFIRMED from the tarball: the only code change is the telemetry import order ('format for
+  node 22'); `NO_UI`, `ALLOW_REMOTE_APP_URLS`, `REMOTE_SERVER_URL_ALLOW_REGEX`, `SCREENSHOTS_DIR` (relative from the
+  cwd) and `PAGE_SOURCES_DIR` in the README and `dist`; `ANDROID_HOME` and `JAVA_HOME` are read by its dependency
+  appium-adb (`build/lib/utils/helpers/sdk.js`), not by appium-mcp's own `dist`; `engines.node` `>=22`. MEASURED:
+  `npm audit` at the pin, by the walk's two commands in an empty scratch folder (npm 11.6.1), reports
+  `{info 0, low 1, moderate 23, high 15, critical 0, total 39}` over 1181 dependencies; 1.99.1 re-measured the same day
+  gives the same, so the drop from 40 is the registry's transitive releases, not 1.99.2. Release notes:
+  https://github.com/appium/appium-mcp/releases/tag/v1.99.2.
+- `macos-mcp` 0.4.7 - CONFIRMED from the wheel (sha256 matches PyPI): console script `macos-mcp`, `serve` (a bare
+  `macos-mcp` now runs it too), `ANONYMIZED_TELEMETRY` read at `__main__.py:152`, `requires_python` `>=3.11`, resolvable
+  on Python 3.13 (`uv pip compile`, wheels only); tools App, Shell, Snapshot, Click, Type, Scroll, Move, Shortcut, Wait,
+  Scrape, Desktop, Notification - the same 12 as 0.4.6; no `--exclude-tools` flag. Fixes only:
+  https://github.com/CursorTouch/MacOS-MCP/compare/v0.4.6...v0.4.7.
+- `ghcr.io/github/github-mcp-server` v2.1.0 - CONFIRMED: `docker manifest inspect` finds it (linux/amd64 and arm64);
+  the image config keeps Entrypoint `/server/github-mcp-server`, Cmd `stdio`; `GITHUB_PERSONAL_ACCESS_TOKEN` is still
+  the variable (`cmd/github-mcp-server/main.go`); the release asset names are unchanged; the two new issue-artifact
+  tools sit behind a feature flag that is off by default. Release notes:
+  https://github.com/github/github-mcp-server/releases/tag/v2.1.0.
+- The `playwright-webmcp` fix compared a registration's pin against the catalog's pin as 'the version whose README
+  documents --no-webmcp', so this move would have blocked every registration still on 0.0.83. Its floor is now the
+  fixed 0.0.83 (`scripts/fixes/registration.js` `NO_WEBMCP_SINCE`).
+
 ## GitHub MCP server - github/github-mcp-server
 
 - Remote URL `https://api.githubcopilot.com/mcp/` - CONFIRMED. README (https://github.com/github/github-mcp-server).
@@ -121,9 +172,9 @@ only if published on or before 2026-10-28. Every other pin is unchanged.
   'pass your API key via the `Authorization: Bearer YOUR_API_KEY` header'). The old `Context7-API-Key` header could not
   be re-confirmed, so the catalog follows the page. The key is recommended, not required (README: 'API Key
   Recommended ... higher rate limits'; the API guide says no key means low rate limits).
-- Local `npx -y @upstash/context7-mcp --api-key YOUR_API_KEY` - CONFIRMED (flag). No environment-variable form is
-  documented, so a local route has no token-free way to carry the key: the local row registers it as an arg built from
-  `${CONTEXT7_API_KEY}` (expanded by Claude Code at launch, never written).
+- Local `npx -y @upstash/context7-mcp --api-key YOUR_API_KEY` - CONFIRMED (flag). CORRECTED 2026-11-10: the README
+  also documents a `CONTEXT7_API_KEY` environment variable (`--api-key` takes precedence) - read in the 4.5.0 tarball,
+  and already in 4.4.4's README. The local row still registers the key as an arg built from `${CONTEXT7_API_KEY}`.
 
 ## Claude Code - MCP registration (`claude mcp`) and `.mcp.json`
 
@@ -277,8 +328,19 @@ Docs: https://code.claude.com/docs/en/plugins/cli-reference.md and https://code.
 - https://github.com/jarrodwatts/claude-hud - marketplace `claude-hud`, plugin `claude-hud`, install
   `claude plugin marketplace add jarrodwatts/claude-hud` then `claude plugin install claude-hud@claude-hud` - CONFIRMED.
   Update: `claude plugin marketplace update claude-hud`, then `claude plugin update claude-hud@claude-hud`.
-- Latest release v0.13.1 (2026-10-26), v0.13.0 (2026-10-24), v0.12.1 (2026-10-21). The alfred-code row was verified on
-  0.12.1.
+- Latest release v0.15.0 (2026-11-02, the newest on 2026-11-10); before it v0.13.1 (2026-10-26), v0.13.0 (2026-10-24),
+  v0.12.1 (2026-10-21). The alfred-code row was verified on 0.12.1.
+- Re-read on 0.15.0 (2026-11-10; the tag tarball and this account's cached 0.15.0 are identical, never run): it runs
+  from TypeScript, so `dist/config.js`, `dist/claude-config-dir.js`, `commands/configure.md` and `scripts/setup.mjs` are
+  gone, and `/hud` replaces `/claude-hud:setup` and `/claude-hud:configure` (CHANGELOG). `src/config.ts`
+  `DEFAULT_CONFIG` holds all 12 of the row's keys with the names, types and defaults of 0.13.1 (0.14.0 adds only
+  `display.showLaunchDir`, off); `migrateLegacyLayout` still migrates a legacy `layout` only while `lineLayout` is
+  absent; `src/schema.ts` gives `compact` as a single line and `showSeparators` as a rule in compact only; the config
+  file is still `<config dir>/plugins/claude-hud/config.json` (`collector.mjs` `claudePaths`). The refresh advice moved
+  from the README to `src/schema.ts:119`: a `refreshInterval` on the `statusLine` entry, 30 seconds or more on Windows Git
+  Bash. `install.mjs` `buildCommand` writes the 0.11 launcher lines bar Bun's optional `--env-file`, and
+  `hud-statusline.js` `classify()` reads all four (darwin, linux, Git Bash, PowerShell) as current. The row's
+  `verified` names 0.15.0; its keys and values are unchanged.
 - `dist/config.js` `DEFAULT_CONFIG` at tag v0.13.1 (dist is committed) - CONFIRMED to hold every key the ported row
   sets: `lineLayout` ('expanded' by default), `showSeparators`, `display.{showConfigCounts, showSkills, showMcp,
   showAgents, showTools, showCost, showEffortLevel, showPromptCache}` (all false by default),
@@ -322,7 +384,7 @@ Docs: https://code.claude.com/docs/en/plugins/cli-reference.md and https://code.
   tools|REPL` - CONFIRMED. `serena/config/client_setup.py` itself emits `--context=claude-code --project-from-cwd`.
 - PyPI 2.1.0 `requires_python` `>=3.11,<3.15`, uploaded 2026-10-19 - CONFIRMED (so 3.13 is inside the range).
 
-## Playwright MCP - microsoft/playwright-mcp 0.0.83
+## Playwright MCP - microsoft/playwright-mcp 0.0.83 (pin 0.0.84 since 2026-11-10)
 
 - https://github.com/microsoft/playwright-mcp/blob/main/README.md - CONFIRMED options: `--browser` (chrome, firefox,
   webkit, msedge), `--executable-path`, `--no-webmcp` ('do not collect or expose the tools that a page registers through
@@ -355,7 +417,8 @@ Docs: https://code.claude.com/docs/en/plugins/cli-reference.md and https://code.
   DisplayInventory; `ANONYMIZED_TELEMETRY=false`; Python 3.14+; `App` has `launch` and `launch_executable` modes - all
   CONFIRMED.
 - macos-mcp 0.4.6 (https://github.com/CursorTouch/MacOS-MCP; PyPI points at jeomon/MacOS-MCP, which redirects there):
-  `serve`; tools App, Shell, Snapshot, Click, Type, Scroll, Move, Shortcut, Wait, Scrape, Notification; no
+  `serve`; tools App, Shell, Snapshot, Click, Type, Scroll, Move, Shortcut, Wait, Scrape, Desktop, Notification
+  (`Desktop`, which creates Mission Control Spaces, was missing from this list until 2026-11-10; the pin is 0.4.7); no
   `--exclude-tools` flag (a config file `[tools] exclude = [...]` instead); `ANONYMIZED_TELEMETRY=false`; Python >=3.11 -
   CONFIRMED.
 

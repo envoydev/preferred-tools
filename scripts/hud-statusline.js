@@ -24,8 +24,8 @@
 //      No statusLine: written. claude-hud's own line in a current shape: left as it is. claude-hud's
 //      line in a stale shape (a pinned version path, the old PowerShell wrapper, a runtime that is
 //      gone): its command refreshed, every other key kept. A line that is NOT claude-hud's: kept and
-//      reported with the /claude-hud:setup line, never replaced and never given a refresh interval.
-//   2. the claude-hud row of catalog/plugin-settings.json (the Compact layout among it), through
+//      reported with the /hud line (/claude-hud:setup before 0.15), never replaced and never given a refresh interval.
+//   2. the claude-hud row of catalog/plugin-settings.json (the compact layout among it), through
 //      plugin-settings.js - after the statusLine, because the row's refresh interval needs that block.
 // claude-hud not installed, or switched off by the user: one skip line, nothing written. An account
 // settings.json that is not a JSON object: one blocked line, nothing written, exit 1. Before its first
@@ -40,7 +40,9 @@
 // line as 0.8.0 (PowerShell) - and those read as current too, so neither command ever rewrites a line claude-hud's
 // own setup just wrote (audit 2026-10-14, PL7: two writers of one key, each undoing the other). Re-read on 0.12.0 (audit
 // 2026-10-20b): scripts/setup.mjs and scripts/statusline.mjs are unchanged since 0.11.2, and dist/index.js still exports
-// the `main` the launcher below calls; 0.12.1 leaves both scripts byte for byte.
+// the `main` the launcher below calls; 0.12.1 leaves both scripts byte for byte. Re-read on 0.15.0 (2026-11-10): /hud
+// replaces /claude-hud:setup, and install.mjs `buildCommand` writes the same launcher lines bar Bun's optional
+// --env-file; dist/index.js re-exports hud.mjs's `main`, so the lines below still start it.
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -388,7 +390,7 @@ function planHud({ configDir, project, platform = process.platform, env = proces
     const note = addsNote(plan.targets);
     if (plan.changes) plan.item = { state: plan.statusLine.state === 'stale' ? 'refresh' : 'missing', detail: null, note };
     else if (plan.statusLine.state === 'foreign')
-        plan.item = { state: 'skip', detail: `the ${plan.where} statusLine is not claude-hud's (source: ${plan.statusLine.label}) - kept; /claude-hud:setup replaces it` };
+        plan.item = { state: 'skip', detail: `the ${plan.where} statusLine is not claude-hud's (source: ${plan.statusLine.label}) - kept; /hud (claude-hud 0.15+; /claude-hud:setup before it) replaces it` };
     else plan.item = { state: 'present', detail: '' };
     return plan;
 }
@@ -410,13 +412,14 @@ function rowTargets(plan, overlay = {})
         : t));
 }
 
-// claude-hud's README: on Windows a short refresh interval can make Git Bash fail (`add_item ... failed, errno 1`); it
-// advises none, or 30 seconds or more. The row's 5 is the value ported from alfred-code, so a Windows run says so.
+// claude-hud's refresh note (0.15.0 src/schema.ts, `hud schema refresh`; the README until 0.14): on Windows Git Bash a
+// short interval with several sessions can fail (`add_item ... failed, errno 1`) - 30 seconds or more. The row's 5 is
+// the value ported from alfred-code, so a Windows run says so.
 function refreshNote(plan, targets)
 {
     if (plan.platform !== 'win32') return null;
     const row = targets.filter((t) => !t.skipped).flatMap((t) => t.rows).find((r) => r.key === 'statusLine.refreshInterval' && r.status !== 'match');
-    return row ? 'hud: note - claude-hud\'s README advises no refresh interval, or 30 seconds or more, on Windows (a short one can make Git Bash fail); the row sets 5' : null;
+    return row ? 'hud: note - claude-hud advises a refresh interval of 30 seconds or more on Windows Git Bash (a short one can fail there with several sessions open); the row sets 5' : null;
 }
 
 // What a run would do, nothing written (--check): the statusLine's state, then the row as it lands AFTER the statusLine
@@ -484,7 +487,7 @@ function applyHud(plan, run = {}, { replace = false, statuslineOnly = false } = 
         changes += 1;
     }
     else if (sl.state === 'current') lines.push('hud: statusLine current - left as it is');
-    else lines.push(`hud: statusLine kept - it is not claude-hud's (source: ${sl.label}); /claude-hud:setup replaces it, backing yours up first`);
+    else lines.push(`hud: statusLine kept - it is not claude-hud's (source: ${sl.label}); /hud (claude-hud 0.15+; /claude-hud:setup before it) replaces it, backing yours up first`);
 
     if (statuslineOnly)
     {
