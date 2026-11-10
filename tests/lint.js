@@ -62,6 +62,26 @@ for (const file of textFiles)
     for (const block of parseAskBlocks(fs.readFileSync(file, 'utf8')))
         for (const p of problemsOf(block)) problems.push(`${path.relative(root, file)}: ${p}`);
 
+// The header helper is copied into the user's root and compared by digest (write-helper, helper-stale): its bytes are pinned
+// per version, its first line carries that version, and it needs nothing but Node.
+const HELPER_SHA256 = { 1: '0e333c88203701f07445ad8e8c8c79cbf74a589c176dc9d1742e9cca26b35178' };
+{
+    const rel = path.join('scripts', 'mcp-headers.js');
+    const text = fs.readFileSync(path.join(root, rel), 'utf8');
+    const helper = require(path.join(root, rel));
+    const first = /^\/\/ preferred-tools mcp-headers (\d+)\r?$/m.exec(text.split('\n')[0]);
+    need(first, `${rel}: the first line must be '// preferred-tools mcp-headers <version>'`);
+    if (first)
+    {
+        const version = Number(first[1]);
+        need(version === helper.HELPER_VERSION, `${rel}: the first line says version ${version}, HELPER_VERSION is ${helper.HELPER_VERSION}`);
+        const digest = helper.digestOf(text);
+        need(digest === HELPER_SHA256[version], `${rel}: SHA-256 ${digest} is not HELPER_SHA256[${version}] in tests/lint.js - a changed helper bumps its version`);
+    }
+    for (const m of text.matchAll(/\brequire\(\s*(['"])([^'"]+)\1\s*\)/g))
+        need(m[2].startsWith('node:'), `${rel}: require('${m[2]}') - the helper runs outside the plugin, so node: modules only`);
+}
+
 // Public repo: no absolute local path and no home directory in anything shipped.
 const scan = (rel) => {
     const p = path.join(root, rel);
