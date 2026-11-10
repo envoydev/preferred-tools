@@ -138,6 +138,7 @@ function playwrightWebmcpFix(entry)
 }
 
 // ---- appium-sdk-env -------------------------------------------------------------------------------------------------
+const SDK_ENV = ['ANDROID_HOME', 'JAVA_HOME'];
 function androidSdk(ctx)
 {
     const { env, machine: m } = ctx;
@@ -172,7 +173,15 @@ function appiumSdkEnvDetect(ctx)
     {
         const env = reg.entry.env || {};
         // the committed file holds no machine path: there the server reads them from the environment Claude Code starts with
-        const missing = ['ANDROID_HOME', 'JAVA_HOME'].filter((k) => !env[k] && !(reg.scope === 'project' && ctx.env[k]));
+        const machine = reg.scope === 'project' ? SDK_ENV.filter((k) => E.machinePath(env[k])) : [];
+        if (machine.length)
+        {
+            const what = `${machine.join(' and ')} ${machine.length > 1 ? 'are machine paths' : 'is a machine path'} in the committed .mcp.json`;
+            const unset = machine.filter((k) => !ctx.env[k]);
+            if (unset.length) return C.finding('appium-sdk-env', reg, what, { blocked: `set ${unset.join(' and ')} in the environment Claude Code starts with (the account settings.json "env" reaches every start), then run this fix again to take the machine path out` });
+            return C.finding('appium-sdk-env', reg, what, { proposal: { remove: machine }, note: 'taken out: the server reads it from the environment Claude Code starts with, which has it' });
+        }
+        const missing = SDK_ENV.filter((k) => !env[k] && !(reg.scope === 'project' && ctx.env[k]));
         if (!missing.length) return null;
         const what = `${missing.join(' and ')} not set in the registration`;
         if (reg.scope === 'project') return C.finding('appium-sdk-env', reg, `${missing.join(' and ')} not set`, { blocked: `${missing.join(' and ')} ${missing.length > 1 ? 'are' : 'is'} not set in this shell - set ${missing.length > 1 ? 'them' : 'it'} in the environment Claude Code starts with (the account settings.json "env" reaches every start); the committed .mcp.json holds no machine path` });
@@ -186,6 +195,12 @@ function appiumSdkEnvDetect(ctx)
 
 function appiumSdkEnvFix(entry, f)
 {
+    if (f.proposal.remove)
+    {
+        const env = { ...(entry.env || {}) };
+        for (const k of f.proposal.remove) delete env[k];
+        return { ...entry, env };
+    }
     return { ...entry, env: { ...(entry.env || {}), ...f.proposal } };
 }
 

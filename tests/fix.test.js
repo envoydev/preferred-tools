@@ -776,6 +776,20 @@ test('appium-sdk-env at project scope: the variables in the environment count; a
     assert.strictEqual(f.proposal, undefined);
 });
 
+test('appium-sdk-env at project scope: a machine path written into the committed entry is found - removed when the environment has it, else blocked', () => {
+    const entry = { ...fresh('appium'), env: { ANDROID_HOME: '/Users/me/Library/Android/sdk', JAVA_HOME: '${JAVA_HOME:-/jdk}' } };
+    const at = (env) => detect(ctxFor({ registrations: [reg('appium', entry, { scope: 'project' })], env }), 'appium-sdk-env').found;
+    const [f] = at({ ANDROID_HOME: '/sdk', JAVA_HOME: '/jdk' });
+    assert.ok(f, 'a machine path in the committed .mcp.json is a finding');
+    assert.match(f.found, /ANDROID_HOME is a machine path in the committed \.mcp\.json/);
+    assert.deepStrictEqual(f.proposal, { remove: ['ANDROID_HOME'] });
+    const fixed = F.appiumSdkEnvFix(entry, f);
+    assert.deepStrictEqual(fixed.env, { JAVA_HOME: '${JAVA_HOME:-/jdk}' }, 'only the machine path goes; a ${VAR} stays');
+    const [b] = at({ JAVA_HOME: '/jdk' });
+    assert.match(b.blocked, /set ANDROID_HOME in the environment Claude Code starts with.*then/);
+    assert.strictEqual(b.proposal, undefined);
+});
+
 test('expandVars: ${NAME} from the environment, ${NAME:-fallback} when unset, null when a bare name is unset', () => {
     const C = require('../scripts/fixes/common.js');
     assert.strictEqual(C.expandVars('${A}\\x', { A: 'C:\\a' }), 'C:\\a\\x');
