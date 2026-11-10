@@ -152,13 +152,34 @@ to the defaults: serena on Windows. Its root must be absolute, in backslashes an
 `serena-windows-home`), so that rule wins over the order above. The walk offers `C:\Users\<name>\.serena` when the
 profile path has no space, else asks for a space-free folder.
 
-**Scopes and paths.** Ask per tool, recommending `local` for a local route (its paths and Python are this machine's) and
-`project` for a remote route whose entry holds no secret. A `project` registration lands in the committed `.mcp.json`, so
-it may carry only relative paths and `${VAR}` references. Each local row carries `projectScope` in `catalog/tools.json`,
-`false` until step 12 measures that the tool resolves a relative root against the project directory. The walk offers
-`project` for a local route only where it is `true`. Expect few: serena's Windows home must be absolute, and the old
-browser launcher used absolute paths because Playwright resolves a relative one by its own rules. Plugins: `claude-hud` recommends `user`, the LSP pair
-`project`.
+**alfred-code's folder (the user's rulings, 2026-11-10).** Where alfred-code is set up in the project - enabled for it,
+and its `.alfred/.gitignore` there - three rulings replace the default above: 'Offer it, not default, but also do this
+offer about alfred when alfred is present. also make it more undestandable about path, because ~/.alfred/ and .alfred/
+makes no big different for me, I need more infromative route.'; 'when alfred is installed it suggesting .alfred for
+root and for child if needed!'; and 'Project and local (Recommended)', whose description read 'User scope (every
+project) keeps the account folder'. So `.alfred/<registration name>` is recommended at project and local scope for every
+row but memory, which keeps its shared account folder recommended; user scope recommends the account folder. Without
+alfred-code nothing changes. `.alfred/<name>` is never offered for a name alfred-code keeps for itself under `.alfred`
+(`docs`, `state`, `statistics`, `workspace`, `flow`) or one a file already holds, and serena on Windows takes it at local
+scope only when `<project>\.alfred\serena` is space-free. Each location option names the place in words - alfred-code's
+folder in this project, This project's own folder, Your account folder, alfred-code 2.x data, The folder it uses now -
+and its description gives the exact folder on this machine (at project scope the written form, and where it lands from
+here and from a child). `plan.js --questions` maps each label to its answer (`answers`), and asks scope and name in a call
+of their own before the location (`first`), because the folder is named after the registration and depends on the
+scope. A relative folder at project scope lands in each folder Claude starts in, a child or a subfolder included: the
+plan says so, and fix row `data-folder-ignore` writes the missing `.gitignore` (holding `*`) where neither the folder's
+own nor alfred-code's `.alfred/.gitignore` covers it.
+
+**Scopes and paths.** Every route offers user, project and local scope (the user's rulings, 2026-11-10: 'It must give
+options as user/project/local' and 'Allow project, test first'), the recommended scope first, then user, project, local.
+A local route recommends `local`: its paths and Python are this machine's, and project scope commits this machine's
+launch form (`cmd /c` on Windows, the x64 Python on Windows ARM64). A hosted route recommends `project`, except a hosted
+token route (Secrets, below). A `project` registration lands in the committed `.mcp.json`, so it may carry only relative
+paths and `${VAR}` references. A row's data folder is written relative there only when its `locations.relative` is
+`true`, measured by `tests/probes/relative-root.js` (step 12; `docs/sources.md`, 'Relative data folders - the probe');
+otherwise project scope offers the account folder alone, written `${HOME}/...` (`${USERPROFILE}/...` on Windows). serena
+on Windows is written `${USERPROFILE}\.serena`, and project scope is not offered for it when the profile path has a
+space. Plugins: `claude-hud` recommends `user`, the LSP pair `project`.
 
 **Secrets - key files (the user's ruling, 2026-10-29, replacing 'no token in any file': 'preffered tools must consider
 alfreds keys files when alfred present, if not then preffered tools files', delivered as 'Write it in at install').** A
@@ -178,6 +199,20 @@ plan cannot show it, and `.mcp.json` is committed. Why: a `${VAR}` set in no env
 and alfred-code already keeps keys in its store. The cost: the key travels as the `claude mcp add-json` argument (the CLI
 takes the JSON no other way, docs/sources.md), visible in the process list while that call runs; it never reaches the
 chat or a file a command line names (`scripts/kept.js`).
+
+Keys at project scope (the user's ruling, 2026-11-10, on a report that a project-scope github sent a bare 'Bearer '
+while its key sat in alfred-code's store under another name: 'Add it to plan and make scoring for plan'). Project scope
+reads a key only from the environment Claude Code starts with, never from a key file, so the plan's token line says
+whether the variable is set in this shell, names the key file that holds its name, and names a near-miss - another name
+in those files holding the row's word ('<file> holds ACME_GITHUB_ACCESS_TOKEN, not GITHUB_PERSONAL_ACCESS_TOKEN: add the
+key under GITHUB_PERSONAL_ACCESS_TOKEN') - then the three ways on: local scope, user scope, or the variable in the
+account settings.json "env". `keys.presence` reads names only, from plain dotenv files (alfred-code's stores, walking the
+parent folders only where its engine is there), drops every value in-process, and never runs alfred-code's engine,
+because `plan.js` is pre-approved. A hosted `token` route is recommended at project scope when its variable is set in
+this shell, else local, which writes the key in from its file; an `optional-token` one (context7) at project with the
+key when set, at local with the key when only a key file holds it, else at project with no key. A local token route stays
+recommended at local. No launcher route: it would reverse 'Plain registrations, no launcher' and stop starting once
+alfred-code is gone.
 
 **Per-OS rules, applied at install time** (each also a fix row): uvx servers get the row's `--python` (3.13; 3.14 for
 windows-control) and on Windows ARM64 the x64 build (`cpython-3.13-windows-x86_64-none`) - `../alfred-code/docs/uv-python-pin-evidence.md`
@@ -489,9 +524,10 @@ Each step ends with its check; the next step starts only when it passes.
     kept); claude-hud with 'Skip' (statusLine written, no catalog key); the four Playwright engines in one project, each under its own name and location (four
     entries, four distinct `--user-data-dir` values); a token check (fake token values set in the env, every token
     route installed, then a search of every written file for those values finds none); a project-scope measurement
-    per local row (register it at `project` with a relative root, start the server once from the project root and
-    once from a subfolder, and check where its data lands; set the row's `projectScope` to `true` only when both
-    land under the project root, and record the result in `docs/sources.md`); a user's own server under a catalog name (asked, not overwritten); missing,
+    per row with a data folder (`tests/probes/relative-root.js`: launched as `plan.js` writes it at `project` scope, the
+    server is started once from a root folder and once from a child, and its data file is looked for; the row's
+    `locations.relative` is `true` only when both land under the folder it started in, and the result is recorded in
+    `docs/sources.md`); a user's own server under a catalog name (asked, not overwritten); missing,
     empty and malformed `.mcp.json`; each of `local`, `project`, `user`; a remove; each fix detector on a seeded broken
     entry; an update with a stale pin; claude-hud's recommended settings applied once with a user value present (kept), then with
     'Apply and replace differing' (overwritten, backup written). Read the written `.mcp.json`, the account file and `settings.json` after each,
@@ -522,7 +558,7 @@ Each step ends with its check; the next step starts only when it passes.
 
 - `claude plugin validate .` passes; `npm test` is green.
 - The install walk installs each of the 17 rows on an OS it supports, by either route where it has two, under a custom
-  name, at every scope the row allows (`projectScope`), with a custom location root, and a re-run with the same answers
+  name, at every scope (user, project and local), with a custom location root, and a re-run with the same answers
   makes no CLI call.
 - Each Playwright engine can be installed under its own name and location in the same project.
 - Inventory recognises a catalog tool under any name and never lists or touches a registration it does not match.

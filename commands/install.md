@@ -141,7 +141,10 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/plan.js" <tmp>/inventory.json <tmp>/answers.
 ```
 
 Paste the output verbatim in a fenced block: every CLI call, every file it writes, the key file each token route reads
-(at project scope, the variable to set), the sign-in a remote route will ask for, and the tools that can run code. Exit 1 means the
+(at project scope, the variable to set, whether this shell has it, the key file that holds its name and any near-miss
+name - never a value), the sign-in a remote route will ask for, the folders a session started elsewhere creates, and
+the tools that can run code. When a project-scope token line says NOT set, say which of its three ways you recommend
+before the ask: local scope when a key file holds the key, else the variable in the account settings.json "env". Exit 1 means the
 plan has errors; show them and go back to the ask that causes them, never around them. Add the audit and 'register
 anyway' lines from step 5. Then:
 

@@ -406,7 +406,8 @@ places follow; until then nothing here writes to uv's cache.
 `npm run matrix` (`tests/matrix/`), the real `claude` CLI against a throwaway home and account, each result read back
 from the file the CLI wrote.
 
-- **projectScope measurement - NOT RUN.** Every local row keeps `projectScope: false`, the only value the brief allows
+- **projectScope measurement - NOT RUN** (superseded 2026-11-10: `projectScope` is gone, and `locations.relative` is set
+  from 'Relative data folders - the probe', below). Every local row keeps `projectScope: false`, the only value the brief allows
   without a measurement. Measuring a row means starting its server from the project root and from a subfolder and then
   driving a tool call (the browser, desktop and memory servers create their data folders on first use, not at start), and
   a tool call needs a signed-in session that the isolated account does not have. A relative `--user-data-dir` or
@@ -792,3 +793,19 @@ RESULT appium child fail - no device
   written `${USERPROFILE}\.serena`, never relative.
 - A data folder written relative lands in each folder Claude starts in, a child or a subfolder included (the M1 and M4
   measurements above); fix row `data-folder-ignore` keeps such a folder out of git where nothing else does.
+
+## alfred-code's folder - what the location rules read (read 2026-11-10, alfred-code 3.9.2)
+
+- Set up in a project: alfred-code enabled for it (`scripts/inventory.js`, `alfredCodeEnabled`) and
+  `<project>/.alfred/.gitignore` there. alfred-code writes that file as its data root's one ignore
+  (`stack/mcp/data-root.js:162`, `dataIgnoreText`): `*` (or `/*` when the docs live under the root) and `!/.gitignore`,
+  plus `!/.variables` at project and user scope. Nothing else under `.alfred` is re-included but the docs folder, so
+  `.alfred/<name>` stays out of git. If a later release re-includes more, the 'kept out of git by alfred-code' description
+  and matrix case W5 are wrong: run W5 again on a version bump of alfred-code.
+- Its own entries under `.alfred`, never a data folder (`scripts/entries.js`, `ALFRED_ENTRIES`): `docs`, the docs root
+  (`stack/hooks/layout.js:978`); `state` and `statistics` (`:41-42`); `workspace`, the workspace link file (`:328`); and
+  `flow`, a 2.x folder its migration still reads (`:113`). The registration name rule allows no leading dot, so
+  `.secrets` and `.variables` cannot collide.
+- A key in its store reaches a registration only at local and user scope (apply.js, through its engine); no MCP server
+  reads the store itself (the key report of 2026-11-10: a project-scope `${GITHUB_PERSONAL_ACCESS_TOKEN}` unset in the
+  environment sent a bare 'Bearer ', and GitHub answered 400).

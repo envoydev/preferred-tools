@@ -7,7 +7,9 @@ a short walk instead of a hunt through old notes.
 It installs nothing by itself. You drive it through four manual commands:
 
 - `/preferred-tools:install` - adds tools that are not installed in this project: pick them, then per tool the route
-  (hosted or local, where the tool has both), the scope, the registration name and the data location. A tool you
+  (hosted or local, where the tool has both), the scope (user, project or local, the recommended one first), the
+  registration name and the data location. Each location option names the place and gives the exact folder; where
+  alfred-code is set up in the project, its `.alfred/<name>` folder is recommended at project and local scope. A tool you
   installed for every project can get this project's own copy; the account-wide one stays as it is. It shows one plan,
   applies it after one confirmation and reads the result back.
 - `/preferred-tools:configure` - changes or removes what is installed: pick a registration or plugin, then change its
@@ -46,7 +48,11 @@ in `docs/sources.md`.
   project scope registers a `${VAR}` reference (the committed `.mcp.json`); at local and user scope the key is written
   into the registration from a key file you fill by hand: alfred-code's store when alfred-code is set up in the project,
   else `.preferred-tools/.secrets` (git-ignored by a `.gitignore` the install writes) and `~/.preferred-tools/.secrets`.
-  `/preferred-tools:fix` (`token-sync`) writes a key in after you add or change it.
+  `/preferred-tools:fix` (`token-sync`) writes a key in after you add or change it. A project-scope `${VAR}` is read only
+  from the environment Claude Code starts with, so the plan says whether it is set, names the key file that holds the
+  name (names only, never a value) and a near-miss name, and recommends the scope that reads it.
+- A data folder written relative (project scope, for a tool measured to follow the folder it starts in) lands in each
+  folder Claude starts in; `/preferred-tools:fix` (`data-folder-ignore`) keeps it out of git in a child or a subfolder.
 - A new package is downloaded right after its registration is written, and the server is started once, in the
   background, so the first session start answers inside Claude Code's 30-second limit (memory's first start downloads
   an embedding model for about 2 minutes). Restart Claude Code once that reports. If it fails, nothing is undone and
