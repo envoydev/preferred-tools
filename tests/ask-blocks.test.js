@@ -52,3 +52,13 @@ test('the commands hold every ask block to the limits', () =>
     walk(path.join(root, 'skills'));
     assert.ok(seen >= 10, `${seen} ask blocks found; install.md has four, configure.md five, update.md one`);
 });
+
+test('the walks write the one location left (`only`) and make no call for an empty question list', () => {
+    const root = path.join(__dirname, '..');
+    for (const [file, at] of [['install.md', 'tools.<id>'], ['configure.md', 'targets.<key>']])
+    {
+        const text = fs.readFileSync(path.join(root, 'commands', file), 'utf8');
+        assert.ok(text.includes(`\`${at}.only\``), `${file} names ${at}.only`);
+        assert.match(text, /When it is empty, make no call/, `${file} skips an empty call`);
+    }
+});

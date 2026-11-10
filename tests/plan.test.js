@@ -1170,3 +1170,26 @@ test("the alfred-code name guard ignores case: 'Docs' or 'STATE' is alfred-code'
     const p = plan(inv(MAC, { alfredCodeEnabled: true }), pickOne('playwright-chrome', { scope: 'local', name: 'Docs', location: { side: 'alfred-data' } }), opts('/Users/me', { exists: ALFRED }));
     assert.match(p.errors.join(' '), /'Docs' is one of alfred-code's own entries/);
 });
+
+test('configure: a move that leaves one folder writes it - --questions carries `only` and the plan takes it', () => {
+    // serena on Windows in alfred-code's folder, moved to project scope: ${USERPROFILE}\.serena is the one place left
+    const serena = installed('serena', { scope: 'local', location: { side: 'path', path: 'C:\\work\\shop\\.alfred\\serena' } }, WIN, 'C:\\Users\\me');
+    const i = inv(WIN, { registrations: [serena], alfredCodeEnabled: true });
+    const key = `mcp:${serena.name}~local`;
+    const t = asks.all(i, { targets: [key], scopes: { [key]: 'project' } }, catalog, { home: 'C:\\Users\\me' }).targets[key];
+    assert.ok(!t.questions.some((q) => q.id === 'location-serena'), JSON.stringify(t.questions.map((q) => q.id)));
+    assert.deepStrictEqual(t.only, { side: 'default' });
+    const moved = plan(i, changeOf(serena, { scope: 'project', location: t.only }), opts('C:\\Users\\me'));
+    assert.deepStrictEqual(moved.errors, []);
+    assert.strictEqual(moved.steps.find((s) => s.op === 'mcp-move').entry.env.SERENA_HOME, '${USERPROFILE}\\.serena');
+    // a row not proven relative, moved to project: the account folder is the one place left
+    const cat = withoutRelative('playwright-chrome');
+    const pw = installed('playwright-chrome', { scope: 'local' });
+    const j = inv(MAC, { registrations: [pw] });
+    const k = `mcp:${pw.name}~local`;
+    const u = asks.all(j, { targets: [k], scopes: { [k]: 'project' } }, cat, { home: '/Users/me' }).targets[k];
+    assert.deepStrictEqual(u.only, { side: 'account' });
+    assert.deepStrictEqual(plan(j, changeOf(pw, { scope: 'project', location: u.only }), opts('/Users/me', { catalog: cat })).errors, []);
+    // a location question asked: no `only`
+    assert.strictEqual(asks.all(j, { targets: [k] }, catalog, { home: '/Users/me' }).targets[k].only, null);
+});

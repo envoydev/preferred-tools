@@ -88,8 +88,9 @@ project is never offered, so this adds only: nothing installed is changed.
 2. A tool whose `tools.<id>.first` is not null (it has a data folder): ask those questions - scope and name - as one
    call. Record the scope under `scopes` and the name under `names` in `picks.json` (`{"scopes": {<id>: "local"},
    "names": {<id>: "keep"}}`) and in the tool's answers, and run the command again, because the folder depends on both.
-3. Ask `tools.<id>.questions` as one call, as printed. Map the answers into that tool's entry in `<tmp>/answers.json`
-   (`{"picks": {<id>: {...}}}`):
+3. Ask `tools.<id>.questions` as one call, as printed. When it is empty, make no call. When `tools.<id>.only` is set,
+   one folder is left and no location is asked: write it as the tool's `"location"`. Map the answers into that tool's
+   entry in `<tmp>/answers.json` (`{"picks": {<id>: {...}}}`):
 
 | Answer | Entry |
 |---|---|

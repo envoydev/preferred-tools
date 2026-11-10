@@ -338,22 +338,26 @@ function locationQuestion(row, inv, { scope, name = null, current = null, copyOf
 // The questions for one tool. A row with a data folder asks scope and name `first`, in a call of their own, because its
 // folder is named after the registration and depends on the scope; then `questions` holds the location (built for
 // `scope` and `name`, else the recommended scope and the name it has now or the original) and one tool-specific extra,
-// and `answers` maps each location label to its entry. Any other row has `first` null and asks scope, name and its extra
-// in one call, as before.
+// and `answers` maps each location label to its entry; `only` is the location when one place is left and none is
+// asked. Any other row has `first` null and asks scope, name and its extra in one call, as before.
 function toolAsk(row, inv, { route, scope = null, name = null, current = null, ctx = null, catalog, copyOf = [] } = {})
 {
     const routeId = route || (current && current.route) || row.recommendedRoute;
     const scopeQ = scopeQuestion(row, inv, { route: routeId, current, copyOf, ctx });
-    if (row.kind === 'plugin') return { first: null, questions: scopeQ ? [scopeQ] : [], answers: {} };
+    if (row.kind === 'plugin') return { first: null, questions: scopeQ ? [scopeQ] : [], answers: {}, only: null };
     const nameQ = nameQuestion(row, inv, { current, copyOf, ctx });
     const located = Boolean(row.locations && ctx);
     const qs = located ? [] : [scopeQ, nameQ].filter(Boolean);
     let answers = {};
+    // one place left: no location question, and the walk writes this as the location (a move must not fall back to
+    // 'keep' where the folder it uses now cannot stay)
+    let only = null;
     if (located)
     {
         const at = scope || scopeOrder(row, inv, { route: routeId, current, copyOf, ctx })[0] || (current && current.scope);
         const l = locationQuestion(row, inv, { scope: at, name: nameFor(row, name, current, ctx), current, copyOf, ctx });
         if (l.question) qs.push(l.question);
+        else only = l.only;
         answers = l.answers;
     }
     // what the registration has now goes first, so a configure walk recommends keeping it
@@ -387,7 +391,7 @@ function toolAsk(row, inv, { route, scope = null, name = null, current = null, c
                 : first([{ label: row.params[0].default, description: 'the hosted service' }, { label: 'A self-managed host', description: 'type the host name under Other' }]),
         });
     }
-    return { first: located ? [scopeQ, nameQ].filter(Boolean) : null, questions: qs, answers };
+    return { first: located ? [scopeQ, nameQ].filter(Boolean) : null, questions: qs, answers, only };
 }
 
 // The questions toolAsk gives after `first`: for a row without a data folder, its whole call.

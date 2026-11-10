@@ -96,7 +96,9 @@ order:
 2. A target whose `targets.<key>.first` is not null (it has a data folder): ask those questions - scope and name - as
    one call. Record the scope under `scopes.<key>` and the name under `names.<key>` in `picks.json` ('Keep ...' is
    `"keep"`) and in the answers below, and run the command again, because the folder depends on both.
-3. Ask `targets.<key>.questions` as one call, as printed. Write the answers into `<tmp>/answers.json` as
+3. Ask `targets.<key>.questions` as one call, as printed. When it is empty, make no call. When `targets.<key>.only` is
+   set, one folder is left at the new scope and no location is asked: write it as the target's `"location"`, since the
+   folder it uses now cannot stay there. Write the answers into `<tmp>/answers.json` as
    `{"change": {<key>: {"row": <targets.<key>.row>, ...}}}`, mapped as below, and leave out every answer that keeps what
    the tool has now - the plan reads a missing key as 'keep':
 
