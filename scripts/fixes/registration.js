@@ -7,6 +7,7 @@
 const path = require('node:path');
 const E = require('../entries.js');
 const keys = require('../keys.js');
+const roots = require('../roots.js');
 const C = require('./common.js');
 const { windowsMcpServers, fromHere } = require('../inventory.js');
 
@@ -234,31 +235,58 @@ function serenaTelemetryFix(entry)
 }
 
 // ---- token-sync -----------------------------------------------------------------------------------------------------
-// A local or user registration of a token route whose key field holds ${VAR} while its key file has the key, or a value
-// that differs from it (keys.js, D7). The finding names the key and the file, never a value; the fix reads the key again.
-// A user registration that already holds a key changes only from the home file: a differing project chain is reported.
-const keyOpts = (ctx, reg) => ({ project: ctx.inv.project, env: ctx.env, alfredEnabled: ctx.inv.alfredCodeEnabled, name: reg.name, before: reg.scope === 'user' ? reg.entry : null });
+// A local or user registration of a stdio token route whose key no filled name in its stdio chain holds (spec D3, D7):
+// the key changed in the key file since, or the registration still holds the ${VAR} 0.1.x left. Compared in this process;
+// a finding names the files, never a value. The fix writes the value of the name a ${VAR} holds, else of the catalog's
+// default name. A stdio registration stores its key and not the key's name, so an empty one is never guessed at (R7): the
+// default name may hold another account's key.
+const PICK_NAME = "pick the key's name with /preferred-tools:configure";
+const ONE_VAR = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/;
+
+// The key inside a token field: the field's text less the route template's text around ${VAR}.
+function keyIn(value, template, v)
+{
+    const [pre, post = ''] = template.split(`\${${v}}`);
+    const s = String(value);
+    return s.length >= pre.length + post.length && s.startsWith(pre) && s.endsWith(post) ? s.slice(pre.length, s.length - post.length) : s;
+}
+
+function stdioChainOf(ctx, scope)
+{
+    const r = roots.resolve(ctx.inv, null, { project: ctx.inv.project, home: ctx.home, platform: ctx.platform, catalog: ctx.catalog }).roots;
+    return keys.stdioChain({ scope, projectRoot: r.project, globalRoot: r.global });
+}
 
 function tokenSyncDetect(ctx)
 {
     return eachReg(ctx, 'token-sync', (reg, route) =>
     {
+        if (reg.route === 'remote' || !['local', 'user'].includes(reg.scope)) return null;
         const fields = keys.tokenFields(reg.entry, route);
-        if (reg.scope === 'project' || !fields.length) return null;
+        if (!fields.length) return null;
         const v = route.tokenVar;
-        const k = keys.keysFor(ctx.inv.project, reg.scope, [v], keyOpts(ctx, reg));
-        if (k.error) return C.finding('token-sync', reg, `${v} cannot be read`, { route: reg.route, blocked: k.error });
-        if (k.missing.length) return null;
-        const r = keys.keysInto(reg.entry, C.rowOf(ctx, reg.rowId), reg.route, reg.scope, keyOpts(ctx, reg));
-        if (JSON.stringify(r.entry) === JSON.stringify(reg.entry)) return r.note && /kept, not written/.test(r.note) ? C.finding('token-sync', reg, `${v} in ${k.from[v]} differs from the registration's`, { route: reg.route, blocked: r.note }) : null;
-        const holds = fields.every((f) => keys.PLACEHOLDER.test(String(f.at.reduce((o, x) => o[x], reg.entry))));
-        return C.finding('token-sync', reg, holds ? `the registration holds \${${v}} while ${k.from[v]} has the key` : `${v} in ${k.from[v]} differs from the registration's`, { route: reg.route });
+        const key = keyIn(fields[0].at.reduce((o, k) => o[k], reg.entry), fields[0].template, v);
+        const chain = stdioChainOf(ctx, reg.scope);
+        const extra = { route: reg.route, chain };
+        if (key === '') return C.finding('token-sync', reg, `the registration's ${v} is empty`, { ...extra, blocked: PICK_NAME });
+        const one = ONE_VAR.exec(key);
+        if (one)
+        {
+            const at = keys.valueIn(chain, one[1]);
+            return at ? C.finding('token-sync', reg, `the registration holds \${${one[1]}} while ${at.file} has the key`, { ...extra, keyName: one[1] }) : null;
+        }
+        if (keys.nameOfValue(chain, key)) return null;
+        const what = `the key in the registration matches no name in ${chain.join(', ')}`;
+        return C.finding('token-sync', reg, what, keys.valueIn(chain, v) ? { ...extra, keyName: v } : { ...extra, blocked: PICK_NAME });
     });
 }
 
 function tokenSyncFix(entry, f, ctx)
 {
-    return keys.keysInto(entry, C.rowOf(ctx, f.row), f.route, f.scope, keyOpts(ctx, { name: f.name, scope: f.scope, entry })).entry;
+    const at = keys.valueIn(f.chain, f.keyName);
+    if (!at) throw new Error(`${f.keyName} is filled in none of ${f.chain.join(', ')} any more - nothing written`);
+    const row = C.rowOf(ctx, f.row);
+    return keys.fillKeys(entry, row, f.route, f.scope, { [row.routes[f.route].tokenVar]: at.value });
 }
 
 // ---- windows-mcp-one-per-desktop ------------------------------------------------------------------------------------

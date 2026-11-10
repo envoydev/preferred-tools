@@ -28,7 +28,7 @@ const { blockingStdio } = require('./json-file.js');
 const fetchLib = require('./fetch.js');
 const F = require('./fixes/index.js');
 const { realMachine, clone } = require('./fixes/common.js');
-const { deepEqual } = require('./plan.js');
+const { deepEqual, useRoots, fileSteps } = require('./plan.js');
 const E = require('./entries.js');
 
 function makeCtx({ inv, catalog = catalogLib.load(), env = process.env, machine, platform, arch, data = null })
@@ -39,12 +39,23 @@ function makeCtx({ inv, catalog = catalogLib.load(), env = process.env, machine,
 
 const matches = (f, only) => !only || [f.id, f.row, f.name].includes(only);
 
-// -> { found: [finding + { kind, symptom }], held: [{ id, why }], own: [{ name, scope }] } - `own`: the registrations left
-// on their own (spec D6), which no detector reads
+// A project or local helper runs only once its declaring folder's trust dialog is accepted (spec D4): until then the server
+// connects without its key. Not a fix - nothing here can accept it. -> [line]
+function trustNotes(ctx, only)
+{
+    if (ctx.inv.trusted !== false) return [];
+    return (ctx.inv.registrations || [])
+        .filter((r) => r.rowId && !r.own && !r.alfredRetired && r.choice !== 'own' && ['project', 'local'].includes(r.scope) && r.entry && r.entry.headersHelper)
+        .filter((r) => !only || [r.name, r.rowId].includes(only))
+        .map((r) => `${r.name} (${r.scope}): accept the trust dialog the next time Claude Code starts in ${ctx.inv.project} - until then the server connects without its key`);
+}
+
+// -> { found: [finding + { kind, symptom }], held: [{ id, why }], own: [{ name, scope }], notes: [line] } - `own`: the
+// registrations left on their own (spec D6), which no detector reads
 function detectAll(ctx, { only } = {})
 {
     const own = (ctx.inv.registrations || []).filter((r) => r.choice === 'own' && (!only || [r.name, r.rowId].includes(only)));
-    const out = { found: [], held: [], own: own.map((r) => ({ name: r.name, scope: r.scope })) };
+    const out = { found: [], held: [], own: own.map((r) => ({ name: r.name, scope: r.scope })), notes: trustNotes(ctx, only) };
     for (const fix of ctx.catalog.fixes)
     {
         if (fix.hold) { out.held.push({ id: fix.id, why: fix.hold }); continue; }
@@ -78,6 +89,7 @@ function render(detected)
             if (f.note) lines.push(`  ${' '.repeat(idW)}  ${' '.repeat(toolW)}  note: ${f.note}`);
         }
     }
+    if ((detected.notes || []).length) lines.push('', ...detected.notes.map((n) => `note: ${n}`));
     for (const h of held) lines.push('', `Held, not checked: ${h.id} - ${h.why}`);
     if ((detected.own || []).length) lines.push('', ...detected.own.map((o) => `${o.name} (${o.scope}): on its own - not checked`));
     return lines.join('\n');
@@ -131,9 +143,13 @@ function applyFixes(ctx, ids, { only, input = {}, tmp, log = console.log, runCli
     const steps = [];
     const order = ctx.catalog.fixes.map((x) => x.id);
     const groups = new Map();
+    // R9: a fix that gives a registration a helper brings its root's file steps - the .gitignore and the helper - first
+    const fileCtx = { platform: ctx.platform, project: ctx.inv.project, roots: null, uses: [] };
     for (const f of todo.filter((x) => x.kind === 'registration')) groups.set(`${f.scope}\u0000${f.name}`, [...(groups.get(`${f.scope}\u0000${f.name}`) || []), f]);
     for (const list of groups.values())
     {
+        const withRoots = list.find((x) => x.roots);
+        if (withRoots) fileCtx.roots = fileCtx.roots || withRoots.roots;
         const reg = ctx.inv.registrations.find((r) => r.name === list[0].name && r.scope === list[0].scope);
         let entry = clone(reg.entry);
         try
@@ -144,6 +160,7 @@ function applyFixes(ctx, ids, { only, input = {}, tmp, log = console.log, runCli
         catch (e) { res.failed = `${list[0].name}: ${e.message}`; log(`FAILED ${res.failed}`); return res; }
         if (deepEqual(entry, reg.entry)) continue;
         steps.push({ op: 'mcp-replace', name: reg.name, scope: reg.scope, entry, old: reg.entry, row: reg.rowId, route: reg.route, why: `${list.map((x) => x.id).join(' + ')}: rewrite '${reg.name}' from the registration as read` });
+        if (entry.headersHelper && !reg.entry.headersHelper && fileCtx.roots) useRoots(fileCtx, reg.scope, { helper: true, keyFile: null, keyName: null, data: null });
     }
     res.steps = steps.length;
     if (steps.length)
@@ -154,7 +171,11 @@ function applyFixes(ctx, ids, { only, input = {}, tmp, log = console.log, runCli
             const f = E.fetchStep(s.name, s.entry, s.row, s.old);
             return f ? [s, f] : [s];
         });
-        const plan = { version: 1, project: ctx.inv.project, os: ctx.platform, alfredCodeEnabled: Boolean(ctx.inv.alfredCodeEnabled), steps: withFetch, notes: [], errors: [], expect: steps.map((s) => ({ kind: 'mcp', name: s.name, scope: s.scope, route: ctx.inv.registrations.find((r) => r.name === s.name && r.scope === s.scope).route })) };
+        const fileNotes = [];
+        const files = fileCtx.uses.length ? fileSteps(ctx.inv, fileCtx, { notes: fileNotes }) : { before: [] };
+        for (const u of [...new Map(fileCtx.uses.map((x) => [x.root, x])).values()]) log(`the key helper goes in the ${u.family} root ${u.root}`);
+        for (const n of fileNotes) log(`note: ${n}`);
+        const plan = { version: 1, project: ctx.inv.project, os: ctx.platform, alfredCodeEnabled: Boolean(ctx.inv.alfredCodeEnabled), steps: [...files.before, ...withFetch], notes: [], errors: [], expect: steps.map((s) => ({ kind: 'mcp', name: s.name, scope: s.scope, route: ctx.inv.registrations.find((r) => r.name === s.name && r.scope === s.scope).route })) };
         res.tmp = tmp || fs.mkdtempSync(path.join(os.tmpdir(), 'preferred-tools-fix-'));
         const report = apply(plan, { env: ctx.env, tmp: res.tmp, runCli, log });
         res.fetchFile = report.fetchFile;

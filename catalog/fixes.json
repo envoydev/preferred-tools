@@ -159,11 +159,11 @@
         "win32"
       ],
       "kind": "registration",
-      "symptom": "a token server at local or user scope does not hold the key its key file has: it was registered before the key was put in, or the key changed since (a server for every project changes only from ~/.preferred-tools/.secrets)",
+      "symptom": "a stdio token server at local or user scope holds a key no name in its key files (.mcps-secrets in the project root, then the global root) holds: the key changed in the file since, or the registration still holds the ${VAR} 0.1.x left; an empty key is never guessed at - the key's name is picked with /preferred-tools:configure",
       "detect": "tokenSyncDetect",
       "fix": "tokenSyncFix",
-      "verifiedOn": "this build: tests/fix.test.js token-sync and tests/keys.test.js (alfred-code v2.11.0 and v3.2.1 engines, 2026-10-29)",
-      "source": "docs/build-prompt.md D7; docs/sources.md 'alfred-code key files'"
+      "verifiedOn": "this build: tests/fix.test.js token-sync (2026-11-10)",
+      "source": "docs/build-prompt.md D7; docs/sources.md 'Claude Code - headersHelper'"
     },
     {
       "id": "typescript-lsp-ts7",
@@ -243,6 +243,82 @@
       "fix": "npxCacheEntryFix",
       "verifiedOn": "this build: npm 11.6.1 on macOS - an _npx folder without its package.json failed every later start with ENOENT (exit 254), and its name is libnpmexec's sha512 of the package spec; npm 10.9.2 and 11.6.1 refuse npm config get cache, and npm config ls -l names the cache in force; end to end on a throwaway cache: found, removed, fetched, then the start printed its answer (2026-11-10); tests/fix.test.js npx-cache-entry",
       "source": "docs/sources.md 'Claude Code - time limits behind the fetch step' (the npx measurements); npm 11.6.1 node_modules/libnpmexec/lib/index.js"
+    },
+    {
+      "id": "key-to-helper",
+      "tool": [
+        "context7",
+        "github",
+        "sentry"
+      ],
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "kind": "registration",
+      "symptom": "a hosted server registered by 0.1.x carries its key in an Authorization header - a ${VAR} or the key itself - where 0.2.0 reads it through mcp-headers.js from .mcps-secrets; moved when the name, or a name holding the same key, is filled in the key files",
+      "detect": "keyToHelperDetect",
+      "fix": "keyToHelperFix",
+      "verifiedOn": "this build: tests/fix.test.js key-to-helper (2026-11-10)",
+      "source": "docs/build-prompt.md D7; docs/sources.md 'Claude Code - headersHelper'"
+    },
+    {
+      "id": "helper-missing",
+      "tool": [
+        "context7",
+        "github",
+        "sentry"
+      ],
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "kind": "machine",
+      "symptom": "a hosted server names an mcp-headers.js that is not there (a fresh clone, a root moved by hand), so it connects without its key",
+      "detect": "helperMissingDetect",
+      "fix": "helperMissingFix",
+      "verifiedOn": "this build: tests/fix.test.js helper-missing (2026-11-10)",
+      "source": "docs/build-prompt.md D7; docs/sources.md 'Claude Code - headersHelper'"
+    },
+    {
+      "id": "helper-stale",
+      "tool": [
+        "context7",
+        "github",
+        "sentry"
+      ],
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "kind": "machine",
+      "symptom": "the mcp-headers.js a hosted server names is an older copy than this plugin's, or was changed by hand; a newer one is left and named, so the plugin is updated instead",
+      "detect": "helperStaleDetect",
+      "fix": "helperStaleFix",
+      "verifiedOn": "this build: tests/fix.test.js helper-stale (2026-11-10)",
+      "source": "docs/build-prompt.md D7; docs/sources.md 'Claude Code - headersHelper'"
+    },
+    {
+      "id": "root-ignore",
+      "tool": [
+        "context7",
+        "github",
+        "sentry"
+      ],
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "kind": "machine",
+      "symptom": "a root folder inside a git work tree whose .mcps-secrets git would commit, or whose mcp-headers.js git ignores though a project-scope server needs it committed (0.1.x wrote a .gitignore holding *)",
+      "detect": "rootIgnoreDetect",
+      "fix": "rootIgnoreFix",
+      "verifiedOn": "this build: tests/fix.test.js root-ignore (2026-11-10)",
+      "source": "docs/build-prompt.md D7; docs/sources.md 'Claude Code - headersHelper'"
     }
   ]
 }

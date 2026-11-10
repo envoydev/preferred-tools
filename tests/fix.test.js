@@ -857,81 +857,281 @@ test('CLI: --detect and --questions print; --apply applies; bad arguments exit 2
     finally { w.clean(); }
 });
 
-// ---- token-sync (D7): a registration behind its key file --------------------------------------------------------------
+// ---- the 0.2.0 key rows (D7): key-to-helper, helper-missing, helper-stale, root-ignore, token-sync on stdio -----------
 
 const fsx = require('node:fs');
 const cryptox = require('node:crypto');
+const { spawnSync: spawnx } = require('node:child_process');
 const { writeJson, files } = require('./helpers.js');
+const rootsLib = require('../scripts/roots.js');
 const SK = 'SENTRY_ACCESS_TOKEN';
+const GK = 'GITHUB_PERSONAL_ACCESS_TOKEN';
 const SENTRY = (value) => ({ command: 'npx', args: ['-y', '@sentry/mcp-server@0.42.0'], env: { [SK]: value } });
+const GITHUB = (value) => ({ command: 'docker', args: ['run', '-i', '--rm', '-e', GK, 'ghcr.io/github/github-mcp-server:v2.1.0', 'stdio'], env: { [GK]: value } });
+const HOSTED_GH = (auth) => ({ type: 'http', url: 'https://api.githubcopilot.com/mcp/', headers: { Authorization: auth } });
+const HOSTED_SENTRY = (auth) => ({ type: 'http', url: 'https://mcp.sentry.dev/mcp', headers: { Authorization: auth } });
 const hexv = (p) => `${p}-${cryptox.randomBytes(10).toString('hex')}`;
-const keyFileIn = (dir, value) =>
-{
-    fsx.mkdirSync(path.join(dir, '.preferred-tools'), { recursive: true });
-    fsx.writeFileSync(path.join(dir, '.preferred-tools', '.secrets'), `${SK}=${value}\n`);
-    fsx.writeFileSync(path.join(dir, '.preferred-tools', '.gitignore'), '*\n');
-};
+const put = (file, text) => { fsx.mkdirSync(path.dirname(file), { recursive: true }); fsx.writeFileSync(file, text); };
+const secretsAt = (root, pairs) => put(path.join(root, '.mcps-secrets'), Object.entries(pairs).map(([k, v]) => `${k}=${v}`).join('\n') + '\n');
+const ptRoot = (w) => path.join(w.project, '.preferred-tools');
+const homeRoot = (w) => path.join(w.home, '.preferred-tools');
 const localEntry = (w, name) => account.readAccount(w.env, w.project).local[name];
+const ctxData = (w, data) => fix.makeCtx({ inv: inventory.buildInventory({ project: w.project, env: w.env, data }), env: w.env, machine: noMachine(), data });
+const logged = () => { const lines = []; return { lines, log: (...a) => lines.push(a.join(' ')), text: () => lines.join('\n') }; };
+const gitInit = (dir) => { fsx.mkdirSync(dir, { recursive: true }); assert.strictEqual(spawnx('git', ['init', '-q', dir]).status, 0); };
+const helperAt = (root, number, extra = '') => put(path.join(root, 'mcp-headers.js'), rootsLib.helperSource().replace(/^\/\/ preferred-tools mcp-headers \d+/, `// preferred-tools mcp-headers ${number}`) + extra);
+const shownOf = (d) => `${fix.render(d)}${JSON.stringify(d)}`;
 
-test('token-sync finds a registration behind its key file, rewrites it, and prints no value', () =>
+test('key-to-helper: a ${VAR} filled in the chain is moved to the helper under that name', () =>
 {
     const w = world();
     try
     {
-        const [v1, v2] = [hexv('one'), hexv('two')];
-        seed(w, 'sentry', 'local', SENTRY(`\${${SK}}`));
-        keyFileIn(w.project, v1);
-        const found = detect(ctxOf(w)).found.filter((f) => f.id === 'token-sync');
-        assert.deepStrictEqual(found.map((f) => [f.name, f.scope, Boolean(f.blocked)]), [['sentry', 'local', false]]);
-        assert.match(found[0].found, new RegExp(`holds \\$\\{${SK}\\} while .*\\.preferred-tools.\\.secrets has the key`));
-        const shown = `${fix.render(detect(ctxOf(w)))}${JSON.stringify(detect(ctxOf(w)))}`;
-        assert.ok(!shown.includes(v1), 'the detection names the key and the file, never the value');
-        const lines = [];
-        const res = fix.applyFixes(ctxOf(w), ['token-sync'], { tmp: path.join(w.dir, 'tmp'), log: (...a) => lines.push(a.join(' ')) });
-        assert.strictEqual(res.failed, null, lines.join('\n'));
-        assert.strictEqual(localEntry(w, 'sentry').env[SK], v1);
-        assert.deepStrictEqual(res.applied.map((f) => f.id), ['token-sync']);
-        keyFileIn(w.project, v2);
-        assert.match(detect(ctxOf(w)).found.find((f) => f.id === 'token-sync').found, /differs from the registration's/);
-        const lines2 = [];
-        fix.applyFixes(ctxOf(w), ['token-sync'], { tmp: path.join(w.dir, 'tmp'), log: (...a) => lines2.push(a.join(' ')) });
-        assert.strictEqual(localEntry(w, 'sentry').env[SK], v2);
-        assert.deepStrictEqual(detect(ctxOf(w)).found.filter((f) => f.id === 'token-sync'), [], 'in sync: nothing found');
-        for (const v of [v1, v2]) assert.ok(!`${lines.join('\n')}${lines2.join('\n')}`.includes(v), 'nothing printed holds the value');
-        for (const f of files(path.join(w.dir, 'tmp'))) for (const v of [v1, v2]) assert.ok(!fsx.readFileSync(f, 'utf8').includes(v), path.basename(f));
+        const v = hexv('gh');
+        seed(w, 'github', 'local', HOSTED_GH('Bearer ${ACME_GH}'));
+        secretsAt(ptRoot(w), { ACME_GH: v });
+        const d = detect(ctxOf(w));
+        const [f] = d.found.filter((x) => x.id === 'key-to-helper');
+        assert.deepStrictEqual([f.name, f.scope, f.keyName, Boolean(f.blocked)], ['github', 'local', 'ACME_GH', false]);
+        assert.ok(!shownOf(d).includes(v), 'the detection names the key, never its value');
+        const l = logged();
+        const res = fix.applyFixes(ctxOf(w), ['key-to-helper'], { tmp: path.join(w.dir, 'tmp'), log: l.log });
+        assert.strictEqual(res.failed, null, l.text());
+        const e = localEntry(w, 'github');
+        assert.strictEqual(e.headers, undefined, 'the header is gone');
+        assert.strictEqual(e.headersHelper, `node ${path.join(ptRoot(w), 'mcp-headers.js')} ACME_GH Bearer`);
+        assert.strictEqual(fsx.readFileSync(path.join(ptRoot(w), 'mcp-headers.js'), 'utf8'), rootsLib.helperSource(), 'R9: the helper is written with it');
+        assert.match(l.text(), new RegExp(`root ${ptRoot(w).replace(/[\\.]/g, '\\$&')}`), 'the root is named');
+        assert.deepStrictEqual(res.applied.map((x) => x.id), ['key-to-helper']);
+        assert.ok(!l.text().includes(v));
+        assert.deepStrictEqual(detect(ctxOf(w)).found.filter((x) => x.id === 'key-to-helper'), []);
     }
     finally { w.clean(); }
 });
 
-test('token-sync rewrites a live user registration only from the home file - a differing project chain is reported, not written', () =>
+test('key-to-helper: a ${VAR} not filled is blocked and names the old file that holds it', () =>
 {
     const w = world();
     try
     {
-        writeJson(path.join(w.dir, 'state', 'plugins.json'), { marketplaces: [], installed: [{ id: 'alfred-code@envoydev', version: '3.2.1', scope: 'user', enabled: true, installPath: '/c' }] });
-        writeJson(path.join(w.account, 'settings.json'), { enabledPlugins: { 'alfred-code@envoydev': true } });
-        const [live, chain, home] = [hexv('live'), hexv('chain'), hexv('home')];
-        fsx.mkdirSync(path.join(w.project, '.alfred'), { recursive: true });
-        fsx.writeFileSync(path.join(w.project, '.alfred', '.secrets'), `${SK}=${chain}\n`);
-        seed(w, 'sentry', 'user', SENTRY(live));
-        const f = detect(ctxOf(w)).found.find((x) => x.id === 'token-sync');
-        assert.match(f.blocked, /a server for every project takes a new key only from .*\.preferred-tools.\.secrets/);
-        const lines = [];
-        const res = fix.applyFixes(ctxOf(w), ['token-sync'], { log: (...a) => lines.push(a.join(' ')) });
-        assert.deepStrictEqual(res.skipped.map((x) => x.id), ['token-sync']);
-        assert.strictEqual(userEntry(w, 'sentry').env[SK], live, 'reported, not written');
-        // a user registration still holding ${VAR} takes this project's key
-        seed(w, 'sentry-b', 'user', SENTRY(`\${${SK}}`));
-        fix.applyFixes(ctxOf(w), ['token-sync'], { only: 'sentry-b', tmp: path.join(w.dir, 'tmp'), log: () => {} });
-        assert.strictEqual(userEntry(w, 'sentry-b').env[SK], chain);
-        // the home file changes a live one
-        keyFileIn(w.home, home);
-        assert.ok(!detect(ctxOf(w)).found.find((x) => x.id === 'token-sync' && x.name === 'sentry').blocked);
-        fix.applyFixes(ctxOf(w), ['token-sync'], { only: 'sentry', tmp: path.join(w.dir, 'tmp'), log: (...a) => lines.push(a.join(' ')) });
-        assert.strictEqual(userEntry(w, 'sentry').env[SK], home);
-        for (const v of [live, chain, home]) assert.ok(!lines.join('\n').includes(v));
+        seed(w, 'github', 'local', HOSTED_GH(`Bearer \${${GK}}`));
+        put(path.join(w.project, '.preferred-tools', '.secrets'), `${GK}=${hexv('old')}\n`);
+        const [f] = detect(ctxOf(w)).found.filter((x) => x.id === 'key-to-helper');
+        const chain0 = path.join(ptRoot(w), '.mcps-secrets');
+        assert.strictEqual(f.blocked, `put ${GK}'s value in ${chain0}, then run /preferred-tools:fix; ${GK} is in ${path.join(w.project, '.preferred-tools', '.secrets')}, which preferred-tools no longer reads`);
+        const res = fix.applyFixes(ctxOf(w), ['key-to-helper'], { log: () => {} });
+        assert.deepStrictEqual(res.skipped.map((x) => x.id), ['key-to-helper']);
+        assert.deepStrictEqual(localEntry(w, 'github').headers, { Authorization: `Bearer \${${GK}}` }, 'never moved to a helper that would send no key');
     }
     finally { w.clean(); }
+});
+
+test('key-to-helper: a literal equal to a filled value applies with that name; one equal to none is blocked; neither prints the literal', () =>
+{
+    const w = world();
+    try
+    {
+        const [v1, v2] = [hexv('sentry'), hexv('nobody')];
+        seed(w, 'sentry', 'user', HOSTED_SENTRY(`Bearer ${v1}`));
+        seed(w, 'github', 'local', HOSTED_GH(`Bearer ${v2}`));
+        secretsAt(homeRoot(w), { MY_SENTRY: v1 });
+        const d = detect(ctxOf(w));
+        const s = d.found.find((x) => x.id === 'key-to-helper' && x.name === 'sentry');
+        assert.deepStrictEqual([s.keyName, Boolean(s.blocked)], ['MY_SENTRY', false]);
+        const g = d.found.find((x) => x.id === 'key-to-helper' && x.name === 'github');
+        assert.match(g.blocked, /^the key in this registration matches no name in .*\.mcps-secrets.*: put the working key there under a name, then run \/preferred-tools:fix$/);
+        for (const v of [v1, v2]) assert.ok(!shownOf(d).includes(v), 'no literal in the report');
+        const l = logged();
+        const res = fix.applyFixes(ctxOf(w), ['key-to-helper'], { tmp: path.join(w.dir, 'tmp'), log: l.log });
+        assert.strictEqual(res.failed, null, l.text());
+        const e = userEntry(w, 'sentry');
+        assert.strictEqual(e.headers, undefined);
+        assert.strictEqual(e.headersHelper, `node ${path.join(homeRoot(w), 'mcp-headers.js')} MY_SENTRY Sentry-Bearer`);
+        assert.deepStrictEqual(localEntry(w, 'github').headers, { Authorization: `Bearer ${v2}` }, 'blocked: unchanged');
+        for (const v of [v1, v2]) assert.ok(!l.text().includes(v), 'nothing printed holds a literal');
+        for (const file of files(path.join(w.dir, 'tmp'))) for (const v of [v1, v2]) assert.ok(!fsx.readFileSync(file, 'utf8').includes(v), path.basename(file));
+    }
+    finally { w.clean(); }
+});
+
+test('helper-missing writes the helper; helper-stale rewrites a lower number, names a hand edit, and leaves a higher number with a note', () =>
+{
+    const w = world();
+    try
+    {
+        const file = path.join(ptRoot(w), 'mcp-headers.js');
+        seed(w, 'github', 'local', { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headersHelper: `node ${file} ${GK} Bearer` });
+        const [m] = detect(ctxOf(w)).found.filter((x) => x.id === 'helper-missing');
+        assert.deepStrictEqual([m.name, m.kind, Boolean(m.blocked)], [file, 'machine', false]);
+        const l = logged();
+        assert.strictEqual(fix.applyFixes(ctxOf(w), ['helper-missing'], { log: l.log }).failed, null, l.text());
+        assert.strictEqual(fsx.readFileSync(file, 'utf8'), rootsLib.helperSource());
+        assert.deepStrictEqual(detect(ctxOf(w)).found.filter((x) => /^helper-/.test(x.id)), []);
+        assert.doesNotMatch(l.text(), /Restart Claude Code/, 'the helper runs at each connect: no restart');
+
+        helperAt(ptRoot(w), 0);
+        const [lower] = detect(ctxOf(w)).found.filter((x) => x.id === 'helper-stale');
+        assert.match(lower.found, /helper 0 - this plugin's is 1/);
+        fix.applyFixes(ctxOf(w), ['helper-stale'], { log: () => {} });
+        assert.strictEqual(fsx.readFileSync(file, 'utf8'), rootsLib.helperSource());
+
+        helperAt(ptRoot(w), 1, '// mine\n');
+        const [edited] = detect(ctxOf(w)).found.filter((x) => x.id === 'helper-stale');
+        assert.match(edited.found, /changed since preferred-tools wrote it/);
+        assert.ok(!edited.blocked, 'a hand edit is rewritten on the confirmed plan');
+
+        helperAt(ptRoot(w), 2);
+        const [higher] = detect(ctxOf(w)).found.filter((x) => x.id === 'helper-stale');
+        assert.strictEqual(higher.blocked, `mcp-headers.js in ${ptRoot(w)} is newer than this plugin - update preferred-tools`);
+        fix.applyFixes(ctxOf(w), ['helper-stale'], { log: () => {} });
+        assert.match(fsx.readFileSync(file, 'utf8'), /^\/\/ preferred-tools mcp-headers 2/, 'never rewritten');
+    }
+    finally { w.clean(); }
+});
+
+test('helper-stale finds nothing for a CRLF copy of the same helper', () =>
+{
+    const w = world();
+    try
+    {
+        const file = path.join(ptRoot(w), 'mcp-headers.js');
+        seed(w, 'github', 'local', { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headersHelper: `node ${file} ${GK} Bearer` });
+        put(file, rootsLib.helperSource().replace(/\n/g, '\r\n'));
+        assert.deepStrictEqual(detect(ctxOf(w)).found.filter((x) => /^helper-/.test(x.id)), []);
+    }
+    finally { w.clean(); }
+});
+
+test('root-ignore covers a project or global root inside a git work tree: appends the missing lines to a 0.1.x .gitignore holding *, so mcp-headers.js is no longer ignored, and blocks when another .gitignore re-includes .mcps-secrets', () =>
+{
+    const w = world();
+    try
+    {
+        gitInit(w.project);
+        gitInit(w.home);
+        secretsAt(ptRoot(w), { A: '' });
+        put(path.join(ptRoot(w), '.gitignore'), '*\n');
+        secretsAt(homeRoot(w), { B: '' });
+        const found = detect(ctxOf(w)).found.filter((x) => x.id === 'root-ignore');
+        assert.deepStrictEqual(found.map((f) => [f.name, f.kind, Boolean(f.blocked)]), [[ptRoot(w), 'machine', false], [homeRoot(w), 'machine', false]]);
+        assert.match(found[0].found, /git ignores .*mcp-headers\.js, which a project-scope server needs committed/);
+        assert.match(found[1].found, /git would commit .*\.mcps-secrets/);
+        const l = logged();
+        const res = fix.applyFixes(ctxOf(w), ['root-ignore'], { log: l.log });
+        assert.strictEqual(res.failed, null, l.text());
+        assert.strictEqual(fsx.readFileSync(path.join(ptRoot(w), '.gitignore'), 'utf8'), '*\n!.gitignore\n!mcp-headers.js\n', 'appended, never rewritten');
+        assert.strictEqual(fsx.readFileSync(path.join(homeRoot(w), '.gitignore'), 'utf8'), rootsLib.GITIGNORE);
+        assert.strictEqual(rootsLib.gitIgnores(path.join(ptRoot(w), 'mcp-headers.js')), false);
+        assert.strictEqual(rootsLib.gitIgnores(path.join(homeRoot(w), '.mcps-secrets')), true);
+        assert.deepStrictEqual(detect(ctxOf(w)).found.filter((x) => x.id === 'root-ignore'), []);
+        assert.doesNotMatch(l.text(), /Restart Claude Code/);
+
+        // a later line re-includes the key file: the plugin's lines are all there, so appending cannot help
+        fsx.appendFileSync(path.join(ptRoot(w), '.gitignore'), '!.mcps-secrets\n');
+        const [b] = detect(ctxOf(w)).found.filter((x) => x.id === 'root-ignore');
+        assert.match(b.blocked, /re-includes \.mcps-secrets/);
+    }
+    finally { w.clean(); }
+});
+
+test('root-ignore finds nothing for a root outside a git work tree', () =>
+{
+    const w = world();
+    try
+    {
+        secretsAt(ptRoot(w), { A: '' });
+        assert.strictEqual(rootsLib.gitIgnores(path.join(ptRoot(w), '.mcps-secrets')), null, 'the world is outside any work tree');
+        assert.deepStrictEqual(detect(ctxOf(w)).found.filter((x) => x.id === 'root-ignore'), []);
+    }
+    finally { w.clean(); }
+});
+
+test('root-ignore in a named root holding the user\'s files appends .mcps-secrets and preferred-tools.json, never *', () =>
+{
+    const w = world();
+    try
+    {
+        gitInit(w.project);
+        const named = path.join(w.project, 'tools');
+        put(path.join(named, 'notes.md'), 'mine\n');
+        secretsAt(named, { A: '' });
+        const data = path.join(w.dir, 'data');
+        writeJson(path.join(data, 'roots.json'), { version: 1, global: null, projects: { [rootsLib.mapKey(w.project)]: named } });
+        const [f] = detect(ctxData(w, data)).found.filter((x) => x.id === 'root-ignore');
+        assert.strictEqual(f.name, named);
+        const l = logged();
+        assert.strictEqual(fix.applyFixes(ctxData(w, data), ['root-ignore'], { log: l.log }).failed, null, l.text());
+        assert.strictEqual(fsx.readFileSync(path.join(named, '.gitignore'), 'utf8'), '.mcps-secrets\npreferred-tools.json\n');
+        assert.strictEqual(rootsLib.gitIgnores(path.join(named, 'notes.md')), false, 'the user\'s files stay visible to git');
+        assert.strictEqual(rootsLib.gitIgnores(path.join(named, '.mcps-secrets')), true);
+    }
+    finally { w.clean(); }
+});
+
+test('token-sync checks stdio routes only, from the stdio chain, by any filled name', () =>
+{
+    const w = world();
+    try
+    {
+        const [v1, v2, v3] = [hexv('one'), hexv('two'), hexv('three')];
+        seed(w, 'sentry', 'local', SENTRY(v1));
+        seed(w, 'github', 'local', HOSTED_GH(`Bearer ${hexv('hosted')}`));
+        const ts = () => detect(ctxOf(w)).found.filter((x) => x.id === 'token-sync');
+        secretsAt(homeRoot(w), { ANY_NAME: v1 });
+        assert.deepStrictEqual(ts(), [], 'held by a filled name in the global root, the second file of the local chain');
+        put(path.join(w.project, '.preferred-tools', '.secrets'), `${SK}=${v3}\n`);
+        secretsAt(homeRoot(w), { ANY_NAME: v2 });
+        const [f] = ts();
+        assert.deepStrictEqual([f.name, f.scope, Boolean(f.blocked)], ['sentry', 'local', true], 'the default name is filled nowhere in the chain: the old file is not read');
+        assert.strictEqual(f.blocked, "pick the key's name with /preferred-tools:configure");
+        assert.match(f.found, /matches no name in .*\.mcps-secrets/);
+        secretsAt(ptRoot(w), { [SK]: v3 });
+        const [g] = ts();
+        assert.ok(!g.blocked);
+        const l = logged();
+        assert.strictEqual(fix.applyFixes(ctxOf(w), ['token-sync'], { tmp: path.join(w.dir, 'tmp'), log: l.log }).failed, null, l.text());
+        assert.strictEqual(localEntry(w, 'sentry').env[SK], v3, 'the default name\'s value');
+        assert.deepStrictEqual(ts(), []);
+        // a ${VAR} left by 0.1.x takes the value of the name it holds
+        seed(w, 'sentry-b', 'local', SENTRY('${ANY_NAME}'));
+        const [p] = ts();
+        assert.match(p.found, /holds \$\{ANY_NAME\} while .*\.mcps-secrets has the key/);
+        fix.applyFixes(ctxOf(w), ['token-sync'], { only: 'sentry-b', tmp: path.join(w.dir, 'tmp'), log: l.log });
+        assert.strictEqual(localEntry(w, 'sentry-b').env[SK], v2);
+        for (const v of [v1, v2, v3]) assert.ok(!`${l.text()}${shownOf(detect(ctxOf(w)))}`.includes(v), 'no value printed');
+    }
+    finally { w.clean(); }
+});
+
+test('token-sync blocks an empty stdio key and never writes the default name\'s value', () =>
+{
+    const w = world();
+    try
+    {
+        const v = hexv('gh');
+        seed(w, 'github', 'local', GITHUB(''));
+        secretsAt(ptRoot(w), { ACME_GITHUB_TOKEN: '', [GK]: v });
+        const [f] = detect(ctxOf(w)).found.filter((x) => x.id === 'token-sync');
+        assert.strictEqual(f.blocked, "pick the key's name with /preferred-tools:configure");
+        const before = fsx.readFileSync(account.accountFile(w.env), 'utf8');
+        const res = fix.applyFixes(ctxOf(w), ['token-sync'], { log: () => {} });
+        assert.deepStrictEqual(res.skipped.map((x) => x.id), ['token-sync']);
+        assert.strictEqual(fsx.readFileSync(account.accountFile(w.env), 'utf8'), before, 'the account file unchanged');
+        assert.strictEqual(localEntry(w, 'github').env[GK], '');
+    }
+    finally { w.clean(); }
+});
+
+test('fix notes an untrusted declaring folder', () =>
+{
+    const helperReg = (scope) => reg('github', { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headersHelper: 'node /proj/.preferred-tools/mcp-headers.js X Bearer' }, { scope, route: 'remote' });
+    const at = (trusted, scope) => { const ctx = ctxFor({ registrations: [helperReg(scope)] }); ctx.inv.trusted = trusted; return detect(ctx); };
+    const d = at(false, 'local');
+    assert.deepStrictEqual(d.notes, ['github (local): accept the trust dialog the next time Claude Code starts in /proj - until then the server connects without its key']);
+    assert.match(fix.render(d), /note: github \(local\): accept the trust dialog/);
+    assert.deepStrictEqual(at(true, 'local').notes, []);
+    assert.deepStrictEqual(at(false, 'user').notes, [], 'a global helper needs no folder trust');
+    assert.ok(!at(false, 'local').found.some((f) => /trust/.test(f.id)), 'not a fix');
 });
 
 test('serena-windows-home at project scope: ${USERPROFILE}\\.serena passes on a space-free profile, an unset variable blocks', () => {

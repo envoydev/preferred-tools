@@ -8,9 +8,10 @@
 //   --data: the plugin's data folder, whose roots map finds the records - a server left on its own (spec D6) is skipped
 //   node update.js --apply <id,id | all> [--project <dir>] [--tmp <dir>]  changes the install
 //
-// An offer id is `plugin:<plugin id>~<scope>`, `mcp:<name>~<scope>` or `lsp:typescript`; `all` is every offer whose newer
-// version is known. A plugin whose marketplace lists no version cannot be compared ahead: it is listed as unchecked, and
-// `claude plugin update` is the check, run only on its own id.
+// An offer id is `plugin:<plugin id>~<scope>`, `mcp:<name>~<scope>`, `lsp:typescript` or `helper:<file>` (an
+// mcp-headers.js copy older than this plugin's); `all` is every offer whose newer version is known. A plugin whose
+// marketplace lists no version cannot be compared ahead: it is listed as unchecked, and `claude plugin update` is the
+// check, run only on its own id.
 //
 // An MCP pin moves only to the newest stable release that is 7 or more days old (scripts/registry.js), and the rewrite
 // starts from the registration AS READ: the user's args, env and name stay, only the pin and the cut-off beside it move
@@ -166,6 +167,33 @@ async function lspOffers(ctx, out)
     else if (cs === undefined) out.lsp.push('csharp-ls is on PATH but did not report a version');
 }
 
+// ---- key helpers (spec D7, R10) ---------------------------------------------------------------------------------------
+
+// Each mcp-headers.js a managed registration names, or a root in use holds, with a lower number than this plugin's is
+// offered; a hand edit or a newer copy is left to /preferred-tools:fix, with a note.
+function helperOffers(ctx, out)
+{
+    const roots = require('./roots.js');
+    const { HELPER_VERSION } = require('./mcp-headers.js');
+    const P = E.pathFor(ctx.inv.os);
+    const rctx = { project: ctx.project, home: require('./account.js').homeDir(ctx.env), platform: ctx.inv.os, catalog: ctx.catalog };
+    const dirs = new Set(['project', 'global'].map((f) => ctx.inv.roots && ctx.inv.roots[f] && ctx.inv.roots[f].path).filter(Boolean));
+    for (const r of ctx.inv.registrations || [])
+    {
+        if (!r.rowId || r.own || r.alfredRetired || r.choice === 'own' || r.scope === 'inherited') continue;
+        const named = roots.helperPathOf(r.entry && r.entry.headersHelper);
+        if (named) dirs.add(P.dirname(roots.absOf(named, rctx)));
+    }
+    for (const root of dirs)
+    {
+        const file = P.join(root, roots.FILES.helper);
+        const { state, number } = roots.helperState(file);
+        if (state === 'lower') out.offers.push({ kind: 'helper', id: `helper:${file}`, file, root, from: String(number), to: String(HELPER_VERSION), group: 'helper', label: `mcp-headers.js in ${root}` });
+        else if (state === 'higher') out.notes.push(`mcp-headers.js in ${root} is newer than this plugin - update preferred-tools`);
+        else if (state === 'edited') out.notes.push(`mcp-headers.js in ${root} changed since preferred-tools wrote it - left; /preferred-tools:fix (helper-stale) rewrites it`);
+    }
+}
+
 // ---- check -----------------------------------------------------------------------------------------------------------
 
 function makeCtx({ inv, project, catalog = catalogLib.load(), env = process.env, machine, runCli = cli.run, registry, now = Date.now(), refresh = true })
@@ -184,6 +212,7 @@ async function check(ctx)
     pluginOffers(ctx, out);
     await mcpOffers(ctx, out);
     await lspOffers(ctx, out);
+    helperOffers(ctx, out);
     return out;
 }
 
@@ -203,6 +232,7 @@ function render(out)
     table('Other plugins:', out.offers.filter((o) => o.kind === 'plugin' && o.group === 'other'));
     table('MCP servers (pin -> newest release at least 7 days old):', out.offers.filter((o) => o.kind === 'mcp'));
     table('Language servers:', out.offers.filter((o) => o.kind === 'lsp'));
+    table('Key helpers:', out.offers.filter((o) => o.kind === 'helper'));
     if (out.unchecked.length)
     {
         lines.push('Plugins whose marketplace lists no version (`claude plugin update` is the check; each is offered on its own):');
@@ -223,7 +253,7 @@ function questions(out)
 {
     const items = [...out.offers, ...out.unchecked];
     if (!items.length) return { offer: null, pick: [] };
-    const groups = [['catalog', 'Catalog plugins'], ['other', 'Other plugins'], ['mcp', 'MCP servers'], ['lsp', 'Language servers']];
+    const groups = [['catalog', 'Catalog plugins'], ['other', 'Other plugins'], ['mcp', 'MCP servers'], ['lsp', 'Language servers'], ['helper', 'Key helpers']];
     const qs = [];
     for (const [g, title] of groups)
     {
@@ -295,6 +325,18 @@ function updateMcp(ctx, offer, tmp, log)
     return pin === offer.to;
 }
 
+// A helper copy rewritten with this plugin's, if it is still the lower one the check offered; read back.
+function updateHelper(offer, log)
+{
+    const roots = require('./roots.js');
+    const before = roots.helperState(offer.file);
+    if (before.state !== 'lower') { log(`CHECK  ${offer.label}: now ${before.state} - left as it is`); return false; }
+    fs.writeFileSync(offer.file, roots.helperSource());
+    const ok = roots.helperState(offer.file).state === 'same';
+    log(`${ok ? 'ok    ' : 'CHECK '} ${offer.label}: helper ${offer.from} -> ${offer.to} (read back)`);
+    return ok;
+}
+
 // -> { applied: [id], failed: [id], unknown: [id], fetchFile }
 function applyUpdates(ctx, ids, out, { tmp, log = console.log } = {})
 {
@@ -307,7 +349,7 @@ function applyUpdates(ctx, ids, out, { tmp, log = console.log } = {})
     for (const c of chosen)
     {
         if (typeof c === 'string') { res.unknown.push(c); log(`NOT OFFERED ${c}: nothing is behind under that id`); continue; }
-        const ok = c.kind === 'plugin' ? updatePlugin(ctx, c, log) : c.kind === 'lsp' ? updateLsp(ctx, c, log) : updateMcp(ctx, c, dir, log);
+        const ok = c.kind === 'plugin' ? updatePlugin(ctx, c, log) : c.kind === 'lsp' ? updateLsp(ctx, c, log) : c.kind === 'helper' ? updateHelper(c, log) : updateMcp(ctx, c, dir, log);
         (ok ? res.applied : res.failed).push(c.id);
     }
     // every rewritten server in one fetch file, for fetch.js in the background (apply.js says why)
@@ -317,7 +359,8 @@ function applyUpdates(ctx, ids, out, { tmp, log = console.log } = {})
         res.fetchFile = fetchLib.writeJob(path.join(dir, 'fetch.json'), job);
         log('', ...fetchLib.nextLines(res.fetchFile, job));
     }
-    if (res.applied.length) log('', `Restart Claude Code (or run /reload-plugins for plugins) so the updated servers and plugins load${res.fetchFile ? ' - after the fetch reports' : ''}.`);
+    // a helper runs at each connect: rewriting one needs no restart
+    if (res.applied.some((id) => !id.startsWith('helper:'))) log('', `Restart Claude Code (or run /reload-plugins for plugins) so the updated servers and plugins load${res.fetchFile ? ' - after the fetch reports' : ''}.`);
     return res;
 }
 

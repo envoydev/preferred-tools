@@ -449,3 +449,35 @@ test('fix and update take --data after their read-only flag', async () =>
     }
     finally { w.clean(); }
 });
+
+test('update offers and rewrites a lower-numbered helper copy; leaves a higher one', async () =>
+{
+    const roots = require('../scripts/roots.js');
+    const w = world();
+    try
+    {
+        const pt = path.join(w.project, '.preferred-tools');
+        const home = path.join(w.home, '.preferred-tools');
+        const helperAt = (root, n) => { fs.mkdirSync(root, { recursive: true }); fs.writeFileSync(path.join(root, 'mcp-headers.js'), roots.helperSource().replace(/^\/\/ preferred-tools mcp-headers \d+/, `// preferred-tools mcp-headers ${n}`)); };
+        const lower = path.join(pt, 'mcp-headers.js');
+        const higher = path.join(home, 'mcp-headers.js');
+        assert.strictEqual(cli.run(['mcp', 'add-json', 'github', JSON.stringify({ type: 'http', url: 'https://api.githubcopilot.com/mcp/', headersHelper: `node ${lower} GITHUB_PERSONAL_ACCESS_TOKEN Bearer` }), '-s', 'local'], { cwd: w.project, env: w.env }).status, 0);
+        assert.strictEqual(cli.run(['mcp', 'add-json', 'sentry', JSON.stringify({ type: 'http', url: 'https://mcp.sentry.dev/mcp', headersHelper: `node ${higher} SENTRY_ACCESS_TOKEN Sentry-Bearer` }), '-s', 'user'], { cwd: w.project, env: w.env }).status, 0);
+        helperAt(pt, 0);
+        helperAt(home, 2);
+        const c = await run(w, ['--check', '--no-refresh']);
+        assert.strictEqual(c.code, 0, c.text);
+        assert.match(c.text, /Key helpers:\n {2}mcp-headers\.js in .*\.preferred-tools +0 -> 1/);
+        assert.match(c.text, /mcp-headers\.js in .*home.\.preferred-tools is newer than this plugin - update preferred-tools/);
+        const q = JSON.parse((await run(w, ['--questions', '--no-refresh'])).text);
+        const group = q.pick.flat().find((x) => x.id === 'update-helper');
+        assert.strictEqual(group.header, 'Key helpers');
+        assert.deepStrictEqual(group.options.map((o) => o.description), [`helper:${lower}`]);
+        const a = await run(w, ['--apply', `helper:${lower}`]);
+        assert.strictEqual(a.code, 0, a.text);
+        assert.strictEqual(fs.readFileSync(lower, 'utf8'), roots.helperSource());
+        assert.match(fs.readFileSync(higher, 'utf8'), /^\/\/ preferred-tools mcp-headers 2/, 'a higher number is left');
+        assert.doesNotMatch((await run(w, ['--check', '--no-refresh'])).text, /Key helpers:/);
+    }
+    finally { w.clean(); }
+});

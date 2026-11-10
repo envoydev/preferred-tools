@@ -144,11 +144,10 @@ function pluginWritten(root, name)
     catch { return false; }
 }
 
-// <root>/.gitignore: GITIGNORE when absent, else each of its lines the file lacks appended; in a folder holding the
-// user's own files, only the key file and the record - never `*`, so their files stay visible to git. Never under .alfred.
-function rootIgnore(root)
+// What rootIgnore would do in `root`, read only: { file, text (null when absent), mine, want, lack } - `mine` false for a
+// folder holding the user's own files.
+function rootIgnoreLines(root)
 {
-    if (path.basename(root) === '.alfred') return { ok: true, detail: `${root} is alfred-code's - its own .gitignore covers it; nothing written` };
     let names = [];
     try { names = fs.readdirSync(root); } catch { /* a new root */ }
     const mine = names.every((n) => pluginWritten(root, n));
@@ -156,14 +155,22 @@ function rootIgnore(root)
     const file = path.join(root, '.gitignore');
     let text = null;
     try { text = fs.readFileSync(file, 'utf8'); } catch { /* absent */ }
+    const have = new Set((text || '').split(/\r?\n/).map((l) => l.trim()));
+    return { file, text, mine, want, lack: want.filter((l) => !have.has(l)) };
+}
+
+// <root>/.gitignore: GITIGNORE when absent, else each of its lines the file lacks appended; in a folder holding the
+// user's own files, only the key file and the record - never `*`, so their files stay visible to git. Never under .alfred.
+function rootIgnore(root)
+{
+    if (path.basename(root) === '.alfred') return { ok: true, detail: `${root} is alfred-code's - its own .gitignore covers it; nothing written` };
+    const { file, text, want, lack } = rootIgnoreLines(root);
     if (text === null)
     {
         fs.mkdirSync(root, { recursive: true });
         fs.writeFileSync(file, appendLines('', want));
         return { ok: true, detail: `wrote ${file} (${want.join(', ')})` };
     }
-    const have = new Set(text.split(/\r?\n/).map((l) => l.trim()));
-    const lack = want.filter((l) => !have.has(l));
     if (!lack.length) return { ok: true, detail: `${file} has every line it needs - left as it is` };
     fs.writeFileSync(file, appendLines(text, lack));
     return { ok: true, detail: `appended ${lack.join(', ')} to ${file}` };
@@ -381,4 +388,4 @@ function main(argv)
 }
 
 if (require.main === module) process.exit(main(process.argv.slice(2)));
-module.exports = { apply, runStep, restoreStep, fillStep, readRegistration, restoreLine };
+module.exports = { apply, runStep, restoreStep, fillStep, readRegistration, restoreLine, rootIgnore, rootIgnoreLines, writeHelper, ensureKeyName };

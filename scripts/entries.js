@@ -161,7 +161,7 @@ function alfredRoot(row, ctx)
 const ALFRED_ENTRIES = ['docs', 'state', 'statistics', 'workspace', 'flow'];
 
 // alfred-code is set up in this project: enabled for it AND <project>/.alfred/.gitignore is there, the file that keeps
-// its data out of git. keys.alfredPresent asks a different question (is its key chain here).
+// its data out of git.
 // A value that names this machine: an absolute path (POSIX, a drive, UNC) or ~, with no ${VAR} in it. The committed
 // .mcp.json carries none (project scope gets relative paths and ${VAR} only).
 function machinePath(value)
