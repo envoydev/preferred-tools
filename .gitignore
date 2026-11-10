@@ -156,3 +156,6 @@ vite.config.ts.timestamp-*
 
 # superpowers specs, plans and run ledgers are local-only (.claude/rules/superpowers-location.md)
 **/docs/superpowers/
+
+# session investigations copied from a user's machine: they name private workspaces and paths
+docs/sessions-investigation/
