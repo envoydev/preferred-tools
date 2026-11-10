@@ -319,7 +319,23 @@ function oldHolding(project, home, name)
     return oldFiles(project, home).find((file) => Boolean((readDotenv(file) || {})[name])) || null;
 }
 
+// The first name in `files` whose value equals `value` -> its name | null. Compared in this process; the value is never
+// returned or printed.
+function nameOfValue(files, value)
+{
+    if (typeof value !== 'string' || value === '') return null;
+    for (const file of files)
+    {
+        const hit = Object.entries(readDotenv(file) || {}).find(([, v]) => v === value);
+        if (hit) return hit[0];
+    }
+    return null;
+}
+
+// A name that looks like a credential (spec D9, the docs' own test): a key belongs in .mcps-secrets, never in a setting.
+const credentialName = (n) => /TOKEN|SECRET|PASSWORD|KEY|AUTH/i.test(String(n));
+
 module.exports = {
     readDotenv, alfredPresent, filesFor, plainFilesFor, presence, keysFor, tokenFields, fillKeys, keysInto, homeFile, projectFile, PLACEHOLDER,
-    SECRETS, NAME_RULE, hostedChain, stdioChain, valueIn, filledNames, oldFiles, oldHolding, offeredName,
+    SECRETS, NAME_RULE, hostedChain, stdioChain, valueIn, filledNames, oldFiles, oldHolding, offeredName, nameOfValue, credentialName,
 };

@@ -100,20 +100,26 @@ function restoreStep(step, ctx)
     return entry.error ? changed : { step: { ...step, entry: entry.entry, old: step.old ? source : step.old } };
 }
 
-// The key of a token route, set just before the add by the TARGET scope (keys.js): the ${VAR} form into .mcp.json, the
-// key file's value into a local or user registration. -> { step, note } - the note names the key and the file, never a
-// value.
+// A stdio key at apply (R7): the step's `key` ({ name, files }, the stdio chain the plan named) fills the route's token
+// fields with the first non-empty value of that name. Not filled there: a replace or a move keeps the key the
+// registration holds now (its `old`, restored from the live registration) - a value of nothing but ${VAR} placeholders
+// is no key - else the field is written empty, never a ${VAR} (spec D5). A step without `key` is written as planned.
+// -> { step, note } - the note names the key and the files, never a value.
 function fillStep(step, ctx)
 {
-    if (!['mcp-add', 'mcp-replace', 'mcp-move'].includes(step.op)) return { step, note: null };
-    const m = step.row && step.route ? null : inventory.matchEntry(step.entry, ctx.catalog);
-    const row = rowOf(ctx, step) || (m && ctx.catalog.byId.get(m.rowId)) || null;
-    if (!row || row.kind !== 'mcp') return { step, note: null };
-    const routeId = step.route || (m && m.route);
+    if (!step.key || !['mcp-add', 'mcp-replace', 'mcp-move'].includes(step.op)) return { step, note: null };
+    const row = rowOf(ctx, step);
+    const route = row && row.routes ? row.routes[step.route] : null;
+    if (!route || !route.tokenVar) return { step, note: null };
     const to = step.op === 'mcp-move' ? step.to : { name: step.name, scope: step.scope };
-    const fromUser = (step.op === 'mcp-move' ? step.from.scope : step.scope) === 'user';
-    const r = keys.keysInto(step.entry, row, routeId, to.scope, { project: ctx.project, env: ctx.env, alfredEnabled: ctx.alfredEnabled, name: to.name, before: to.scope === 'user' && fromUser ? step.old : null });
-    return { step: { ...step, entry: r.entry }, note: r.note };
+    const where = `'${to.name}' (${to.scope})`;
+    const { name, files } = step.key;
+    const fill = (value) => ({ ...step, entry: keys.fillKeys(step.entry, row, step.route, to.scope, { [route.tokenVar]: value }) });
+    const found = keys.valueIn(files, name);
+    if (found) return { step: fill(found.value), note: `${name} for ${where} from ${found.file}` };
+    const held = step.old ? keys.tokenFields(step.old, route).map((f) => f.at.reduce((o, k) => (o == null ? undefined : o[k]), step.old)).find((v) => typeof v === 'string' && v !== '' && !keys.PLACEHOLDER.test(v) && !v.includes(kept.MARKER)) : undefined;
+    if (held !== undefined) return { step: fill(held), note: `${name} for ${where} is in none of ${files.join(', ')} - the key it holds is kept; fill ${name} in ${files[0]} to replace it` };
+    return { step: fill(''), note: `${name} for ${where} is in none of ${files.join(', ')} - written empty: fill ${name} in ${files[0]}, then run /preferred-tools:configure and keep ${name} as the key's name - it writes the key in` };
 }
 
 function pluginState(ctx, id, scope)

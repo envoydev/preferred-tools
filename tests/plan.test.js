@@ -1624,3 +1624,98 @@ test('the old-file line names the project root\'s .mcps-secrets at local scope a
     }
     finally { w.clean(); }
 });
+
+// ---- 0.2.0: the key's name and the server's settings (spec D9) ------------------------------------------------------
+const mcpsAt = (dir, lines) => { const fs = require('node:fs'); fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(path.join(dir, '.mcps-secrets'), `${lines.join('\n')}\n`); };
+
+test('key name options: the default, names found holding the row id, \'A name you choose\'; a filled name recommended, the default first when both are', () => {
+    const { world } = require('./helpers.js');
+    const w = world();
+    try
+    {
+        const fake = (n) => `v${n}-${Date.now()}-not-printed`;
+        const ctx = () => ({ project: w.project, platform: process.platform, home: w.home, env: {} });
+        const q = () => asks.keyNameQuestion(catalog.byId.get('github'), 'remote', 'user', ctx());
+        const labels = (k) => k.question.options.map((o) => o.label);
+        let k = q();
+        assert.deepStrictEqual(labels(k), [`${G} (Recommended)`, 'A name you choose']);
+        assert.deepStrictEqual(k.answers, { [`${G} (Recommended)`]: G, 'A name you choose': 'named' });
+        assert.deepStrictEqual([k.question.id, k.question.header], ['keyname-github', 'Key name']);
+        assert.strictEqual(k.question.question, "Which name holds github's key in .mcps-secrets?");
+        // a row-id name in a file 0.1.x read, another in the global root's .mcps-secrets: both offered, the filled one
+        // in the chain recommended; a name without the row id, or not key-shaped, is not
+        const store = putKeys(w.project, ALFRED_STORE, [`ACME_GITHUB_ACCESS_TOKEN=${fake(1)}`, `OTHER_TOKEN=${fake(2)}`]);
+        mcpsAt(path.join(w.home, '.preferred-tools'), [`WORK_GITHUB_TOKEN=${fake(3)}`, `GITHUB_ORG=${fake(4)}`]);
+        k = q();
+        assert.deepStrictEqual(labels(k), ['WORK_GITHUB_TOKEN (Recommended)', G, 'ACME_GITHUB_ACCESS_TOKEN', 'A name you choose']);
+        const desc = Object.fromEntries(k.question.options.map((o) => [o.label, o.description]));
+        assert.strictEqual(desc['WORK_GITHUB_TOKEN (Recommended)'], `filled in ${path.join(w.home, '.preferred-tools', '.mcps-secrets')}`);
+        assert.strictEqual(desc.ACME_GITHUB_ACCESS_TOKEN, `in ${store} - move it to .mcps-secrets under this name`);
+        assert.match(desc[G], /the catalog's name - add it to /);
+        // the default filled too: the default first
+        mcpsAt(path.join(w.home, '.preferred-tools'), [`${G}=${fake(5)}`]);
+        k = q();
+        assert.deepStrictEqual(labels(k).slice(0, 2), [`${G} (Recommended)`, 'WORK_GITHUB_TOKEN']);
+        assert.ok(!/not-printed/.test(JSON.stringify(k)), 'names only, never a value');
+        assert.ok(!k.question.options.some((o) => OTHER_RE.test(o.description) || /under Other/.test(o.description)));
+        // no key name for a route that takes no key, or a stdio route at project scope
+        assert.strictEqual(asks.keyNameQuestion(catalog.byId.get('gitlab'), 'remote', 'user', ctx()), null);
+        assert.strictEqual(asks.keyNameQuestion(catalog.byId.get('context7'), 'local', 'project', ctx()), null);
+    }
+    finally { w.clean(); }
+});
+
+test('a key name outside ^[A-Za-z_][A-Za-z0-9_]*$ is a plan error that states the rule', () => {
+    const bad = plan(inv(MAC), { picks: { github: { route: 'remote', scope: 'user' } }, keyNames: { github: '1BAD-NAME' } }, opts('/Users/me'));
+    assert.match(bad.errors.join(), /github: '1BAD-NAME' is not a key name - a name matches \^\[A-Za-z_\]\[A-Za-z0-9_\]\*\$/);
+    assert.deepStrictEqual(bad.steps, []);
+    // a good name: the helper passes it, the key line names it
+    const ok = plan(inv(MAC), { picks: { github: { route: 'remote', scope: 'user' } }, keyNames: { github: 'ACME_GITHUB_TOKEN' } }, opts('/Users/me'));
+    assert.strictEqual(helperOf(ok, 'github'), 'node /Users/me/.preferred-tools/mcp-headers.js ACME_GITHUB_TOKEN Bearer');
+    assert.strictEqual(ok.keys[0].variable, 'ACME_GITHUB_TOKEN');
+    // a stdio route: the step carries the name and the stdio chain; the server's own variable keeps its name
+    const d = plan(inv(MAC), { picks: { github: { route: 'local', scope: 'local' } }, keyNames: { github: 'ACME_GITHUB_TOKEN' } }, opts('/Users/me'));
+    assert.deepStrictEqual(addStep(d).key, { name: 'ACME_GITHUB_TOKEN', files: [path.join('/work/shop', '.preferred-tools', '.mcps-secrets'), path.join('/Users/me', '.preferred-tools', '.mcps-secrets')] });
+    assert.ok(Object.hasOwn(addStep(d).entry.env, G));
+    assert.strictEqual(addStep(plan(inv(MAC), pickOne('github', { route: 'local', scope: 'local' }), opts('/Users/me'))).key.name, G, 'no answer: the catalog\'s name');
+    assert.strictEqual(addStep(plan(inv(MAC), pickOne('context7', { route: 'local', scope: 'local' }), opts('/Users/me'))).key, undefined, 'no key picked: no key step');
+});
+
+test('settings: \'Keep these settings\' lists NAME=value; \'No settings\' for an empty env; pairs merge into env', () => {
+    const s = (id, route, entry = null) => asks.settingsQuestion(catalog.byId.get(id), route, { entry });
+    const a = s('appium', 'local');
+    assert.deepStrictEqual(a.question.options.map((o) => o.label), ['Keep these settings (Recommended)', 'Change or add a setting']);
+    assert.deepStrictEqual([a.question.id, a.question.header, a.question.question], ['settings-appium', 'Settings', "appium's settings"]);
+    assert.match(a.question.options[0].description, /^NO_UI=true, ALLOW_REMOTE_APP_URLS=false, REMOTE_SERVER_URL_ALLOW_REGEX=/);
+    assert.deepStrictEqual(a.answers, { 'Keep these settings (Recommended)': 'keep', 'Change or add a setting': 'change' });
+    for (const [id, route] of [['playwright-chrome', 'local'], ['context7', 'local'], ['github', 'local']])
+        assert.deepStrictEqual(s(id, route).question.options[0], { label: 'No settings (Recommended)', description: "the server's own defaults" }, id);
+    assert.strictEqual(s('github', 'remote'), null, 'a hosted route takes no environment');
+    // configure starts from the registration as read, the user's own additions included; resolved values are not listed
+    const serena = { command: 'uvx', args: [], env: { SERENA_USAGE_REPORTING: 'false', SERENA_HOME: '/w/.preferred-tools/serena', MY_FLAG: '1' } };
+    assert.strictEqual(s('serena', 'local', serena).question.options[0].description, 'SERENA_USAGE_REPORTING=false, MY_FLAG=1');
+    const appium = { command: 'npx', args: [], env: { NO_UI: 'true', ANDROID_HOME: '/sdk', SCREENSHOTS_DIR: '/w/s', npm_config_before: '2026-11-10T23:59:59Z' } };
+    assert.strictEqual(s('appium', 'local', appium).question.options[0].description, 'NO_UI=true');
+    // pairs merge into env
+    const p = plan(inv(MAC), { picks: { appium: { scope: 'local' } }, settings: { appium: { NO_UI: 'false', EXTRA_FLAG: '1' } } }, opts('/Users/me'));
+    assert.deepStrictEqual(p.errors, []);
+    const env = addStep(p).entry.env;
+    assert.deepStrictEqual([env.NO_UI, env.EXTRA_FLAG, env.ALLOW_REMOTE_APP_URLS], ['false', '1', 'false']);
+    // a Docker route passes each new setting into the container
+    const gh = addStep(plan(inv(MAC), { picks: { github: { route: 'local', scope: 'local' } }, settings: { github: { GITHUB_TOOLSETS: 'repos' } } }, opts('/Users/me'))).entry;
+    assert.deepStrictEqual(gh.args, ['run', '-i', '--rm', '-e', G, '-e', 'GITHUB_TOOLSETS', 'ghcr.io/github/github-mcp-server:v2.1.0', 'stdio']);
+    assert.strictEqual(gh.env.GITHUB_TOOLSETS, 'repos');
+});
+
+test('a credential-shaped setting is refused; a machine path is refused at project scope; a ${VAR} is kept', () => {
+    const at = (scope, settings, id = 'appium') => plan(inv(MAC), { picks: { [id]: { scope } }, settings: { [id]: settings } }, opts('/Users/me'));
+    for (const n of ['MY_TOKEN', 'api_key', 'DbPassword', 'CLIENT_SECRET', 'AUTH_HEADER'])
+        assert.match(at('local', { [n]: 'x' }).errors.join(), /keep a key in \.mcps-secrets and pick it as the key's name/, n);
+    assert.match(at('local', { '1X': 'y' }).errors.join(), /'1X' is not a setting name - a name matches \^\[A-Za-z_\]\[A-Za-z0-9_\]\*\$/);
+    assert.match(at('project', { TOOL_DIR: '/Users/me/tools' }).errors.join(), /the committed \.mcp\.json takes no machine path - use \$\{VAR\}/);
+    const v = at('project', { TOOL_DIR: '${HOME}/tools' });
+    assert.deepStrictEqual(v.errors, []);
+    assert.strictEqual(addStep(v).entry.env.TOOL_DIR, '${HOME}/tools');
+    assert.deepStrictEqual(at('local', { TOOL_DIR: '/Users/me/tools' }).errors, []);
+    assert.match(plan(inv(MAC), { picks: { github: { route: 'remote', scope: 'user' } }, settings: { github: { A: '1' } } }, opts('/Users/me')).errors.join(), /github: a hosted route takes no settings/);
+});

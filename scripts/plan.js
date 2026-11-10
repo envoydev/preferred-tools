@@ -33,7 +33,7 @@ const { blockingStdio } = require('./json-file.js');
 
 const SCOPES = ['local', 'project', 'user'];
 // the SDK homes appium-sdk-env writes into a local or user registration (scripts/fixes/registration.js)
-const APPIUM_SDK_ENV = ['ANDROID_HOME', 'JAVA_HOME'];
+const { APPIUM_SDK_ENV } = E;
 const deepEqual = (a, b) => JSON.stringify(sortKeys(a)) === JSON.stringify(sortKeys(b));
 function sortKeys(v)
 {
@@ -50,6 +50,8 @@ function makeCtx(inv, opts = {})
     };
     // alfred-code set up in this project (its .alfred/.gitignore): its folder is recommended for the data (D3)
     ctx.alfredHere = E.alfredData(ctx, inv.alfredCodeEnabled);
+    // a live registration, read in this process for a key comparison (R1) - only from an account the caller's env names
+    ctx.readLive = opts.readLive || asks.liveReader(inv.project, opts.env);
     return ctx;
 }
 
@@ -208,6 +210,28 @@ function planMcp(row, pick, inv, ctx, catalog, out)
         out.notes.push(`${row.id}: --api-key is left out - its local route runs keyless at project scope`);
         wantToken = false;
     }
+    // the key's name (spec D9): answered, else the name the registration uses - the helper's argument, or for a stdio key
+    // the name whose value equals the key it holds, read from the live registration in this process (R1) - else the
+    // catalog's
+    const keyVar = route.helper ? route.helper.var : route.tokenVar;
+    if (pick.keyName !== undefined && !keys.NAME_RULE.test(String(pick.keyName))) return out.errors.push(`${row.id}: '${pick.keyName}' is not a key name - a name matches ${keys.NAME_RULE.source}`);
+    const usesKey = Boolean(keyVar) && (route.auth === 'token' || (route.auth === 'optional-token' && wantToken));
+    const ks = usesKey ? asks.keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled, scope) : null;
+    const sameRoute = Boolean(cur) && cur.route === routeId;
+    const liveKey = sameRoute && ks && ks.kind === 'stdio' ? asks.heldKey(ctx.readLive(cur.name, cur.scope) || {}, route) : null;
+    const keyName = pick.keyName || (sameRoute && route.helper ? cur.keyName : null) || (liveKey ? keys.nameOfValue([...ks.files, ...keys.oldFiles(ctx.project, ctx.home)], liveKey) : null) || keyVar;
+    // the server's settings (spec D9): pairs merged into a stdio route's env - never a key, and no machine path in the
+    // committed file
+    if (pick.settings)
+    {
+        if (routeId === 'remote') return out.errors.push(`${row.id}: a hosted route takes no settings - its options are its route and host`);
+        for (const [k, v] of Object.entries(pick.settings))
+        {
+            if (!keys.NAME_RULE.test(k)) return out.errors.push(`${row.id}: '${k}' is not a setting name - a name matches ${keys.NAME_RULE.source}`);
+            if (keys.credentialName(k)) return out.errors.push(`${row.id}: ${k} looks like a key - keep a key in .mcps-secrets and pick it as the key's name`);
+            if (scope === 'project' && E.machinePath(String(v))) return out.errors.push(`${row.id}: ${k} - the committed .mcp.json takes no machine path - use \${VAR}`);
+        }
+    }
     let wantExec = pick.executablePath === undefined ? (cur ? cur.executablePath : undefined) : (pick.executablePath || undefined);
     // the committed .mcp.json carries no machine path: a binary named there is refused, one a move carries is left out
     if (scope === 'project' && E.machinePath(wantExec))
@@ -243,7 +267,7 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     let entry;
     let fresh = !cur || cur.route !== routeId;
     if (fresh)
-        entry = E.buildEntry(row, routeId, { rootStr, scope, executablePath: wantExec, token: wantToken, keyName: cur && cur.keyName, params }, ctx, catalog.rules);
+        entry = E.buildEntry(row, routeId, { rootStr, scope, executablePath: wantExec, token: wantToken, keyName, params }, ctx, catalog.rules);
     else
     {
         entry = JSON.parse(JSON.stringify(cur.entry));
@@ -267,7 +291,7 @@ function planMcp(row, pick, inv, ctx, catalog, out)
                 if (header) { delete entry.headers.Authorization; if (!Object.keys(entry.headers).length) delete entry.headers; }
             }
             else if (header) out.notes.push(`${row.id}: '${cur.name}' sends its key from an Authorization header - /preferred-tools:fix moves it into .mcps-secrets, read by mcp-headers.js (key-to-helper)`);
-            else entry.headersHelper = E.helperFor(route, scope, ctx, cur.keyName);
+            else entry.headersHelper = E.helperFor(route, scope, ctx, keyName);
         }
         else if (route.auth === 'optional-token' && wantToken !== cur.token)
         {
@@ -279,6 +303,8 @@ function planMcp(row, pick, inv, ctx, catalog, out)
         }
         if (row.params && cur.host && params.host !== cur.host) entry.url = E.subst(route.url, params);
     }
+
+    if (pick.settings) entry = E.mergeSettings(entry, route, pick.settings);
 
     // .mcp.json is committed: a move into it never carries a credential the route's own token field does not take - a
     // header of the user's own, a userinfo URL (D7); the token field itself becomes ${VAR} at apply (keys.js)
@@ -305,17 +331,21 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     // the key (spec D3-D5): a hosted route's helper reads the hosted chain each time Claude Code connects, a stdio route's
     // key is written in by the apply from the stdio chain. The line names the files, never a value; a name found only in
     // a file 0.1.x read names that file.
-    const usesKey = route.auth === 'token' || (route.auth === 'optional-token' && wantToken);
-    const ks = usesKey && !(entry.headers && entry.headers.Authorization) ? asks.keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled, scope) : null;
-    if (ks && !(ks.kind === 'stdio' && scope === 'project'))
+    const keyed = ks && !(entry.headers && entry.headers.Authorization) ? ks : null;
+    if (keyed && !(keyed.kind === 'stdio' && scope === 'project'))
     {
-        const variable = (cur && cur.keyName) || ks.variable;
-        const filled = keys.filledNames(ks.files).some((f) => f.names.includes(variable));
-        out.keys.push({ row: row.id, name, scope, variable, kind: ks.kind, files: ks.files, filled, old: filled ? null : keys.oldHolding(ctx.project, ctx.home, variable) });
+        const filled = keys.filledNames(keyed.files).some((f) => f.names.includes(keyName));
+        out.keys.push({ row: row.id, name, scope, variable: keyName, kind: keyed.kind, files: keyed.files, filled, old: filled ? null : keys.oldHolding(ctx.project, ctx.home, keyName) });
     }
+    // a stdio key at local or global scope: the apply writes it in from the stdio chain under the key's name (R7); configure
+    // rewrites a registration whose key differs from the chosen name's filled value, even when nothing else changed
+    const stepKey = keyed && keyed.kind === 'stdio' && scope !== 'project' ? { name: keyName, files: keyed.files } : null;
+    const chosen = stepKey && cur ? keys.valueIn(stepKey.files, keyName) : null;
+    const staleKey = Boolean(chosen) && chosen.value !== liveKey;
+    const withKey = stepKey ? { key: stepKey } : {};
     // the helper's own conditions (spec D4): the folder's trust at project and local scope, the declaring folder only at
     // project scope, node on the PATH - each said once
-    if (ks && ks.kind === 'helper')
+    if (keyed && keyed.kind === 'helper')
     {
         const once = (text) => { if (!out.notes.includes(text)) out.notes.push(text); };
         if (scope !== 'user' && inv.trusted === false) once(`accept the trust dialog the next time Claude Code starts in ${ctx.project} - until then the server connects without its key`);
@@ -332,20 +362,20 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     if (!cur)
     {
         if (ensure) out.steps.push({ op: 'ensure-dir', path: ensure, why: `${row.id}: data folder, with a .gitignore holding * so the project's own .gitignore is never edited` });
-        out.steps.push({ op: 'mcp-add', name, scope, entry, row: row.id, route: routeId, why: `${row.id}: add (${routeId}) at ${scope} scope` });
+        out.steps.push({ op: 'mcp-add', name, scope, entry, row: row.id, route: routeId, ...withKey, why: `${row.id}: add (${routeId}) at ${scope} scope` });
         if (fetch) out.steps.push(fetch);
         return undefined;
     }
     const moved = cur.name !== name || cur.scope !== scope;
     const edited = !deepEqual(entry, cur.entry);
-    if (!moved && !edited && !fresh) return out.unchanged.push(`${row.id}: '${name}' at ${scope} scope already as answered`);
+    if (!moved && !edited && !fresh && !staleKey) return out.unchanged.push(`${row.id}: '${name}' at ${scope} scope already as answered`);
     if (row.locations && cur.rootStr && rootStr !== cur.rootStr && E.formatRoot(E.logicalRoot(cur.rootStr, ctx), 'local', ctx).value !== ensure)
         out.notes.push(`${row.id}: the old data stays at ${cur.rootStr}; moving a location moves no data`);
     if (ensure && (!cur.rootStr || rootStr !== cur.rootStr)) out.steps.push({ op: 'ensure-dir', path: ensure, why: `${row.id}: new data folder` });
     if (moved)
-        out.steps.push({ op: 'mcp-move', from: { name: cur.name, scope: cur.scope }, to: { name, scope }, entry, old: cur.entry, row: row.id, route: routeId, why: `${row.id}: ${cur.name !== name ? `rename '${cur.name}' to '${name}'` : ''}${cur.name !== name && cur.scope !== scope ? ' and ' : ''}${cur.scope !== scope ? `move from ${cur.scope} to ${scope} scope` : ''} - add first, read back, then remove the old one` });
+        out.steps.push({ op: 'mcp-move', from: { name: cur.name, scope: cur.scope }, to: { name, scope }, entry, old: cur.entry, row: row.id, route: routeId, ...withKey, why: `${row.id}: ${cur.name !== name ? `rename '${cur.name}' to '${name}'` : ''}${cur.name !== name && cur.scope !== scope ? ' and ' : ''}${cur.scope !== scope ? `move from ${cur.scope} to ${scope} scope` : ''} - add first, read back, then remove the old one` });
     else
-        out.steps.push({ op: 'mcp-replace', name, scope, entry, old: cur.entry, row: row.id, route: routeId, why: `${row.id}: rewrite '${name}' from the registration as read` });
+        out.steps.push({ op: 'mcp-replace', name, scope, entry, old: cur.entry, row: row.id, route: routeId, ...withKey, why: `${row.id}: rewrite '${name}' from the registration as read${staleKey && !edited && !fresh ? ` - writes in the key ${keyName} holds in ${chosen.file}` : ''}` });
     if (fetch) out.steps.push(fetch);
     return undefined;
 }
@@ -412,14 +442,17 @@ function plan(inv, answers, opts = {})
     ctx.roots = resolved.roots;
     out.roots = ctx.roots;
 
+    // the key's name and the settings (spec D9, R4): top-level maps keyed by row id (install) or target key (configure)
+    const keyNames = answers.keyNames || {};
+    const settings = answers.settings || {};
     for (const [rowId, pick] of Object.entries(answers.picks || {}))
     {
         const row = catalog.byId.get(rowId);
         if (!row) { out.errors.push(`unknown tool '${rowId}'`); continue; }
-        if (row.kind === 'mcp') planMcp(row, pick || {}, inv, ctx, catalog, out);
+        if (row.kind === 'mcp') planMcp(row, { ...(pick || {}), keyName: keyNames[rowId], settings: settings[rowId] }, inv, ctx, catalog, out);
         else planPlugin(row, pick || {}, inv, ctx, catalog, out);
     }
-    for (const [key, pick] of Object.entries(answers.change || {})) planChange(key, pick || {}, inv, ctx, catalog, out);
+    for (const [key, pick] of Object.entries(answers.change || {})) planChange(key, { ...(pick || {}), keyName: keyNames[key], settings: settings[key] }, inv, ctx, catalog, out);
     for (const r of answers.remove || []) planRemove(r, inv, catalog, out);
     if (out.hud && answers.hud) out.hud = answers.hud;
     // 'defer': a claude-hud that is not installed yet cannot be checked, so its settings ask follows the install
@@ -474,7 +507,7 @@ function keyLine(k)
     const parts = [`Key: ${k.name} (${k.scope} scope) - ${k.variable}; ${reader}, from ${k.files.join(', then ')}. The key is never printed.`];
     if (k.filled) parts.push('Filled.');
     else if (k.old) parts.push(`${k.variable} is in ${k.old}, which preferred-tools no longer reads: move it to ${k.files[0]}`);
-    else parts.push(`Not filled yet: add ${k.variable}=<your key> to ${k.files[0]}${k.kind === 'helper' ? ' - until then the server connects without its key' : ', then run /preferred-tools:fix'}.`);
+    else parts.push(`Not filled yet: add ${k.variable}=<your key> to ${k.files[0]}${k.kind === 'helper' ? ' - until then the server connects without its key' : ' before the apply, or after it run /preferred-tools:configure and keep the name - it writes the key in'}.`);
     return parts.join(' ');
 }
 
@@ -550,7 +583,7 @@ function main(argv)
         console.log(JSON.stringify(asks.all(inv, picks, catalogLib.load(), { env: process.env, home: account.homeDir(process.env), connectors: args.connectors }), null, 2));
         return 0;
     }
-    const p = plan(inv, read(second), {});
+    const p = plan(inv, read(second), { env: process.env });
     if (args.out) fs.writeFileSync(args.out, JSON.stringify(p, null, 2));
     console.log(render(p));
     return p.errors.length ? 1 : 0;

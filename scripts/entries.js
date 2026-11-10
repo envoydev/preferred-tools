@@ -4,6 +4,7 @@
 // Nothing here reads a machine: the OS, the arch, the home and the project come in through `ctx`.
 const fs = require('node:fs');
 const path = require('node:path');
+const keys = require('./keys.js');
 
 const pathFor = (platform) => (platform === 'win32' ? path.win32 : path.posix);
 const slashes = (p) => p.replace(/\\/g, '/');
@@ -280,6 +281,37 @@ function subst(text, values)
     return String(text).replace(/\{(\w+)\}/g, (m, k) => (k in values ? values[k] : m));
 }
 
+// ---- the server's settings (spec D9) ---------------------------------------------------------------------------------
+
+// appium's SDK homes: resolved on this machine (appium-sdk-env), never a setting
+const APPIUM_SDK_ENV = ['ANDROID_HOME', 'JAVA_HOME'];
+
+// The settings a stdio route's env holds, as [[NAME, value]]: the registration's env when there is one, else the
+// catalog's; the values install resolves (a data folder, an SDK home, the npm cut-off) and the key are not settings.
+function settingsOf(row, routeId, entry = null)
+{
+    const route = row.routes[routeId];
+    const derived = new Set(((row.locations && row.locations.derived) || []).filter((d) => d.in === 'env').map((d) => d.key));
+    const env = (entry ? entry.env : route.env) || {};
+    return Object.entries(env).filter(([k]) => k !== route.tokenVar && !derived.has(k) && !APPIUM_SDK_ENV.includes(k) && k !== 'npm_config_before' && !keys.credentialName(k));
+}
+
+// `pairs` merged into the entry's env; a Docker route also passes each new name into the container (`-e NAME` before
+// the image).
+function mergeSettings(entry, route, pairs)
+{
+    const out = JSON.parse(JSON.stringify(entry));
+    out.env = { ...(out.env || {}), ...pairs };
+    if (out.command === 'docker' && Array.isArray(out.args) && route.image)
+    {
+        const at = out.args.findIndex((a) => typeof a === 'string' && a.startsWith(`${route.image.name}:`));
+        const passed = new Set(out.args.filter((a, i) => out.args[i - 1] === '-e'));
+        const add = Object.keys(pairs).filter((k) => !passed.has(k)).flatMap((k) => ['-e', k]);
+        if (at >= 0 && add.length) out.args.splice(at, 0, ...add);
+    }
+    return out;
+}
+
 // ---- the header helper (spec D4) ------------------------------------------------------------------------------------
 
 // The registration's `headersHelper`: `node <path> <NAME> <SCHEME> [<global root>]`, a path holding a space in double
@@ -437,5 +469,5 @@ module.exports = {
     pathFor, slashes, isWindowsArm, pythonRequest, parseRoot, logicalRoot, currentOf, formatRoot, withSub, homeVar, serenaWindowsHome, serenaSpaceFree, validWindowsSerenaHome,
     defaultRoot, alfredRoot, otherSide, otherPlace, rootOfEntry, applyRoot, buildEntry, nameProblem, subst, fetchStep,
     ALFRED_ENTRIES, alfredData, alfredNameProblem, recommendedSide, rootOf, machinePath, expandVars,
-    helperCommand, helperPathFor, helperGlobalRoot, helperNameOf, helperFor,
+    helperCommand, helperPathFor, helperGlobalRoot, helperNameOf, helperFor, APPIUM_SDK_ENV, settingsOf, mergeSettings,
 };

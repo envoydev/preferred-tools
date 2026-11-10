@@ -32,8 +32,10 @@ const SCOPE_ORDER = ['user', 'project', 'local'];
 // Where a route's key is, by name only (spec D3, D9): { variable, kind, scope, files, found } - or null for a route that
 // takes no key. `variable` is the catalog's default name; `kind` 'helper' for a hosted route (mcp-headers.js reads the
 // hosted chain when Claude Code connects), 'stdio' for a local one (the apply reads the stdio chain); `files` that chain
-// at `scope`; `found` the first file holding, with a value, a name D9 offers ({ file, name }), else null. `ctx.keyHome`,
-// when the ctx has one, decides whether files outside the project are read (null: none); else they are.
+// at `scope`; `names` each name D9 offers that a file there fills, with the first such file ({ name, file }), in chain
+// order; `found` the default name's entry when it is filled, else the first other, else null. `old` the same for the
+// files 0.1.x read (names only). `ctx.keyHome`, when the ctx has one, decides whether files outside the project are
+// read (null: none); else they are.
 function keyStateOf(row, routeId, ctx, alfredEnabled, scope = 'user')
 {
     const route = row.routes && row.routes[routeId];
@@ -49,13 +51,67 @@ function keyStateOf(row, routeId, ctx, alfredEnabled, scope = 'user')
     const readHome = Object.hasOwn(ctx, 'keyHome') ? Boolean(ctx.keyHome) : true;
     const inProject = (f) => { const rel = path.relative(ctx.project, f); return Boolean(rel) && !rel.startsWith('..') && !path.isAbsolute(rel); };
     const word = row.id.toUpperCase().replace(/-/g, '_');
-    let found = null;
-    for (const { file, names } of keys.filledNames(readHome ? files : files.filter(inProject)))
+    const offered = (list) =>
     {
-        const name = names.includes(variable) ? variable : names.find((n) => keys.offeredName(n, variable, word));
-        if (name) { found = { file, name }; break; }
-    }
-    return { variable, kind, scope, files, found };
+        const out = [];
+        for (const { file, names } of keys.filledNames(readHome ? list : list.filter(inProject)))
+            for (const name of names) if (keys.offeredName(name, variable, word) && !out.some((n) => n.name === name)) out.push({ name, file });
+        return out;
+    };
+    const names = offered(files);
+    const found = names.find((n) => n.name === variable) || names[0] || null;
+    const old = offered(keys.oldFiles(ctx.project, ctx.home)).filter((n) => !names.some((c) => c.name === n.name));
+    return { variable, kind, scope, files, names, found, old };
+}
+
+// D9: which name holds a tool's key in .mcps-secrets. Options: the catalog's name, up to two other names found holding
+// the row id (in the chain, then in a file 0.1.x read), and 'A name you choose', asked next. Recommended: `current` (the
+// name the registration uses, for configure), else a name filled in the chain - the default first when both are -
+// else the default. -> { question, answers: { <label as shown>: NAME | 'named' } } | null for a route with no key here.
+function keyNameQuestion(row, routeId, scope, ctx, { current = null } = {})
+{
+    const ks = keyStateOf(row, routeId, ctx, null, scope);
+    if (!ks || (ks.kind === 'stdio' && scope === 'project')) return null;
+    const desc = new Map();
+    for (const n of ks.names) desc.set(n.name, `filled in ${n.file}`);
+    for (const n of ks.old) desc.set(n.name, `in ${n.file} - move it to .mcps-secrets under this name`);
+    if (!desc.has(ks.variable)) desc.set(ks.variable, `the catalog's name - add it to ${ks.files[0]}`);
+    const rec = current || (ks.found ? ks.found.name : ks.variable);
+    if (!desc.has(rec)) desc.set(rec, 'the name it uses now');
+    const others = [...ks.names, ...ks.old].map((n) => n.name).filter((n) => n !== ks.variable && n !== rec).slice(0, 2);
+    const order = [rec, ...[ks.variable, ...others].filter((n) => n !== rec)].slice(0, 3);
+    const opts = [...order.map((n, i) => ({ label: `${n}${i === 0 ? REC : ''}`, description: desc.get(n), value: n })), { label: 'A name you choose', description: 'a name of yours, asked next - its value goes in .mcps-secrets, never in the chat', value: 'named' }];
+    return {
+        question: { id: `keyname-${row.id}`, header: 'Key name', multiSelect: false, question: `Which name holds ${row.label}'s key in .mcps-secrets?`, options: opts.map(({ label, description }) => ({ label, description })) },
+        answers: Object.fromEntries(opts.map((o) => [o.label, o.value])),
+    };
+}
+
+// D9: a stdio route's settings - 'Keep these settings' listing NAME=value, or 'No settings' for an empty env, then
+// 'Change or add a setting', after which the walk asks for NAME=value pairs. `entry`: the registration as read
+// (configure), else the catalog's env. -> { question, answers: { <label>: 'keep' | 'change' } } | null for a hosted route.
+function settingsQuestion(row, routeId, { entry = null } = {})
+{
+    if (routeId === 'remote' || !row.routes[routeId]) return null;
+    const pairs = E.settingsOf(row, routeId, entry);
+    const keep = pairs.length ? { label: `Keep these settings${REC}`, description: pairs.map(([k, v]) => `${k}=${v}`).join(', ') } : { label: `No settings${REC}`, description: "the server's own defaults" };
+    const change = { label: 'Change or add a setting', description: 'NAME=value pairs, asked next - a key goes in .mcps-secrets, never here' };
+    return {
+        question: { id: `settings-${row.id}`, header: 'Settings', multiSelect: false, question: `${row.label}'s settings`, options: [keep, change] },
+        answers: { [keep.label]: 'keep', [change.label]: 'change' },
+    };
+}
+
+// The live registration, read in this process when the env names an account (R1: the inventory file is masked); a
+// caller that passes no env reads none.
+const liveReader = (project, env) => (env && (env.CLAUDE_CONFIG_DIR || env.HOME || env.USERPROFILE) ? (name, scope) => require('./account.js').readRegistration(name, scope, project, env) : () => undefined);
+
+// The key a stdio registration holds, from its first token field: a value, or null for none (empty, ${VAR} only).
+function heldKey(entry, route)
+{
+    const f = keys.tokenFields(entry, route)[0];
+    const v = f ? f.at.reduce((o, k) => (o == null ? undefined : o[k]), entry) : undefined;
+    return typeof v === 'string' && v !== '' && !keys.PLACEHOLDER.test(v) ? v : null;
 }
 
 // local for a local route (its paths and Python are this machine's); for a hosted route, global when it will use a key
@@ -589,7 +645,47 @@ function all(inv, picks, catalog, { env = {}, home = null, connectors = null } =
         };
     }
     out.roots = rootsBlock(inv, picks, catalog, ctx);
+    // D9, asked after the tool's questions: the key's name for each route that can use one, the settings of each stdio one
+    out.keyNames = {};
+    out.settings = {};
+    const live = liveReader(inv.project, env);
+    for (const id of (picks && picks.rows) || [])
+    {
+        const row = catalog.byId.get(id);
+        if (!row || row.kind !== 'mcp') continue;
+        const routeId = routes[id] || row.recommendedRoute;
+        if (!row.routes[routeId]) continue;
+        const scope = scopes[id] || scopeOrder(row, inv, { route: routeId, ctx, copyOf: installedOf(inv, id) })[0];
+        const k = keyNameQuestion(row, routeId, scope, ctx);
+        if (k) out.keyNames[id] = k;
+        const st = settingsQuestion(row, routeId);
+        if (st) out.settings[id] = st;
+    }
+    for (const key of (picks && picks.targets) || [])
+    {
+        const t = targetOf(inv, key);
+        const row = t && t.kind === 'mcp' && t.item.rowId && !t.item.alfredRetired ? catalog.byId.get(t.item.rowId) : null;
+        if (!row) continue;
+        const current = E.currentOf(row, t.item);
+        const routeId = routes[key] || current.route;
+        const route = row.routes[routeId];
+        if (!route) continue;
+        const scope = scopes[key] || current.scope;
+        const same = routeId === current.route;
+        // the name it uses: the helper's argument; for a stdio key, the name whose value equals the key it holds
+        let name = same && route.helper ? current.keyName : null;
+        if (same && !route.helper && route.tokenVar)
+        {
+            const held = heldKey(live(t.item.name, t.item.scope) || {}, route);
+            const ks = keyStateOf(row, routeId, ctx, null, scope);
+            name = held && ks ? keys.nameOfValue([...ks.files, ...keys.oldFiles(ctx.project, ctx.home)], held) : null;
+        }
+        const k = keyNameQuestion(row, routeId, scope, ctx, { current: name });
+        if (k) out.keyNames[key] = k;
+        const st = settingsQuestion(row, routeId, { entry: same ? t.item.entry : null });
+        if (st) out.settings[key] = st;
+    }
     return out;
 }
 
-module.exports = { SCOPE_LABEL, scopeOfLabel, needsRoot, rootFamilies, rootQuestion, REC, recommendedScope, keyStateOf, keyToSend, pickQuestions, changeQuestions, routeQuestion, toolQuestions, toolAsk, scopeQuestion, nameQuestion, locationQuestion, removeQuestions, packed, STATIC, all, chunk, scopesFor };
+module.exports = { keyNameQuestion, settingsQuestion, liveReader, heldKey, SCOPE_LABEL, scopeOfLabel, needsRoot, rootFamilies, rootQuestion, REC, recommendedScope, keyStateOf, keyToSend, pickQuestions, changeQuestions, routeQuestion, toolQuestions, toolAsk, scopeQuestion, nameQuestion, locationQuestion, removeQuestions, packed, STATIC, all, chunk, scopesFor };
