@@ -26,7 +26,7 @@ const scopeText = (s, row, routeId) => (s === 'project' && row.kind === 'mcp' &&
 const SCOPE_ORDER = ['user', 'project', 'local'];
 
 // Where a route's key is, by name only: { variable, set (in this shell), file (the key file holding it, or null), near
-// (other names in those files with the row id in them) } - or null for a route that takes no key. `ctx.keyHome`, when the
+// (other key-shaped names in those files with the row id in them, keys.presence) } - or null for a route that takes no key. `ctx.keyHome`, when the
 // ctx has one, places the home key file (null: none read); else `ctx.home` does.
 function keyStateOf(row, routeId, ctx, alfredEnabled)
 {

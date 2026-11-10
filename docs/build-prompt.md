@@ -203,8 +203,8 @@ chat or a file a command line names (`scripts/kept.js`).
 Keys at project scope (the user's ruling, 2026-11-10, on a report that a project-scope github sent a bare 'Bearer '
 while its key sat in alfred-code's store under another name: 'Add it to plan and make scoring for plan'). Project scope
 reads a key only from the environment Claude Code starts with, never from a key file, so the plan's token line says
-whether the variable is set in this shell, names the key file that holds its name, and names a near-miss - another name
-in those files holding the row's word ('<file> holds ACME_GITHUB_ACCESS_TOKEN, not GITHUB_PERSONAL_ACCESS_TOKEN: add the
+whether the variable is set in this shell, names the key file that holds its name, and names a near-miss - another key-shaped name
+(ending in TOKEN, KEY or PAT, any case) in those files holding the row's word ('<file> holds ACME_GITHUB_ACCESS_TOKEN, not GITHUB_PERSONAL_ACCESS_TOKEN: add the
 key under GITHUB_PERSONAL_ACCESS_TOKEN') - then the three ways on: local scope, user scope, or the variable in the
 account settings.json "env". `keys.presence` reads names only, from plain dotenv files (alfred-code's stores, walking the
 parent folders only where its engine is there), drops every value in-process, and never runs alfred-code's engine,

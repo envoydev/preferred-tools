@@ -278,6 +278,18 @@ test('presence: a name in this folder\'s or a parent\'s .alfred/.secrets, a near
     finally { w.clean(); }
 });
 
+test('presence: a near-miss is a key-shaped name with the row word in any case - not any name that holds the word', () => {
+    const w = world();
+    try
+    {
+        const proj = path.join(w.dir, 'p');
+        put(path.join(proj, '.preferred-tools', '.secrets'), dotenv({ GITHUB_WEBHOOK_SECRET: val(), GITHUB_CLIENT_ID: val(), github_token: val(), MY_GITHUB_PAT: val(), GITHUB_API_KEY: val() }));
+        const near = keys.presence(proj, 'local', [{ name: G, word: 'GITHUB' }], { ...opts(w, false), home: null }).near[G].map((n) => n.name);
+        assert.deepStrictEqual(near, ['github_token', 'MY_GITHUB_PAT', 'GITHUB_API_KEY']);
+    }
+    finally { w.clean(); }
+});
+
 test('presence follows the scope: user reads the home file first; project reads the local list; alfred-code off reads preferred-tools\' files', () => {
     const w = world();
     try

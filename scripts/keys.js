@@ -150,9 +150,12 @@ function plainFilesFor(project, scope, { env = process.env, alfredEnabled = fals
 }
 
 // presence(project, scope, [{ name, word }], opts) -> { files, found: { NAME: file | null }, near: { NAME: [{ name, file }] } }
-// Which file holds each name with a value (the first, as the apply reads them), and the other names in those files that
-// contain `word` (the row id: GITHUB, SENTRY, CONTEXT7) - a key kept under a name the catalog does not use. Names and
-// paths only: every value is dropped here.
+// Which file holds each name with a value (the first, as the apply reads them), and the other key-shaped names in those
+// files (ending in TOKEN, KEY or PAT, in any case) that contain `word` (the row id: GITHUB, SENTRY, CONTEXT7) - a key kept
+// under a name the catalog does not use; a webhook secret or a client id is not one. Names and paths only: every value
+// is dropped here.
+const KEY_SHAPED = /(?:TOKEN|KEY|PAT)$/;
+const nearMiss = (n, name, word) => n !== name && Boolean(word) && n.toUpperCase().includes(word) && KEY_SHAPED.test(n.toUpperCase());
 function presence(project, scope, wants, opts = {})
 {
     const files = plainFilesFor(project, scope, opts);
@@ -163,7 +166,7 @@ function presence(project, scope, wants, opts = {})
     {
         const at = names.find((f) => f.names.includes(name));
         found[name] = at ? at.file : null;
-        near[name] = names.flatMap((f) => f.names.filter((n) => n !== name && word && n.includes(word)).map((n) => ({ name: n, file: f.file })));
+        near[name] = names.flatMap((f) => f.names.filter((n) => nearMiss(n, name, word)).map((n) => ({ name: n, file: f.file })));
     }
     return { files, found, near };
 }
