@@ -784,3 +784,15 @@ test('expandVars: ${NAME} from the environment, ${NAME:-fallback} when unset, nu
     assert.strictEqual(C.expandVars('${MISSING}\\x', {}), null);
     assert.strictEqual(C.expandVars('plain', {}), 'plain');
 });
+
+test('one ${VAR} expander, Claude Code\'s rule (2.1.322): a variable set to empty is empty, the fallback only when unset - fix and fetch agree', () => {
+    const C = require('../scripts/fixes/common.js');
+    const fetch = require('../scripts/fetch.js');
+    assert.strictEqual(E.expandVars('${B:-C:\\b}', { B: '' }).value, '');
+    assert.deepStrictEqual(E.expandVars('${A}/${MISSING}', { A: 'a' }), { value: 'a/${MISSING}', unset: ['MISSING'] });
+    assert.strictEqual(C.expandVars('${B:-C:\\b}', { B: '' }), '', 'set to empty: no fallback');
+    assert.strictEqual(C.expandVars('${A}', { A: '' }), '', 'set to empty: set');
+    assert.strictEqual(C.firstUnset('${A}', { A: '' }), null);
+    assert.strictEqual(fetch.expand('${B:-x}', { B: '' }), C.expandVars('${B:-x}', { B: '' }));
+    assert.strictEqual(fetch.expand('${B:-x}', {}), 'x');
+});

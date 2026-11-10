@@ -145,6 +145,10 @@ only if published on or before 2026-10-28. Every other pin is unchanged.
 - Variable expansion in `.mcp.json` - CONFIRMED. Syntax `${VAR}` and `${VAR:-default}`, in `command`, `args`, `env`,
   `url`, `headers`. An unset variable with no default loads as the literal `${VAR}` text. MEASURED: `add-json` stores
   `${HOME}`, `${FOO:-bar}`, `${TOK}` literally, in `.mcp.json` and in the account file.
+  A variable set to empty - READ in the CLI's own expander (Claude Code 2.1.322, the native binary, 2026-11-10): a
+  variable that is set gives its value, an empty one included, and `${VAR:-default}` takes the default only when VAR is
+  unset. `scripts/entries.js` `expandVars` follows it, for fix and fetch alike. The same expander reads Claude Code's
+  own credential variables (its API key, OAuth token, OTEL settings, base URLs) as empty toward a server.
   `CLAUDE_PROJECT_DIR` is set in the spawned server's environment, not Claude Code's, so referencing it in a project
   `.mcp.json` `command` or `args` needs `${CLAUDE_PROJECT_DIR:-.}`. The page does not say `${CLAUDE_PLUGIN_ROOT}`
   expands in a project `.mcp.json` (it is documented for plugin-provided servers only); the design rejects that route

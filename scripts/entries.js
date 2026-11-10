@@ -40,6 +40,22 @@ function parseRoot(text, ctx)
 
 const homeVar = (platform) => (platform === 'win32' ? '${USERPROFILE}' : '${HOME}');
 
+// ${NAME} and ${NAME:-fallback} in an MCP entry, as Claude Code expands them (2.1.322, read from its own expander): a
+// variable that is set gives its value, an empty one included; the fallback is used only when it is unset; an unset
+// ${NAME} with no fallback stays as written and is named. -> { value, unset: [NAME] }
+function expandVars(text, env)
+{
+    const unset = [];
+    const value = String(text).replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g, (m, name, fallback) =>
+    {
+        if (typeof env[name] === 'string') return env[name];
+        if (fallback !== undefined) return fallback;
+        unset.push(name);
+        return m;
+    });
+    return { value, unset };
+}
+
 // The string written into the registration at a scope. `project` scope (the committed .mcp.json) gets relative paths and
 // ${VAR} only; `local` and `user` get absolute paths, with `~` expanded here, never left for the server. `backslash`:
 // serena's home on Windows, whose SERENA_HOME must be in backslashes even as ${USERPROFILE}\.serena.
@@ -326,5 +342,5 @@ function fetchOf(name, entry, rowId)
 module.exports = {
     pathFor, slashes, isWindowsArm, pythonRequest, parseRoot, formatRoot, withSub, homeVar, serenaWindowsHome, validWindowsSerenaHome,
     defaultRoot, alfredRoot, otherSide, otherPlace, rootOfEntry, applyRoot, buildEntry, nameProblem, subst, fetchStep,
-    ALFRED_ENTRIES, alfredData, alfredNameProblem, recommendedSide, machinePath,
+    ALFRED_ENTRIES, alfredData, alfredNameProblem, recommendedSide, machinePath, expandVars,
 };

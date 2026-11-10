@@ -9,6 +9,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { launchTokens, bareName } = require('../inventory.js');
+const E = require('../entries.js');
 
 const fixOf = (ctx, id) => ctx.catalog.fixes.find((f) => f.id === id);
 const rowOf = (ctx, id) => ctx.catalog.byId.get(id);
@@ -22,21 +23,10 @@ const routeOf = (ctx, reg) => rowOf(ctx, reg.rowId).routes[reg.route];
 const launcher = (entry) => path.basename(launchTokens(entry).command).replace(/\.(exe|cmd)$/i, '');
 const launchArgs = (entry) => launchTokens(entry).args;
 
-// A committed value's ${NAME} and ${NAME:-fallback} read against an environment, as Claude Code expands .mcp.json from
-// the one it starts with. -> the expanded text, or null when a ${NAME} with no fallback is unset (`unset` names it).
-function expandVars(text, env)
-{
-    let unset = null;
-    const out = String(text).replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g, (m, name, fallback) =>
-    {
-        if (env[name]) return env[name];
-        if (fallback !== undefined) return fallback;
-        unset = unset || name;
-        return m;
-    });
-    return unset ? null : out;
-}
-const firstUnset = (text, env) => { const m = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/.exec(String(text).replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (x, n) => (env[n] ? '' : x))); return m ? m[1] : null; };
+// A committed value read against an environment, as Claude Code expands .mcp.json from the one it starts with
+// (entries.js expandVars). -> the expanded text, or null when a ${NAME} with no fallback is unset (`firstUnset` names it).
+const expandVars = (text, env) => { const r = E.expandVars(text, env); return r.unset.length ? null : r.value; };
+const firstUnset = (text, env) => E.expandVars(text, env).unset[0] || null;
 
 const finding = (fixId, reg, what, extra = {}) => ({ id: fixId, row: reg.rowId, name: reg.name, scope: reg.scope, found: what, ...extra });
 const clone = (value) => JSON.parse(JSON.stringify(value));

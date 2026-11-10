@@ -23,13 +23,14 @@ const cli = require('./claude-cli.js');
 const account = require('./account.js');
 const kept = require('./kept.js');
 const tmpdir = require('./tmpdir.js');
+const E = require('./entries.js');
 const { blockingStdio } = require('./json-file.js');
 
 const VERSION = 1;
 const START_MS = 600000;
 const INIT = { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'preferred-tools', version: '0' } } };
-// ${VAR} and ${VAR:-default}, as Claude Code expands them in an MCP entry
-const expand = (s, env) => String(s).replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g, (_, k, d) => (env[k] !== undefined ? env[k] : d || ''));
+// ${VAR} and ${VAR:-default}, as Claude Code expands them in an MCP entry (entries.js expandVars)
+const expand = (s, env) => E.expandVars(s, env).value;
 // the first ${VAR} with no default that is not set: a start without it only fails
 const unsetVar = (entry, env) => [...JSON.stringify([entry.command, entry.args || [], entry.env || {}]).matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g)].map((m) => m[1]).find((k) => env[k] === undefined) || null;
 
