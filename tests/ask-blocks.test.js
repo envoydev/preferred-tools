@@ -62,3 +62,9 @@ test('the walks write the one location left (`only`) and make no call for an emp
         assert.match(text, /When it is empty, make no call/, `${file} skips an empty call`);
     }
 });
+
+test("install maps both API key answers: 'No key' is written, since 'Use ${VAR}' is the default when a key is found", () => {
+    const text = fs.readFileSync(path.join(__dirname, '..', 'commands', 'install.md'), 'utf8');
+    const row = text.split('\n').find((l) => l.startsWith('| API key'));
+    assert.ok(row && row.includes("'No key'") && row.includes('"token": false'), row);
+});

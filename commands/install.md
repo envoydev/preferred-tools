@@ -101,7 +101,7 @@ project is never offered, so this adds only: nothing installed is changed.
 | location | `"location":` the entry `tools.<id>.answers` gives for the label picked |
 | location Other, or 'Another ...folder' | `"location": {"side": "path", "path": "<typed>"}` |
 | browser 'A browser binary I name' | `"executablePath": "<typed>"` |
-| API key 'Use `${VAR}`' | `"token": true` (the reference only) |
+| API key 'Use `${VAR}`' / 'No key', when it is not first | `"token": true` / `"token": false` |
 | host Other | `"params": {"host": "<typed>"}` |
 
 Skip a key the user left at its default; the plan reads a missing key as the recommendation.
