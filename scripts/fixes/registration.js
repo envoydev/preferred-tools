@@ -27,6 +27,9 @@ function serenaWindowsHomeDetect(ctx)
     return eachReg(ctx, 'serena-windows-home', (reg) =>
     {
         const value = (reg.entry.env || {}).SERENA_HOME;
+        // none set (a registration made by hand): serena's default home is <profile>\.serena, cut at a space in the
+        // profile path like any other; the space-free folder install offers takes its place
+        if (value === undefined) return unsetSerenaHome(reg, ctx);
         if (typeof value !== 'string' || E.validWindowsSerenaHome(value)) return null;
         // the committed file names the home through the environment (${USERPROFILE}\.serena): read it as a session would
         if (reg.scope === 'project')
@@ -51,6 +54,16 @@ function serenaWindowsHomeDetect(ctx)
         if (fresh.root) return C.finding('serena-windows-home', reg, what, { proposal: { SERENA_HOME: fresh.root.path }, note: `a new home, ${fresh.root.path} - serena's data in '${value}' is not moved and its language servers download again (~327MB)` });
         return C.finding('serena-windows-home', reg, what, { input: { id: 'serenaHome', prompt: fresh.needsInput } });
     });
+}
+
+function unsetSerenaHome(reg, ctx)
+{
+    const profile = ctx.home || '';
+    if (!/\s/.test(profile)) return null;
+    const what = `no SERENA_HOME: serena's default home, ${path.win32.join(profile, '.serena')}, has a space`;
+    if (reg.scope === 'project') return C.finding('serena-windows-home', reg, what, { blocked: `the committed .mcp.json takes no machine path, and no \${USERPROFILE} path is space-free here - move it to local (/preferred-tools:configure, Scope), which takes a space-free folder` });
+    const free = E.serenaSpaceFree(ctx).path;
+    return C.finding('serena-windows-home', reg, what, { proposal: { SERENA_HOME: free }, note: `a new home, ${free} - serena's data in ${path.win32.join(profile, '.serena')} is not moved and its language servers download again (~327MB)` });
 }
 
 function serenaWindowsHomeFix(entry, f, ctx, input = {})

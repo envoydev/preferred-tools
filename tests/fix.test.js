@@ -121,6 +121,27 @@ test('serena-windows-home: slashes keep the folder, a space needs another one, a
     assert.deepStrictEqual(detect(ctxFor({ platform: 'win32', registrations: [reg('serena', { command: 'uvx', args: ['--python', '3.13'], env: { SERENA_USAGE_REPORTING: 'false' } })] })).found, []);
 });
 
+test('serena-windows-home: no SERENA_HOME is serena\'s default <profile>\\.serena - found on a profile with a space, never on one without', () =>
+{
+    const homes = (ctx) => detect(ctx).found.filter((f) => f.id === 'serena-windows-home');
+    // a registration made by hand, as alfred-code's guide writes it: no SERENA_HOME
+    const bare = (scope = 'local') => reg('serena', { command: 'uvx', args: ['--python', '3.13'], env: { SERENA_USAGE_REPORTING: 'false' } }, { scope });
+    assert.deepStrictEqual(homes(ctxFor({ platform: 'win32', home: 'C:\\Users\\dev', registrations: [bare()] })), [], 'a space-free profile: the default home works');
+    // a profile with a space: the space-free folder install offers in its place (E.serenaSpaceFree)
+    const spaced = ctxFor({ platform: 'win32', home: 'C:\\Users\\Jo Doe', env: { SystemDrive: 'D:' }, registrations: [bare()] });
+    const [f] = homes(spaced);
+    assert.ok(f, 'found');
+    assert.match(f.found, /no SERENA_HOME/);
+    assert.ok(f.found.includes('C:\\Users\\Jo Doe\\.serena'), f.found);
+    assert.deepStrictEqual(f.proposal, { SERENA_HOME: 'D:\\serena-home' });
+    assert.match(f.note, /not moved/);
+    assert.deepStrictEqual(F.serenaWindowsHomeFix(bare().entry, f, spaced).env, { SERENA_USAGE_REPORTING: 'false', SERENA_HOME: 'D:\\serena-home' });
+    // project scope: the committed file takes no machine path - named, never applied
+    const [p] = homes(ctxFor({ platform: 'win32', home: 'C:\\Users\\Jo Doe', registrations: [bare('project')] }));
+    assert.match(p.blocked, /move it to local/);
+    assert.deepStrictEqual(homes(ctxFor({ platform: 'darwin', home: '/Users/Jo Doe', registrations: [bare()] })), [], 'not Windows');
+});
+
 // ---- uvx-python / windows-arm-python --------------------------------------------------------------------------------
 
 test('uvx-python: a uvx server with no --python gets the row\'s minor first, its pin and cut-off untouched', () =>

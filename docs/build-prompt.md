@@ -222,7 +222,8 @@ Windows control are offered only on their own OS; pinned packages carry the depe
 <date>` for uvx, `npm_config_before` for npx), as in `original-mcps.json`. Serena on Windows gets two more, so the
 user's own example is never installed broken:
 
-- `SERENA_HOME` absolute, in backslashes and space-free (fix row `serena-windows-home`).
+- `SERENA_HOME` absolute, in backslashes and space-free (fix row `serena-windows-home`; with none set, serena's default
+  `<profile>\.serena` must be space-free too, so a registration made by hand on a profile path with a space is found).
 - The TypeScript shim patch (fix row `serena-windows-ts-shim`). Right after registering serena, apply pre-warms it
   with the exact registered spec (`uvx --python <p> --exclude-newer <d> --from serena-agent@<pin> serena --help`), so
   uv has fetched the package, then applies the patch.
