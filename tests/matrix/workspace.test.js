@@ -7,8 +7,9 @@
 //   W2  alfred-code solo, root and child: the same steps, a pasted key moved by configure, a server of the user's own,
 //       and every file alfred-code wrote left as it was
 //   W3  a subfolder session: the project file and the local key land where Claude Code puts them (M4)
-//   W4  key files: the key written in from the file the scope reads, ${VAR} at project scope, token-sync after a change,
-//       and a near-miss name in a parent's store named by the plan
+//   W4  keys: the project root and its ignores, a stdio key written in from .mcps-secrets, github's helper at local and
+//       project scope against a stub, token-sync, a 0.1.x header moved by key-to-helper; with alfred-code, the .alfred
+//       root, and a key left in a 0.1.x store named by the plan and never read
 //   W5  a root's project-scope tool in alfred-code's folder: inherited by the child, its ignores in a child and a
 //       subfolder (data-folder-ignore), and the environment a server starts with
 //
@@ -26,6 +27,8 @@ const account = require('../../scripts/account.js');
 const asks = require('../../scripts/asks.js');
 const catalogLib = require('../../scripts/catalog.js');
 const fix = require('../../scripts/fix.js');
+const roots = require('../../scripts/roots.js');
+const fake = require('../fake-mcp-http.js');
 const { Harness, hashTree } = require('../harness.js');
 const { buildAlfred } = require('../probes/alfred-workspace.js');
 
@@ -99,8 +102,28 @@ const alfredWorld = () =>
     if (!alfred) alfred = buildAlfred(path.join(root, 'w2'), { version: '3.2.1', workspace: true });
     return alfred;
 };
-// every file alfred-code wrote into a folder: its .claude/ and .alfred/ trees
-const alfredTrees = (dir) => ({ claude: hashTree(path.join(dir, '.claude')), alfred: hashTree(path.join(dir, '.alfred')) });
+// every file alfred-code wrote into a folder: its .claude/ and .alfred/ trees, without the files preferred-tools puts in
+// an .alfred root (spec D2: the key file, the helper, the record), which alfred-code never wrote
+const PT_FILES = new Set([roots.FILES.secrets, roots.FILES.helper, roots.FILES.record]);
+function alfredOwn(dir)
+{
+    const h = crypto.createHash('sha256');
+    const walk = (d, top) =>
+    {
+        let entries;
+        try { entries = fs.readdirSync(d, { withFileTypes: true }).sort((x, y) => x.name.localeCompare(y.name)); } catch { h.update(`missing:${d}`); return; }
+        for (const e of entries)
+        {
+            if (top && PT_FILES.has(e.name)) continue;
+            const f = path.join(d, e.name);
+            if (e.isDirectory()) { h.update(`d:${e.name}`); walk(f, false); }
+            else { h.update(`f:${e.name}:`); h.update(fs.readFileSync(f)); }
+        }
+    };
+    walk(path.join(dir, '.alfred'), true);
+    return h.digest('hex');
+}
+const alfredTrees = (dir) => ({ claude: hashTree(path.join(dir, '.claude')), alfred: alfredOwn(dir) });
 
 test('W2 - alfred-code solo, root and child: the W1 steps, a pasted key moved by configure, an own server left alone', T, (t) =>
 {
@@ -163,80 +186,127 @@ test('W3 - a subfolder session: the project file and the local key land where Cl
 
 // ---- W4 ---------------------------------------------------------------------------------------------------------------
 
-test('W4 - key files without alfred-code: written in at local scope, ${VAR} at project scope, token-sync after a change', T, () =>
+// A hosted registration that reads its key through the helper: a headersHelper, no Authorization header, no ${VAR}, and
+// not the key - looked for by its random tail, which JSON leaves unescaped
+function helperOnly(entry, key)
+{
+    assert.ok(entry && typeof entry.headersHelper === 'string', `a headersHelper: ${JSON.stringify(entry)}`);
+    assert.ok(!Object.keys(entry.headers || {}).some((k) => k.toLowerCase() === 'authorization'), 'no Authorization header');
+    const text = JSON.stringify(entry);
+    assert.ok(!text.includes('${'), 'no ${VAR}');
+    assert.ok(!text.includes(key.split('-').pop()), 'no key');
+}
+
+test('W4 - keys without alfred-code: the root and its ignores, a stdio key written in, the helper at local and project scope, token-sync, a 0.1.x header moved to the helper', T, async () =>
 {
     const h = new Harness({ root: path.join(root, 'w4') });
+    fs.writeFileSync(path.join(h.account, 'settings.json'), JSON.stringify({ enableAllProjectMcpServers: true }));
     const ws = gitDir(path.join(h.projects, 'ws'));
     const api = gitDir(path.join(ws, 'api'));
+    fake.trust(h, api);
     const [s1, s2, g] = [keyValue('s1'), keyValue('s2'), keyValue('g')];
-    const file = path.join(api, '.preferred-tools', '.secrets');
-    putKeys(file, { [S]: s1, [G]: g });
-    const sentry = h.run(api, { picks: { sentry: { route: 'local', scope: 'local' } } });
-    noErrors(sentry);
-    ok(sentry);
-    assert.strictEqual(localOf(h, api).sentry.env[S], s1, 'the value from .preferred-tools/.secrets');
-    assert.strictEqual(fs.readFileSync(path.join(api, '.preferred-tools', '.gitignore'), 'utf8'), '*\n');
-    assert.strictEqual(spawnSync('git', ['check-ignore', '-q', '.preferred-tools/.secrets'], { cwd: api }).status, 0, 'git reports it ignored');
+    const s = await fake.stub({ expected: `Bearer ${g}` });
+    const catalog = fake.stubCatalog(s.port);
+    const texts = [];
+    const run = (answers) => { const r = h.run(api, answers, { catalog }); texts.push(r.text, r.rendered); noErrors(r); ok(r); return r; };
+    try
+    {
+        // github's hosted route at local scope makes the project root: its .gitignore keeps the key file out of git and
+        // lets the helper in
+        run({ picks: { github: { route: 'remote', scope: 'local' } } });
+        const ptRoot = path.join(api, '.preferred-tools');
+        const secrets = path.join(ptRoot, roots.FILES.secrets);
+        assert.strictEqual(fs.readFileSync(path.join(ptRoot, '.gitignore'), 'utf8'), roots.GITIGNORE);
+        const ignored = (f) => spawnSync('git', ['check-ignore', '-q', `.preferred-tools/${f}`], { cwd: api }).status === 0;
+        assert.strictEqual(ignored(roots.FILES.secrets), true, 'git ignores the key file');
+        assert.strictEqual(ignored(roots.FILES.helper), false, 'and not the helper');
+        helperOnly(localOf(h, api).github, g);
+        fake.fill(secrets, S, s1);
+        fake.fill(secrets, G, g);
+        assert.strictEqual((await fake.authOnGet(s, api, 'github', h.env)).auth, 'expected', 'local scope: the helper sends the key');
 
-    const proj = h.run(api, { picks: { github: { route: 'remote', scope: 'project' } } });
-    ok(proj);
-    assert.strictEqual(readJson(path.join(api, '.mcp.json')).mcpServers.github.headers.Authorization, `Bearer \${${G}}`);
-    ok(h.run(api, { remove: [{ kind: 'mcp', name: 'github', scope: 'project' }] }));
-    const local = h.run(api, { picks: { github: { route: 'remote', scope: 'local' } } });
-    ok(local);
-    assert.strictEqual(localOf(h, api).github.headers.Authorization, `Bearer ${g}`, 'filled at local scope');
-    const move = h.run(api, { change: { 'mcp:github~local': { scope: 'project' } } });
-    noErrors(move);
-    ok(move);
-    assert.strictEqual(readJson(path.join(api, '.mcp.json')).mcpServers.github.headers.Authorization, `Bearer \${${G}}`, 'the move to project scope writes the variable');
-    assert.ok(!fs.readFileSync(path.join(api, '.mcp.json'), 'utf8').includes(g));
+        // a stdio key is written in at local scope, from the project root's .mcps-secrets
+        run({ picks: { sentry: { route: 'local', scope: 'local' } } });
+        assert.strictEqual(localOf(h, api).sentry.env[S], s1, 'the value from .preferred-tools/.mcps-secrets');
 
-    putKeys(file, { [S]: s2, [G]: g });
-    const ctx = () => fix.makeCtx({ inv: h.inventory(api), env: h.env });
-    assert.ok(fix.detectAll(ctx()).found.some((f) => f.id === 'token-sync' && f.name === 'sentry' && !f.blocked), 'token-sync names it');
-    const lines = [];
-    const res = fix.applyFixes(ctx(), ['token-sync'], { tmp: path.join(h.root, 'tmp', 'fix'), log: (...a) => lines.push(a.join(' ')) });
-    assert.strictEqual(res.failed, null, lines.join('\n'));
-    assert.strictEqual(localOf(h, api).sentry.env[S], s2, 'the new value written');
-    for (const v of [s1, s2, g]) assert.ok(![sentry.text, local.text, move.text, lines.join('\n')].join('\n').includes(v), 'no value printed');
-    noValueInTmp(h, [s1, s2, g]);
+        // the move to project scope keeps the helper: the committed file holds no key and no ${VAR}
+        run({ change: { 'mcp:github~local': { scope: 'project' } } });
+        helperOnly(readJson(path.join(api, '.mcp.json')).mcpServers.github, g);
+        assert.ok(!fs.readFileSync(path.join(api, '.mcp.json'), 'utf8').includes(g.split('-').pop()));
+        assert.strictEqual((await fake.authOnGet(s, api, 'github', h.env)).auth, 'expected', 'project scope: the helper sends the key');
+
+        // token-sync: a changed stdio value is written in
+        fake.fill(secrets, S, s2);
+        const ctx = () => fix.makeCtx({ inv: h.inventory(api, { catalog }), catalog, env: h.env, data: h.data });
+        assert.ok(fix.detectAll(ctx()).found.some((f) => f.id === 'token-sync' && f.name === 'sentry' && !f.blocked), 'token-sync names it');
+        const lines = [];
+        const log = (...a) => lines.push(a.join(' '));
+        let res = fix.applyFixes(ctx(), ['token-sync'], { tmp: path.join(h.root, 'tmp', 'fix'), log });
+        assert.strictEqual(res.failed, null, lines.join('\n'));
+        assert.strictEqual(localOf(h, api).sentry.env[S], s2, 'the new value written');
+
+        // a 0.1.x registration - a ${VAR} in its Authorization header - moved to the helper by key-to-helper
+        run({ remove: [{ kind: 'mcp', name: 'github', scope: 'project' }] });
+        const was = { type: 'http', url: catalog.byId.get('github').routes.remote.url, headers: { Authorization: `Bearer \${${G}}` } };
+        assert.strictEqual(h.claude(api, ['mcp', 'add-json', 'github', JSON.stringify(was), '-s', 'project']).status, 0);
+        const found = fix.detectAll(ctx()).found.filter((f) => f.id === 'key-to-helper');
+        assert.deepStrictEqual(found.map((f) => [f.name, f.scope, f.keyName, f.blocked || null]), [['github', 'project', G, null]]);
+        res = fix.applyFixes(ctx(), ['key-to-helper'], { tmp: path.join(h.root, 'tmp', 'fix'), log });
+        assert.strictEqual(res.failed, null, lines.join('\n'));
+        helperOnly(readJson(path.join(api, '.mcp.json')).mcpServers.github, g);
+        assert.strictEqual((await fake.authOnGet(s, api, 'github', h.env)).auth, 'expected', 'moved: the stub sees the key');
+
+        for (const v of [s1, s2, g]) assert.ok(![...texts, ...lines].join('\n').includes(v), 'no value printed');
+        noValueInTmp(h, [s1, s2, g]);
+    }
+    finally { await s.close(); }
 });
 
-test('W4 - key files with alfred-code: the child reads its parent\'s store; v2.9.0 reads .alfred/.sensitive-data', T, (t) =>
+test('W4 - keys with alfred-code: the root is .alfred, a key left in a 0.1.x store is named and never read, alfred-code\'s .gitignore kept', T, async (t) =>
 {
     const b = alfredWorld();
     if (b.notRun) return t.skip(`NOT RUN - ${b.notRun}`);
     if (b.workspaceNotRun) return t.skip(`NOT RUN - workspace: ${b.workspaceNotRun}`);
     const h = b.harness;
-    const s = keyValue('ws');
-    const tg = keyValue('tg');
-    const store = path.join(b.root, '.alfred', '.secrets');
-    putKeys(store, { [S]: s, ACME_GITHUB_ACCESS_TOKEN: tg });
+    const ignore = (d) => sha(path.join(d, '.alfred', '.gitignore'));
+    const ignores = [ignore(b.root), ignore(b.child)];
+    const [sv, tg, near] = [keyValue('ws'), keyValue('tg'), keyValue('near')];
+
+    // the child's root is its .alfred: a stdio key written in from .alfred/.mcps-secrets
+    fake.fill(path.join(b.child, '.alfred', roots.FILES.secrets), S, sv);
     const r = h.run(b.child, { picks: { sentry: { route: 'local', scope: 'local', name: 'sentry-keys' } } });
     noErrors(r);
     ok(r);
-    assert.strictEqual(localOf(h, b.child)['sentry-keys'].env[S], s, "the workspace parent's store, through alfred-code's own chain");
-    assert.ok(!fs.existsSync(path.join(b.child, '.preferred-tools')), 'no preferred-tools key file named or made');
-    noValueInTmp(h, [s]);
+    assert.strictEqual(localOf(h, b.child)['sentry-keys'].env[S], sv, "the child's .alfred/.mcps-secrets");
+    assert.ok(!fs.existsSync(path.join(b.child, '.preferred-tools')), 'no .preferred-tools root made');
+    noValueInTmp(h, [sv]);
 
-    // the near-miss: the root's store holds the GitHub key under another name, and project scope reads no key file
-    const gh = h.run(b.root, { picks: { github: { route: 'remote', scope: 'project' } } });
-    noErrors(gh);
-    ok(gh);
-    assert.ok(gh.rendered.includes(`reads \${${G}} from the environment Claude Code starts with - NOT set in this shell.`), gh.rendered);
-    assert.ok(gh.rendered.includes(`${store} holds ACME_GITHUB_ACCESS_TOKEN, not ${G}: add the key under ${G}.`), gh.rendered);
-    assert.ok(![gh.rendered, gh.text, JSON.stringify(gh.plan)].join('\n').includes(tg), 'no value printed');
-    noValueInTmp(h, [s, tg]);
-    ok(h.run(b.root, { remove: [{ kind: 'mcp', name: 'github', scope: 'project' }] }));
-
-    const old = buildAlfred(path.join(root, 'w4-old'), { version: '2.9.0' });
-    if (old.notRun) return t.diagnostic(`NOT RUN - v2.9.0: ${old.notRun}`);
-    const o = keyValue('old');
-    putKeys(path.join(old.solo, '.alfred', '.sensitive-data'), { [S]: o });
-    const r2 = old.harness.run(old.solo, { picks: { sentry: { route: 'local', scope: 'local' } } });
-    ok(r2);
-    assert.strictEqual(localOf(old.harness, old.solo).sentry.env[S], o, 'the older store name, read with no engine');
-    noValueInTmp(old.harness, [o]);
+    // a key left only in the root's 0.1.x store, alfred-code's own key file: the key-name ask offers the near-miss name
+    // from it, the plan's line names the file, and the helper never reads it
+    const store = path.join(b.root, '.alfred', '.secrets');
+    putKeys(store, { [G]: tg, ACME_GITHUB_ACCESS_TOKEN: near });
+    const s = await fake.stub({ expected: `Bearer ${tg}` });
+    const catalog = fake.stubCatalog(s.port);
+    try
+    {
+        const q = asks.all(h.inventory(b.root, { catalog }), { rows: ['github'], routes: { github: 'remote' }, scopes: { github: 'local' } }, catalog, { env: h.env, home: h.home });
+        const opts = q.keyNames.github.question.options;
+        assert.ok(opts.some((o) => o.label === 'ACME_GITHUB_ACCESS_TOKEN' && o.description === `in ${store} - move it to .mcps-secrets under this name`), JSON.stringify(opts));
+        const gh = h.run(b.root, { picks: { github: { route: 'remote', scope: 'local' } } }, { catalog });
+        noErrors(gh);
+        ok(gh);
+        const secrets = path.join(b.root, '.alfred', roots.FILES.secrets);
+        assert.ok(gh.rendered.includes(`${G} is in ${store}, which preferred-tools no longer reads: move it to ${secrets}`), gh.rendered);
+        helperOnly(localOf(h, b.root).github, tg);
+        fake.trust(h, b.root);
+        assert.strictEqual((await fake.authOnGet(s, b.root, 'github', h.env)).auth, 'none', 'the 0.1.x store is never read for a value');
+        assert.ok(![gh.rendered, gh.text, JSON.stringify(gh.plan), JSON.stringify(q)].join('\n').includes(tg.split('-').pop()), 'no value printed');
+        assert.ok(![gh.rendered, gh.text, JSON.stringify(q)].join('\n').includes(near.split('-').pop()), 'no value printed');
+        noValueInTmp(h, [sv, tg, near]);
+        ok(h.run(b.root, { remove: [{ kind: 'mcp', name: 'github', scope: 'local' }] }, { catalog }));
+    }
+    finally { await s.close(); }
+    assert.deepStrictEqual([ignore(b.root), ignore(b.child)], ignores, "alfred-code's .alfred/.gitignore is left as it wrote it");
 });
 
 // ---- W5 ---------------------------------------------------------------------------------------------------------------

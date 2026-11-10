@@ -18,6 +18,8 @@ const { spawn, spawnSync } = require('node:child_process');
 const cli = require('../../scripts/claude-cli.js');
 const catalogLib = require('../../scripts/catalog.js');
 const { plan } = require('../../scripts/plan.js');
+const roots = require('../../scripts/roots.js');
+const { fill } = require('../fake-mcp-http.js');
 const { Harness } = require('../harness.js');
 const { TOKEN_VARS: TOKENS } = require('../helpers.js');
 
@@ -100,7 +102,9 @@ for (const c of LOCAL)
         if (!row.os.includes(process.platform)) return t.skip(`NOT RUN: ${c.row} is offered on ${row.os.join(', ')}, this is ${process.platform}`);
         const missing = c.needs.filter((b) => !which(b));
         if (missing.length) return t.skip(`NOT RUN: ${missing.join(', ')} not on PATH`);
-        if (c.token && !process.env[c.token]) return t.skip(`NOT RUN: the route needs \${${c.token}}, which is not set (a real token; none is written by this plugin)`);
+        if (c.token && !process.env[c.token]) return t.skip(`NOT RUN: the route needs ${c.token}, which this shell does not set (a real token; the plugin writes none)`);
+        // the shell's token goes where 0.2.0 reads a stdio key: the throwaway global root's .mcps-secrets, removed with the world
+        if (c.token) fill(path.join(h.home, '.preferred-tools', roots.FILES.secrets), c.token, process.env[c.token]);
 
         const p = h.project(`start-${c.row}`);
         const name = `start-${c.row}`;

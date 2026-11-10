@@ -15,6 +15,7 @@ const { spawnSync } = require('node:child_process');
 const cli = require('../../scripts/claude-cli.js');
 const account = require('../../scripts/account.js');
 const catalog = require('../../scripts/catalog.js').load();
+const keys = require('../../scripts/keys.js');
 const { Harness } = require('../harness.js');
 const spec = require('./fresh-answers.json');
 
@@ -23,14 +24,19 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pt-fresh-'));
 test.after(() => fs.rmSync(root, { recursive: true, force: true }));
 
 const h = new Harness({ root });
-// fake token values, built at run time; every case runs with them in the environment, and the last test searches every
-// config file for them
+// fake key values, built at run time, in the throwaway global root's .mcps-secrets - the one file 0.2.0 reads a key from
+// (spec D3): it serves Global scope and comes second in the Local chain. A local route's key is written into its
+// registration at Local and Global scope (D5); the last test searches every other config file for the values.
 const FAKE = {
     GITHUB_PERSONAL_ACCESS_TOKEN: ['fake', 'github', 'value', 'a1b2c3d4e5f6'].join('-'),
     SENTRY_ACCESS_TOKEN: ['fake', 'sentry', 'value', 'a1b2c3d4e5f6'].join('-'),
     CONTEXT7_API_KEY: ['fake', 'context7', 'value', 'a1b2c3d4e5f6'].join('-'),
 };
-Object.assign(h.env, FAKE);
+const globalRoot = path.join(h.home, '.preferred-tools');
+fs.mkdirSync(globalRoot, { recursive: true });
+fs.writeFileSync(path.join(globalRoot, keys.SECRETS), Object.entries(FAKE).map(([k, v]) => `${k}=${v}\n`).join(''));
+// the registrations a key was written into: { scope, name, project }
+const writtenIn = [];
 
 const NETWORK = /could not resolve|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|network|clone|fetch|timed out|ECONNREFUSED/i;
 
@@ -53,12 +59,16 @@ for (const c of spec.cases)
             const got = inv.registrations.find((x) => x.rowId === c.row && x.scope === c.expect.scope && x.route === c.expect.route);
             assert.ok(got, `${c.row}: no ${c.expect.route}-route registration at ${c.expect.scope} scope read back\n${r.text}`);
             assert.strictEqual(got.name, step.name);
-            assert.deepStrictEqual(got.entry, step.entry, 'what the CLI stored is what the plan built');
+            // a local route's key, written in by the apply from .mcps-secrets (D5); a hosted route's entry holds none
+            const route = catalog.byId.get(c.row).routes[step.route];
+            const want = step.key ? keys.fillKeys(step.entry, catalog.byId.get(c.row), step.route, step.scope, { [route.tokenVar]: FAKE[step.key.name] }) : step.entry;
+            if (step.key) writtenIn.push({ scope: step.scope, name: step.name, project });
+            assert.deepStrictEqual(got.entry, want, 'what the CLI stored is what the plan built, with the key written in');
             // read from the file that scope lives in, not from the inventory alone
             const stored = c.expect.scope === 'project'
                 ? JSON.parse(fs.readFileSync(path.join(project, '.mcp.json'), 'utf8')).mcpServers
                 : (c.expect.scope === 'user' ? account.readAccount(h.env, project).user : account.readAccount(h.env, project).local);
-            assert.deepStrictEqual(stored[step.name], step.entry);
+            assert.deepStrictEqual(stored[step.name], want);
             if (c.expect.files)
             {
                 // the data folder: in the project, or on Windows for a row whose home must be absolute
@@ -102,16 +112,29 @@ function hudAfterInstall(project, r, c)
     assert.match(again.stdout, /^hud-check: statusLine=current missing=13 differs=0 match=0$/m, 'the statusLine is current; the 13 keys are still the walk\'s to offer');
 }
 
-test('no config file holds a token value, and the real account is untouched', { skip: skipAll }, () =>
+test('no config file holds a key value outside a local route written in at Local or Global scope, and the real account is untouched', { skip: skipAll }, () =>
 {
-    const files = [path.join(h.account, '.claude.json'), path.join(h.account, 'settings.json')];
+    const accountFile = path.join(h.account, '.claude.json');
+    const files = [accountFile, path.join(h.account, 'settings.json')];
     for (const f of h.files()) if (/(^|[\\/])\.mcp\.json$|[\\/]\.claude[\\/]settings(\.local)?\.json$/.test(f)) files.push(f);
     let scanned = 0;
     for (const f of files)
     {
         if (!fs.existsSync(f)) continue;
         scanned++;
-        const text = fs.readFileSync(f, 'utf8');
+        let text = fs.readFileSync(f, 'utf8');
+        if (f === accountFile)
+        {
+            // the registrations a key was written into, as D5 says, are taken out; nothing else may hold a value
+            const doc = JSON.parse(text);
+            for (const w of writtenIn)
+            {
+                const servers = w.scope === 'user' ? doc.mcpServers : account.projectEntry(doc.projects, w.project).mcpServers;
+                assert.ok(Object.values(FAKE).some((v) => JSON.stringify(servers[w.name]).includes(v)), `${w.name} (${w.scope}) holds its key`);
+                delete servers[w.name];
+            }
+            text = JSON.stringify(doc);
+        }
         for (const [name, value] of Object.entries(FAKE)) assert.ok(!text.includes(value), `${name}'s value is in ${f}`);
     }
     assert.ok(scanned >= 3, `${scanned} files scanned`);

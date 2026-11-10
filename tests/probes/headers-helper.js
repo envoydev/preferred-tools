@@ -23,8 +23,8 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const http = require('node:http');
-const { execFile, spawnSync } = require('node:child_process');
+const { spawnSync } = require('node:child_process');
+const fake = require('../fake-mcp-http.js');
 
 const FAKE = ['probe', 'fake', 'value', '123'].join('-');
 const EXPECTED = `Bearer ${FAKE}`;
@@ -71,43 +71,6 @@ else
 }
 `;
 
-// The stub: answers initialize and tools/list, records each request.
-function stub()
-{
-    const seen = [];
-    const server = http.createServer((req, res) =>
-    {
-        let body = '';
-        req.on('data', (d) => (body += d));
-        req.on('end', () =>
-        {
-            let m = {};
-            try { m = JSON.parse(body); }
-            catch { /* not JSON */ }
-            const a = req.headers.authorization;
-            seen.push({ path: req.url, rpc: m.method || null, auth: a === undefined ? 'none' : a === EXPECTED ? 'expected' : 'other' });
-            if (req.method !== 'POST') { res.writeHead(404); return res.end(); }
-            if (m.method && m.id === undefined) { res.writeHead(202); return res.end(); }
-            let result = {};
-            if (m.method === 'initialize') result = { protocolVersion: (m.params && m.params.protocolVersion) || '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'probe', version: '0.0.1' } };
-            if (m.method === 'tools/list') result = { tools: [] };
-            res.writeHead(200, { 'content-type': 'application/json' });
-            res.end(JSON.stringify({ jsonrpc: '2.0', id: m.id, result }));
-        });
-    });
-    return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port, seen })));
-}
-
-// `claude` without blocking this process, so the stub can answer while it runs
-function claude(cwd, argv, env)
-{
-    return new Promise((resolve) =>
-    {
-        execFile('claude', argv, { cwd, env, encoding: 'utf8', timeout: 90000 }, (err, stdout, stderr) =>
-            resolve({ status: err ? (typeof err.code === 'number' ? err.code : 1) : 0, out: `${stdout || ''}${stderr || ''}` }));
-    });
-}
-
 const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
 const writeJson = (f, v) => fs.writeFileSync(f, JSON.stringify(v, null, 2));
 
@@ -139,7 +102,7 @@ async function main()
     writeJson(path.join(account, 'settings.json'), { enableAllProjectMcpServers: true });
     const setTrust = (dir, on) => { const doc = readJson(acctFile); doc.projects = doc.projects || {}; doc.projects[dir] = { ...(doc.projects[dir] || {}), hasTrustDialogAccepted: on }; writeJson(acctFile, doc); };
 
-    const { server, port, seen } = await stub();
+    const { server, port, seen } = await fake.stub({ expected: EXPECTED });
     const url = (p) => `http://127.0.0.1:${port}/${p}`;
     const abs = path.join(proj, '.preferred-tools', 'mcp-headers.js');
     const quoted = abs.includes(' ') ? `"${abs}"` : abs;
@@ -156,7 +119,7 @@ async function main()
     {
         for (const r of regs)
         {
-            const res = await claude(r.cwd, ['mcp', 'add-json', r.name, JSON.stringify(r.entry), '-s', r.scope], env);
+            const res = await fake.claude(r.cwd, ['mcp', 'add-json', r.name, JSON.stringify(r.entry), '-s', r.scope], env);
             if (res.status !== 0) console.log(`add ${r.name} -s ${r.scope}: exit ${res.status} - ${res.out.split('\n')[0]}`);
         }
         // stored: read back what the CLI wrote
@@ -178,7 +141,7 @@ async function main()
         {
             const s0 = seen.length;
             const h0 = runs(dir).length;
-            const res = await claude(cwd, ['mcp', 'get', name], env);
+            const res = await fake.claude(cwd, ['mcp', 'get', name], env);
             const init = seen.slice(s0).find((x) => x.rpc === 'initialize');
             const status = (res.out.split('\n').find((l) => /Status:/.test(l)) || '').trim();
             return { auth: init ? init.auth : 'no request', status, runs: runs(dir).slice(h0).filter((x) => x.server === name) };

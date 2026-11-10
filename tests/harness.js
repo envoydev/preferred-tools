@@ -70,7 +70,9 @@ class Harness
         this.home = path.join(this.root, 'home');
         this.account = path.join(this.root, 'account');
         this.projects = path.join(this.root, 'projects');
-        for (const d of [this.home, this.account, this.projects]) fs.mkdirSync(d, { recursive: true });
+        // the plugin's data folder, as ${CLAUDE_PLUGIN_DATA}: the roots map lives here
+        this.data = path.join(this.root, 'data');
+        for (const d of [this.home, this.account, this.projects, this.data]) fs.mkdirSync(d, { recursive: true });
         this.env = { ...process.env, HOME: this.home, USERPROFILE: this.home, CLAUDE_CONFIG_DIR: this.account };
         for (const k of Object.keys(this.env)) if (k.startsWith('FAKE_CLAUDE') || k.startsWith('FAKE_RUNTIME')) delete this.env[k];
         // the key variables come from a case itself, never from the shell running the matrix (the plan's defaults read them)
@@ -98,19 +100,20 @@ class Harness
 
     claude(project, args) { return cli.run(args, { cwd: project, env: this.env }); }
 
-    inventory(project) { return inventory.buildInventory({ project, env: this.env }); }
+    // `catalog`: a case's own copy (a hosted route pointed at a stub), used by the inventory's matching as by the plan
+    inventory(project, { catalog } = {}) { return inventory.buildInventory({ project, env: this.env, data: this.data, ...(catalog ? { catalog } : {}) }); }
 
     // inventory -> plan -> apply, in-process, against the real CLI in the throwaway world. The plan reads the inventory
     // as inventory.js writes it - every credential value kept - so the apply puts each one back from the registration it
     // reads, as the commands do.
-    run(project, answers, { planOpts = {}, tmp } = {})
+    run(project, answers, { planOpts = {}, tmp, catalog } = {})
     {
-        const inv = inventory.keptOf(this.inventory(project));
-        const p = plan(inv, answers, { home: this.home, env: this.env, ...planOpts });
+        const inv = inventory.keptOf(this.inventory(project, { catalog }));
+        const p = plan(inv, answers, { home: this.home, env: this.env, ...(catalog ? { catalog } : {}), ...planOpts });
         const lines = [];
         const report = p.errors.length
             ? { applied: [], failed: null, notRun: [], readback: [], noop: false, skipped: true }
-            : apply(p, { env: this.env, tmp: tmp || path.join(this.root, 'tmp'), log: (...a) => lines.push(a.join(' ')) });
+            : apply(p, { env: this.env, tmp: tmp || path.join(this.root, 'tmp'), data: this.data, log: (...a) => lines.push(a.join(' ')) });
         return { inv, plan: p, report, text: lines.join('\n'), rendered: render(p) };
     }
 
