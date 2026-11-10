@@ -120,7 +120,7 @@ test('routes: context7, github and sentry each build both ways; the others have 
     const c7r = addStep(plan(inv(MAC), pickOne('context7', { route: 'remote' }), opts('/h'))).entry;
     assert.deepStrictEqual(c7r, { type: 'http', url: 'https://mcp.context7.com/mcp' });
     const c7k = addStep(plan(inv(MAC), pickOne('context7', { route: 'remote', token: true }), opts('/h'))).entry;
-    assert.deepStrictEqual(c7k.headers, { Authorization: 'Bearer ${CONTEXT7_API_KEY}' });
+    assert.deepStrictEqual(c7k, { type: 'http', url: 'https://mcp.context7.com/mcp', headersHelper: 'node .preferred-tools/mcp-headers.js CONTEXT7_API_KEY Bearer' });
     const c7l = addStep(plan(inv(MAC), pickOne('context7', { route: 'local', token: true }), opts('/h'))).entry;
     assert.deepStrictEqual(c7l.args, ['-y', '@upstash/context7-mcp@4.5.0', '--api-key', '${CONTEXT7_API_KEY}']);
     const gh = addStep(plan(inv(MAC), pickOne('github', { route: 'local' }), opts('/h'))).entry;
@@ -129,7 +129,7 @@ test('routes: context7, github and sentry each build both ways; the others have 
     const ghb = addStep(plan(inv(MAC), pickOne('github', { route: 'local' }), opts('/h', { machine: { docker: false } }))).entry;
     assert.deepStrictEqual([ghb.command, ghb.args], ['github-mcp-server', ['stdio']]);
     const ghr = addStep(plan(inv(MAC), pickOne('github', { route: 'remote' }), opts('/h'))).entry;
-    assert.deepStrictEqual(ghr.headers, { Authorization: 'Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN}' });
+    assert.deepStrictEqual(ghr, { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headersHelper: 'node /h/.preferred-tools/mcp-headers.js GITHUB_PERSONAL_ACCESS_TOKEN Bearer' });
     const sr = addStep(plan(inv(MAC), pickOne('sentry', { route: 'remote' }), opts('/h'))).entry;
     assert.deepStrictEqual(sr, { type: 'http', url: 'https://mcp.sentry.dev/mcp' });
     const sl = addStep(plan(inv(MAC), pickOne('sentry', { route: 'local' }), opts('/h'))).entry;
@@ -141,24 +141,20 @@ test('routes: context7, github and sentry each build both ways; the others have 
     assert.strictEqual(addStep(plan(inv(MAC), pickOne('atlassian'), opts('/h'))).entry.url, 'https://mcp.atlassian.com/v2/mcp');
 });
 
-test('a token route registers the ${VAR} and the plan says whether it is set; no token value is ever in the plan', () => {
+test('a keyed route\'s plan line names the files its reader takes and whether the name is filled; no key value is ever in the plan', () => {
     const fake = ['gh', 'p_', 'FAKE0123456789abcdefFAKE0123456789'].join('');
+    // the shell's variable plays no part (spec D5): the helper reads .mcps-secrets, so a value set here moves no scope
     const p = plan(inv(MAC), pickOne('github', { route: 'remote' }), opts('/h', { env: { GITHUB_PERSONAL_ACCESS_TOKEN: fake } }));
-    assert.deepStrictEqual(p.tokens, [{ row: 'github', name: 'github', variable: 'GITHUB_PERSONAL_ACCESS_TOKEN', scope: 'project', set: true, files: [path.join('/work/shop', '.preferred-tools', '.secrets'), path.join('/h', '.preferred-tools', '.secrets')], found: null, near: [] }]);
+    assert.strictEqual(addStep(p).scope, 'user');
+    const files = [path.join('/h', '.preferred-tools', '.mcps-secrets'), path.join('/h', '.alfred', '.mcps-secrets')];
+    assert.deepStrictEqual(p.keys, [{ row: 'github', name: 'github', scope: 'user', variable: 'GITHUB_PERSONAL_ACCESS_TOKEN', kind: 'helper', files, filled: false, old: null }]);
     assert.ok(!JSON.stringify(p).includes(fake));
     assert.ok(!render(p).includes(fake));
-    assert.match(render(p), /GITHUB_PERSONAL_ACCESS_TOKEN\} from the environment Claude Code starts with - set in this shell\. A Claude Code started from the dock/);
-    // not set here and in no key file: local scope, which writes the key in from a key file once there is one
-    const unset = plan(inv(MAC), pickOne('github', { route: 'remote' }), opts('/h'));
-    assert.strictEqual(addStep(unset).scope, 'local');
-    assert.match(render(unset), /In none of them\./);
-    assert.doesNotMatch(render(unset), /NOT set here/);
+    assert.ok(render(p).includes(`Not filled yet: add GITHUB_PERSONAL_ACCESS_TOKEN=<your key> to ${files[0]} - until then the server connects without its key.`), render(p));
 });
 
 const G = 'GITHUB_PERSONAL_ACCESS_TOKEN';
-const S = 'SENTRY_ACCESS_TOKEN';
 // a key file of the test world's, written by name: the value is a fake that the assertions check never leaks
-const KEY_FILE = ['.preferred-tools', ['.', 'secrets'].join('')];
 const ALFRED_STORE = ['.alfred', ['.', 'secrets'].join('')];
 function putKeys(dir, parts, lines)
 {
@@ -169,120 +165,61 @@ function putKeys(dir, parts, lines)
     return file;
 }
 
-test('a hosted token route: project when its variable is set in this shell, else local; a local token route stays local', () => {
-    const scopeOf = (id, route, env) => addStep(plan(inv(MAC), pickOne(id, { route }), opts('/Users/me', { env }))).scope;
-    assert.strictEqual(scopeOf('github', 'remote', { [G]: 'x' }), 'project');
-    assert.strictEqual(scopeOf('github', 'remote', {}), 'local');
-    assert.strictEqual(scopeOf('github', 'local', { [G]: 'x' }), 'local');
-    assert.strictEqual(scopeOf('sentry', 'local', { [S]: 'x' }), 'local');
-    assert.strictEqual(scopeOf('sentry', 'remote', {}), 'project', 'an OAuth route is unchanged');
-});
-
-test('context7 hosted: set - project with the key; in a key file only - local with the key; neither - project, no key', () => {
-    const { world } = require('./helpers.js');
-    const w = world();
-    try
-    {
-        putKeys(w.project, KEY_FILE, ['CONTEXT7_API_KEY=v-not-printed']);
-        const step = (env, project) => addStep(plan(inv({ ...MAC, project }), pickOne('context7', { route: 'remote' }), opts(w.home, { env })));
-        const set = step({ CONTEXT7_API_KEY: 'x' }, '/work/shop');
-        assert.deepStrictEqual([set.scope, Boolean(set.entry.headers)], ['project', true]);
-        const filed = step({}, w.project);
-        assert.deepStrictEqual([filed.scope, Boolean(filed.entry.headers)], ['local', true]);
-        const neither = step({}, '/work/shop');
-        assert.deepStrictEqual([neither.scope, neither.entry.headers], ['project', undefined]);
-        // the questions recommend the same: scope first, then 'Use ${CONTEXT7_API_KEY}' when there is a key to send
-        const ctx = { project: w.project, platform: 'darwin', home: w.home, env: {} };
-        const qs = asks.toolQuestions(catalog.byId.get('context7'), inv({ ...MAC, project: w.project }), { route: 'remote', ctx, catalog });
-        assert.strictEqual(qs.find((q) => q.id === 'scope-context7').options[0].label, 'Local (Recommended)');
-        assert.strictEqual(qs.find((q) => q.id === 'token-context7').options[0].label, 'Use ${CONTEXT7_API_KEY} (Recommended)');
-    }
-    finally { w.clean(); }
-});
-
-test('context7 at project scope with the key only in a key file: no key by default, and the plan says where the key is', () => {
-    const { world } = require('./helpers.js');
-    const w = world();
-    try
-    {
-        const file = putKeys(w.project, KEY_FILE, ['CONTEXT7_API_KEY=v-not-printed']);
-        const at = (env, pick = {}) => plan(inv({ ...MAC, project: w.project }), pickOne('context7', { route: 'remote', scope: 'project', ...pick }), opts(w.home, { env }));
-        const filed = at({});
-        assert.strictEqual(addStep(filed).entry.headers, undefined, 'project scope reads no key file: a ${VAR} there is an empty Bearer');
-        assert.ok(filed.notes.some((n) => n.includes(file) && /no API key/.test(n)), filed.notes.join('\n'));
-        assert.ok(addStep(at({ CONTEXT7_API_KEY: 'x' })).entry.headers, 'set in this shell: sent');
-        assert.ok(addStep(at({}, { token: true })).entry.headers, 'picked: sent, and the token line says NOT set');
-        assert.strictEqual(asks.keyToSend({ set: false, file }, 'project'), false);
-        assert.strictEqual(asks.keyToSend({ set: false, file }, 'local'), true);
-        // the option names what each scope does with the key, since the scope is answered in the same call
-        const qs = asks.toolQuestions(catalog.byId.get('context7'), inv({ ...MAC, project: w.project }), { route: 'remote', ctx: { project: w.project, platform: 'darwin', home: w.home, env: {} }, catalog });
-        const use = qs.find((q) => q.id === 'token-context7').options.find((o) => o.label.startsWith('Use'));
-        assert.doesNotMatch(use.description, /never written/);
-        assert.match(use.description, /project scope keeps .*local and user scope write the key in/);
-    }
-    finally { w.clean(); }
-});
-
-test('the token line names where the name is, the near-miss, the three ways to reach the children, and no value', () => {
+test('the key line names an old file holding the name, never a near name\'s file or any value', () => {
     const { world } = require('./helpers.js');
     const w = world();
     try
     {
         const fakeValue = `v-${Date.now()}-not-printed`;
         const store = putKeys(w.project, ALFRED_STORE, [`ACME_GITHUB_ACCESS_TOKEN=${fakeValue}`]);
-        const at = () => plan(inv({ ...MAC, project: w.project }, { alfredCodeEnabled: true }), pickOne('github', { route: 'remote', scope: 'project' }), opts(w.home));
-        const text = render(at());
-        assert.match(text, /NOT set in this shell\. It is in none of the key files/);
-        assert.match(text, /holds ACME_GITHUB_ACCESS_TOKEN, not GITHUB_PERSONAL_ACCESS_TOKEN: add the key under GITHUB_PERSONAL_ACCESS_TOKEN/);
-        assert.match(text, /serves only this folder/);
-        assert.match(text, /settings\.json "env" and keep one project-scope entry/);
-        assert.ok(!text.includes(fakeValue));
+        const at = () => plan(inv({ ...MAC, os: process.platform, project: w.project }, { alfredCodeEnabled: true }), pickOne('github', { route: 'remote', scope: 'project' }), { home: w.home, env: {} });
+        const missing = at();
+        const file = path.join(missing.roots.project, '.mcps-secrets');
+        assert.deepStrictEqual([missing.keys[0].filled, missing.keys[0].old], [false, null], 'a near name is the name question\'s to offer, not an old file to move');
+        assert.ok(render(missing).includes(`Not filled yet: add ${G}=<your key> to ${file}`), render(missing));
         putKeys(w.project, ALFRED_STORE, [`${G}=${fakeValue}`]);
-        const found = render(at());
-        assert.ok(found.includes(`Its name is in ${store}, which project scope does not read.`), found);
-        assert.doesNotMatch(found, /holds ACME_GITHUB_ACCESS_TOKEN/, 'a near-miss is named only while the key is missing');
-        assert.ok(!found.includes(fakeValue));
+        const found = at();
+        assert.strictEqual(found.keys[0].old, store);
+        assert.ok(render(found).includes(`${G} is in ${store}, which preferred-tools no longer reads: move it to ${file}`), render(found));
+        for (const p of [missing, found]) assert.ok(!render(p).includes(fakeValue) && !JSON.stringify(p).includes(fakeValue));
     }
     finally { w.clean(); }
 });
 
-test('the token line names the files it looked in: at project scope when the key is in none, at local scope the same walk it found the key by', () => {
+test('the key line names the chain its reader takes; a workspace child finds an old key in a parent\'s alfred-code store by name only', () => {
     const fs = require('node:fs');
     const { world } = require('./helpers.js');
     const w = world();
     try
     {
-        // project scope, the key nowhere: the sentence names the files local scope would read
-        const none = plan(inv(MAC), pickOne('github', { route: 'remote', scope: 'project' }), opts('/h'));
         const P = (...a) => path.join(...a);
-        assert.ok(render(none).includes(`It is in none of the key files local scope would read either: ${P('/work/shop', '.preferred-tools', '.secrets')}, ${P('/h', '.preferred-tools', '.secrets')}.`), render(none));
-        // a workspace child with alfred-code's engine: the key in the parent's store is found by the walk, and the line
-        // names that walk, never this folder's store alone beside a 'Found in' from another
         const child = P(w.project, 'api');
-        const engine = P(child, '.claude', 'hooks', 'secret-chain.js');
-        fs.mkdirSync(path.dirname(engine), { recursive: true });
-        fs.writeFileSync(engine, '');
+        fs.mkdirSync(child, { recursive: true });
         const parentStore = putKeys(w.project, ALFRED_STORE, [`${G}=v-not-printed`]);
-        const local = plan(inv({ ...MAC, project: child }, { alfredCodeEnabled: true }), pickOne('github', { route: 'remote', scope: 'local' }), opts(w.home));
-        const t = local.tokens[0];
-        assert.strictEqual(t.found, parentStore);
-        assert.ok(t.files.includes(parentStore), JSON.stringify(t.files));
-        assert.ok(render(local).includes(`from ${P(child, '.alfred', '.secrets')}, then ${parentStore}`), render(local));
+        const local = plan(inv({ ...MAC, os: process.platform, project: child }, { alfredCodeEnabled: true }), pickOne('github', { route: 'remote', scope: 'local' }), { home: w.home, env: {} });
+        const k = local.keys[0];
+        assert.deepStrictEqual(k.files, [P(child, '.preferred-tools', '.mcps-secrets'), P(w.home, '.preferred-tools', '.mcps-secrets'), P(w.home, '.alfred', '.mcps-secrets')]);
+        assert.deepStrictEqual([k.filled, k.old], [false, parentStore]);
+        assert.ok(render(local).includes(`from ${k.files.join(', then ')}`), render(local));
+        assert.ok(!render(local).includes('v-not-printed'));
     }
     finally { w.clean(); }
 });
 
-test('at local and user scope the token note names the key files the apply reads, in order, and never a value', () => {
-    const local = plan(inv(MAC), pickOne('github', { route: 'remote', scope: 'local' }), opts('/h'));
+test('at local and global scope the key line names the files its reader takes, in order, and never a value', () => {
     const P = (...a) => path.join(...a);
-    assert.deepStrictEqual(local.tokens[0].files, [P('/work/shop', '.preferred-tools', '.secrets'), P('/h', '.preferred-tools', '.secrets')]);
-    assert.ok(render(local).includes(`Token: github (local scope) - the apply writes GITHUB_PERSONAL_ACCESS_TOKEN into the registration from ${P('/work/shop', '.preferred-tools', '.secrets')}, then ${P('/h', '.preferred-tools', '.secrets')}; a key in none of them stays \${GITHUB_PERSONAL_ACCESS_TOKEN}.`));
-    assert.strictEqual(local.steps[0].op, 'ensure-ignore');
+    const local = plan(inv(MAC), pickOne('github', { route: 'remote', scope: 'local' }), opts('/h'));
+    assert.deepStrictEqual(local.keys[0].files, [P('/work/shop', '.preferred-tools', '.mcps-secrets'), P('/h', '.preferred-tools', '.mcps-secrets'), P('/h', '.alfred', '.mcps-secrets')]);
+    assert.ok(render(local).includes(`Key: github (local scope) - ${G}; mcp-headers.js reads it each time Claude Code connects, from ${local.keys[0].files.join(', then ')}. The key is never printed.`), render(local));
+    assert.ok(!local.steps.some((s) => s.op === 'ensure-ignore'), 'the root\'s own .gitignore keeps .mcps-secrets out of git');
     assert.strictEqual(addStep(local).route, 'remote', 'the route id, never the route object');
     assert.ok(!JSON.stringify(local.steps).includes('"auth"'));
     const user = plan(inv(MAC), pickOne('github', { route: 'remote', scope: 'user' }), opts('/h'));
-    assert.deepStrictEqual(user.tokens[0].files, [P('/h', '.preferred-tools', '.secrets')]);
-    assert.ok(!user.steps.some((s) => s.op === 'ensure-ignore'));
+    assert.deepStrictEqual(user.keys[0].files, [P('/h', '.preferred-tools', '.mcps-secrets'), P('/h', '.alfred', '.mcps-secrets')]);
+    // a stdio route: the apply writes the key in from the stdio chain - the project root's file, then the global root's
+    const docker = plan(inv(MAC), pickOne('github', { route: 'local', scope: 'local' }), opts('/h'));
+    assert.deepStrictEqual([docker.keys[0].kind, docker.keys[0].files], ['stdio', [P('/work/shop', '.preferred-tools', '.mcps-secrets'), P('/h', '.preferred-tools', '.mcps-secrets')]]);
+    assert.match(render(docker), /the apply writes it into the registration, from /);
 });
 
 test('scopes: local and user write absolute paths with ~ expanded; project scope takes the account folder until a row is proven relative', () => {
@@ -346,17 +283,22 @@ test('project scope (a row measured safe): relative paths and ${VAR} only, never
     for (const e of [rel, mem, memWin, home]) assert.ok(!/\/Users\/|C:\\/.test(JSON.stringify(e)), JSON.stringify(e));
 });
 
-test('remote routes may sit at project scope', () => {
-    for (const id of ['context7', 'gitlab', 'atlassian', 'sentry'])
+test('hosted routes may sit at project scope; a stdio route that needs a key may not', () => {
+    for (const id of ['context7', 'github', 'gitlab', 'atlassian', 'sentry'])
     {
         const p = plan(inv(MAC), pickOne(id, { route: 'remote', scope: 'project' }), opts('/h'));
         assert.deepStrictEqual(p.errors, [], id);
         assert.strictEqual(addStep(p).scope, 'project');
     }
-    const local = plan(inv(MAC), pickOne('sentry', { route: 'local', scope: 'project' }), opts('/h'));
-    assert.deepStrictEqual(local.errors, []);
-    assert.strictEqual(addStep(local).scope, 'project');
-    assert.ok(JSON.stringify(addStep(local).entry).includes('${SENTRY_ACCESS_TOKEN}'), 'the committed entry keeps the reference');
+    for (const id of ['github', 'sentry'])
+    {
+        const p = plan(inv(MAC), pickOne(id, { route: 'local', scope: 'project' }), opts('/h'));
+        assert.match(p.errors.join(), /not offered at project scope - the committed \.mcp\.json carries no key/, id);
+        assert.deepStrictEqual(p.steps, [], id);
+    }
+    const c7 = plan(inv(MAC), pickOne('context7', { route: 'local', scope: 'project' }), opts('/h'));
+    assert.deepStrictEqual(c7.errors, []);
+    assert.ok(!JSON.stringify(addStep(c7).entry).includes('${'), 'keyless: the committed entry holds no reference');
 });
 
 test('locations: the plugin\'s own folder by default, even with alfred-code data on disk; memory defaults to the account folder', () => {
@@ -503,10 +445,10 @@ test('a scope change moves the registration and rewrites its paths for the new s
     assert.strictEqual(e.args[e.args.indexOf('--user-data-dir') + 1], '.preferred-tools/playwright-chrome', 'absolute inside the project becomes relative');
 });
 
-test('changing the route rebuilds from the catalog; changing only the key adds the header to the entry as read', () => {
+test('changing the route rebuilds from the catalog; changing only the key adds the helper to the entry as read', () => {
     const r = installed('context7', { route: 'remote' });
     const key = plan(inv(MAC, { registrations: [r] }), changeOf(r, { token: true }), opts('/h'));
-    assert.deepStrictEqual(key.steps[0].entry.headers, { Authorization: 'Bearer ${CONTEXT7_API_KEY}' });
+    assert.deepStrictEqual(key.steps[0].entry, { type: 'http', url: 'https://mcp.context7.com/mcp', headersHelper: 'node .preferred-tools/mcp-headers.js CONTEXT7_API_KEY Bearer' });
     assert.strictEqual(key.steps[0].op, 'mcp-replace');
     // remote at project scope becomes local there: the local launch replaces it in the committed file
     const toLocal = plan(inv(MAC, { registrations: [r] }), changeOf(r, { route: 'local' }), opts('/h'));
@@ -829,11 +771,12 @@ test('the scope question follows the route: its recommended scope first, then us
     assert.deepStrictEqual(scopes('typescript-lsp'), ['project', 'user', 'local']);
 });
 
-test('plan.js plans every route at project scope', () => {
+test('plan.js plans every route at project scope but a stdio route that needs a key (spec D5)', () => {
     for (const row of catalog.tools.filter((r) => r.kind === 'mcp'))
         for (const routeId of Object.keys(row.routes))
         {
             const p = plan(inv(row.os.includes('win32') && !row.os.includes('darwin') ? WIN : MAC), pickOne(row.id, { route: routeId, scope: 'project' }), opts('/h'));
+            if (routeId === 'local' && row.routes.local.auth === 'token') { assert.match(p.errors.join(), /not offered at project scope/, `${row.id}/${routeId}`); continue; }
             assert.deepStrictEqual(p.errors, [], `${row.id}/${routeId}`);
             assert.strictEqual(addStep(p).scope, 'project', `${row.id}/${routeId}`);
         }
@@ -1530,4 +1473,154 @@ test('an .alfred project root refuses a registration named after one of alfred-c
     assert.match(fileThere.errors.join(), /\.alfred\/shop-pw exists and is not a folder/);
     const elsewhere = plan(inv(MAC, { alfredCodeEnabled: true }), { picks: { memory: { name: 'state', scope: 'local' } }, roots: { project: { id: 'preferred-tools' } } }, o);
     assert.deepStrictEqual(elsewhere.errors, [], 'another project root takes the name');
+});
+
+// ---- 0.2.0: hosted keys through the header helper; D5's routes and scopes -----------------------------------------
+const SECRETS_FILE = require('../scripts/roots.js').FILES.secrets;
+const helperOf = (p, id) => { const s = p.steps.find((x) => x.op === 'mcp-add' && x.row === id); return s ? s.entry.headersHelper : undefined; };
+
+test('D5: each keyed route at each scope', () => {
+    const o = opts('/Users/me');
+    const at = (id, pick) => plan(inv(MAC), pickOne(id, pick), o);
+    for (const scope of ['project', 'local', 'user'])
+    {
+        // github hosted: required - the helper at every scope
+        assert.match(helperOf(at('github', { route: 'remote', scope }), 'github'), /mcp-headers\.js GITHUB_PERSONAL_ACCESS_TOKEN Bearer$/, scope);
+        // context7 hosted: the helper when picked, else none
+        assert.match(helperOf(at('context7', { route: 'remote', scope, token: true }), 'context7'), /mcp-headers\.js CONTEXT7_API_KEY Bearer$/, scope);
+        assert.strictEqual(helperOf(at('context7', { route: 'remote', scope, token: false }), 'context7'), undefined, scope);
+        // sentry hosted: OAuth, or the helper with Sentry-Bearer
+        const oauth = at('sentry', { route: 'remote', scope, token: false });
+        assert.deepStrictEqual([helperOf(oauth, 'sentry'), oauth.oauth.map((x) => x.row)], [undefined, ['sentry']], scope);
+        assert.match(helperOf(at('sentry', { route: 'remote', scope, token: true }), 'sentry'), /mcp-headers\.js SENTRY_ACCESS_TOKEN Sentry-Bearer$/, scope);
+        // gitlab and atlassian hosted: OAuth, unchanged
+        for (const id of ['gitlab', 'atlassian'])
+        {
+            const p = at(id, { scope });
+            assert.deepStrictEqual([p.errors, helperOf(p, id), p.oauth.map((x) => x.row)], [[], undefined, [id]], `${id} ${scope}`);
+        }
+    }
+    // github Docker and sentry npm: not offered at project scope, written in at local and global scope
+    for (const [id, route] of [['github', 'local'], ['sentry', 'local']])
+    {
+        assert.match(at(id, { route, scope: 'project' }).errors.join(), /not offered at project scope/, id);
+        for (const scope of ['local', 'user'])
+        {
+            const p = at(id, { route, scope });
+            assert.deepStrictEqual(p.errors, [], `${id} ${scope}`);
+            assert.strictEqual(p.keys[0].kind, 'stdio');
+        }
+    }
+    // context7 npm: keyless only at project scope, written in when picked at local and global scope
+    assert.ok(!addStep(at('context7', { route: 'local', scope: 'project' })).entry.args.includes('--api-key'));
+    assert.match(at('context7', { route: 'local', scope: 'project', token: true }).errors.join(), /keyless at project scope/);
+    for (const scope of ['local', 'user']) assert.ok(addStep(at('context7', { route: 'local', scope, token: true })).entry.args.includes('--api-key'), scope);
+});
+
+test('the helper command per scope', () => {
+    const E = require('../scripts/entries.js');
+    assert.strictEqual(E.helperCommand({ helperPath: '.alfred/mcp-headers.js', name: G, scheme: 'Bearer' }), `node .alfred/mcp-headers.js ${G} Bearer`);
+    assert.strictEqual(E.helperCommand({ helperPath: '/work/my shop/.preferred-tools/mcp-headers.js', name: G, scheme: 'Bearer' }), `node "/work/my shop/.preferred-tools/mcp-headers.js" ${G} Bearer`);
+    assert.strictEqual(E.helperCommand({ helperPath: '/w/.preferred-tools/mcp-headers.js', name: G, scheme: 'Bearer', globalRoot: '/my keys' }), `node /w/.preferred-tools/mcp-headers.js ${G} Bearer "/my keys"`);
+    const gh = (base, scope, roots, home = '/Users/me') => helperOf(plan(inv(base, { alfredCodeEnabled: true }), { picks: { github: { route: 'remote', scope } }, roots }, opts(home, { exists: ALFRED })), 'github');
+    assert.strictEqual(gh(MAC, 'project'), `node .alfred/mcp-headers.js ${G} Bearer`);
+    assert.strictEqual(gh({ ...MAC, project: '/work/my shop' }, 'local', { project: { id: 'preferred-tools' } }), `node "/work/my shop/.preferred-tools/mcp-headers.js" ${G} Bearer`);
+    assert.strictEqual(gh(MAC, 'user'), `node /Users/me/.preferred-tools/mcp-headers.js ${G} Bearer`);
+    // the third argument: at local scope only, only for a named global root
+    const named = { global: { id: 'named', path: '/srv/keys' } };
+    assert.strictEqual(gh(MAC, 'local', named), `node /work/shop/.alfred/mcp-headers.js ${G} Bearer /srv/keys`);
+    assert.strictEqual(gh(MAC, 'local'), `node /work/shop/.alfred/mcp-headers.js ${G} Bearer`, 'the standard global root: no third argument');
+    assert.strictEqual(gh(MAC, 'project', named), `node .alfred/mcp-headers.js ${G} Bearer`, 'project scope never names it');
+    assert.strictEqual(gh(MAC, 'user', named), `node /srv/keys/mcp-headers.js ${G} Bearer`);
+    // Windows: backslashes, quoted for a space (Review Focus 1)
+    const win = helperOf(plan(inv({ ...WIN, project: 'C:\\work\\my shop' }), pickOne('github', { route: 'remote', scope: 'local' }), opts('C:\\Users\\me')), 'github');
+    assert.strictEqual(win, `node "C:\\work\\my shop\\.preferred-tools\\mcp-headers.js" ${G} Bearer`);
+});
+
+test('no hosted entry holds Authorization or a ${VAR} for a key, at any scope', () => {
+    for (const id of ['context7', 'github', 'sentry'])
+        for (const scope of ['project', 'local', 'user'])
+            for (const token of [true, false])
+            {
+                const s = addStep(plan(inv(MAC), pickOne(id, { route: 'remote', scope, token }), opts('/Users/me')));
+                assert.strictEqual(s.entry.headers, undefined, `${id} ${scope}`);
+                assert.ok(!JSON.stringify(s.entry).includes('${'), `${id} ${scope}: ${JSON.stringify(s.entry)}`);
+            }
+});
+
+test('a hosted keyed route recommends global; a stdio keyed route is not offered at project scope', () => {
+    const labels = (id, route) => asks.scopeQuestion(catalog.byId.get(id), inv(MAC), { route, ctx: { project: '/work/shop', platform: 'darwin', home: '/Users/me', env: {}, exists: () => false } }).options.map((o) => o.label);
+    assert.deepStrictEqual(labels('github', 'remote'), ['Global (Recommended)', 'Project', 'Local']);
+    assert.deepStrictEqual(labels('github', 'local'), ['Local (Recommended)', 'Global']);
+    assert.deepStrictEqual(labels('sentry', 'local'), ['Local (Recommended)', 'Global']);
+    assert.deepStrictEqual(labels('context7', 'local'), ['Local (Recommended)', 'Global', 'Project'], 'an optional key: project scope stays, keyless');
+    assert.strictEqual(plan(inv(MAC), pickOne('github', { route: 'remote' }), opts('/Users/me')).steps.find((s) => s.op === 'mcp-add').scope, 'user');
+});
+
+test('context7 hosted: global recommended when CONTEXT7_API_KEY is filled in ~/.preferred-tools/.mcps-secrets, project when no offered name is filled anywhere', () => {
+    const fs = require('node:fs');
+    const { world } = require('./helpers.js');
+    const w = world();
+    try
+    {
+        const ctx = () => ({ project: w.project, platform: process.platform, home: w.home, env: {} });
+        const i = inv({ ...MAC, os: process.platform, project: w.project });
+        const scopeOf = () => asks.scopeQuestion(catalog.byId.get('context7'), i, { route: 'remote', ctx: ctx() }).options[0].label;
+        const keyQ = (scope) => asks.toolAsk(catalog.byId.get('context7'), i, { route: 'remote', scope, ctx: ctx(), catalog }).questions.find((q) => q.id === 'token-context7');
+        assert.strictEqual(scopeOf(), 'Project (Recommended)');
+        assert.deepStrictEqual(keyQ('project').options.map((o) => o.label), ['No key - lower rate limits (Recommended)', 'Use a key from .mcps-secrets']);
+        const p0 = plan(i, pickOne('context7', { route: 'remote' }), { home: w.home, env: {} });
+        assert.deepStrictEqual([addStep(p0).scope, addStep(p0).entry.headersHelper], ['project', undefined]);
+        // a name the key question would offer, filled in the global chain
+        fs.mkdirSync(path.join(w.home, '.preferred-tools'), { recursive: true });
+        fs.writeFileSync(path.join(w.home, '.preferred-tools', SECRETS_FILE), 'CONTEXT7_API_KEY=ctx7-fake\n');
+        assert.strictEqual(scopeOf(), 'Global (Recommended)');
+        assert.strictEqual(keyQ('user').options[0].label, 'Use a key from .mcps-secrets (Recommended)');
+        const p1 = plan(i, pickOne('context7', { route: 'remote' }), { home: w.home, env: {} });
+        assert.strictEqual(addStep(p1).scope, 'user');
+        assert.match(addStep(p1).entry.headersHelper, /CONTEXT7_API_KEY Bearer$/);
+        assert.ok(!JSON.stringify(p1).includes('ctx7-fake'), 'the value stays in the key file');
+    }
+    finally { w.clean(); }
+});
+
+test('sentry: OAuth recommended; a key gives Sentry-Bearer', () => {
+    const ctx = { project: '/work/shop', platform: 'darwin', home: '/Users/me', env: {}, exists: () => false };
+    const q = asks.toolAsk(catalog.byId.get('sentry'), inv(MAC), { route: 'remote', scope: 'project', ctx, catalog }).questions.find((x) => x.id === 'token-sentry');
+    assert.deepStrictEqual(q.options.map((o) => o.label), ['Sign in with OAuth (Recommended)', 'Use a key from .mcps-secrets']);
+    const p = plan(inv(MAC), pickOne('sentry', { route: 'remote' }), opts('/Users/me'));
+    assert.deepStrictEqual([addStep(p).scope, addStep(p).entry.headersHelper, p.oauth.map((x) => x.row)], ['project', undefined, ['sentry']]);
+    const keyed = plan(inv(MAC), pickOne('sentry', { route: 'remote', scope: 'user', token: true }), opts('/Users/me'));
+    assert.strictEqual(addStep(keyed).entry.headersHelper, 'node /Users/me/.preferred-tools/mcp-headers.js SENTRY_ACCESS_TOKEN Sentry-Bearer');
+    assert.deepStrictEqual(keyed.oauth, []);
+});
+
+test('the plan notes an untrusted folder, a project-scope helper\'s child folders, and node once', () => {
+    const p = plan(inv(MAC, { trusted: false }), { picks: { github: { route: 'remote', scope: 'project' }, context7: { route: 'remote', scope: 'local', token: true } } }, opts('/Users/me'));
+    const count = (re) => p.notes.filter((n) => re.test(n)).length;
+    assert.strictEqual(count(/accept the trust dialog the next time Claude Code starts in \/work\/shop - until then the server connects without its key/), 1);
+    assert.strictEqual(count(/a session started in a subfolder or a child project does not get this key - install it there too, or at global scope/), 1);
+    assert.match(p.notes.find((n) => /subfolder or a child project/.test(n)), /^github:/);
+    assert.strictEqual(count(/node must be on the PATH Claude Code starts with/), 1);
+    const trusted = plan(inv(MAC, { trusted: true }), pickOne('github', { route: 'remote', scope: 'user' }), opts('/Users/me'));
+    assert.ok(!trusted.notes.some((n) => /trust dialog|child project/.test(n)), trusted.notes.join('\n'));
+    assert.strictEqual(plan(inv(MAC, { trusted: false }), pickOne('github', { route: 'remote', scope: 'user' }), opts('/Users/me')).notes.filter((n) => /trust dialog/.test(n)).length, 0, 'a global helper needs no folder trust');
+});
+
+test('the old-file line names the project root\'s .mcps-secrets at local scope and the global root\'s at global scope', () => {
+    const { world } = require('./helpers.js');
+    const w = world();
+    try
+    {
+        putKeys(w.project, ALFRED_STORE, [`${G}=old-fake`]);
+        const i = inv({ ...MAC, os: process.platform, project: w.project });
+        const local = plan(i, pickOne('github', { route: 'remote', scope: 'local' }), { home: w.home, env: {} });
+        const old = path.join(w.project, ...ALFRED_STORE);
+        assert.strictEqual(local.keys[0].old, old);
+        assert.ok(render(local).includes(`${G} is in ${old}, which preferred-tools no longer reads: move it to ${path.join(w.project, '.preferred-tools', SECRETS_FILE)}`), render(local));
+        const user = plan(i, pickOne('github', { route: 'remote', scope: 'user' }), { home: w.home, env: {} });
+        assert.ok(render(user).includes(`move it to ${path.join(w.home, '.preferred-tools', SECRETS_FILE)}`), render(user));
+        assert.ok(!render(local).includes('old-fake') && !JSON.stringify(local).includes('old-fake'));
+    }
+    finally { w.clean(); }
 });

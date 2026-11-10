@@ -29,36 +29,49 @@ const scopeText = (s, row, routeId) => (s === 'project' && row.kind === 'mcp' &&
 // every scope question lists the recommended scope first, then the others in this order (the user's ruling, 2026-11-10)
 const SCOPE_ORDER = ['user', 'project', 'local'];
 
-// Where a route's key is, by name only: { variable, set (in this shell), file (the key file holding it, or null), near
-// (other key-shaped names in those files with the row id in them, keys.presence) } - or null for a route that takes no key. `ctx.keyHome`, when the
-// ctx has one, places the home key file (null: none read); else `ctx.home` does.
-function keyStateOf(row, routeId, ctx, alfredEnabled)
+// Where a route's key is, by name only (spec D3, D9): { variable, kind, scope, files, found } - or null for a route that
+// takes no key. `variable` is the catalog's default name; `kind` 'helper' for a hosted route (mcp-headers.js reads the
+// hosted chain when Claude Code connects), 'stdio' for a local one (the apply reads the stdio chain); `files` that chain
+// at `scope`; `found` the first file holding, with a value, a name D9 offers ({ file, name }), else null. `ctx.keyHome`,
+// when the ctx has one, decides whether files outside the project are read (null: none); else they are.
+function keyStateOf(row, routeId, ctx, alfredEnabled, scope = 'user')
 {
     const route = row.routes && row.routes[routeId];
-    if (!route || !route.tokenVar || !ctx) return null;
-    const variable = route.tokenVar;
-    const env = ctx.env || {};
-    const home = Object.hasOwn(ctx, 'keyHome') ? ctx.keyHome : ctx.home;
-    const p = keys.presence(ctx.project, 'local', [{ name: variable, word: row.id.toUpperCase().replace(/-/g, '_') }], { env, alfredEnabled, home });
-    return { variable, set: Boolean(env[variable]), file: p.found[variable], near: p.near[variable] };
+    if (!route || !ctx) return null;
+    const variable = route.helper ? route.helper.var : route.tokenVar;
+    if (!variable) return null;
+    const kind = route.helper ? 'helper' : 'stdio';
+    const projectRoot = E.rootOf('project', ctx);
+    const globalRoot = E.rootOf('global', ctx);
+    const files = kind === 'helper'
+        ? keys.hostedChain({ scope, projectRoot, globalRoot, globalNamed: Boolean(ctx.roots && ctx.roots.globalNamed), home: ctx.home })
+        : keys.stdioChain({ scope, projectRoot, globalRoot });
+    const readHome = Object.hasOwn(ctx, 'keyHome') ? Boolean(ctx.keyHome) : true;
+    const inProject = (f) => { const rel = path.relative(ctx.project, f); return Boolean(rel) && !rel.startsWith('..') && !path.isAbsolute(rel); };
+    const word = row.id.toUpperCase().replace(/-/g, '_');
+    let found = null;
+    for (const { file, names } of keys.filledNames(readHome ? files : files.filter(inProject)))
+    {
+        const name = names.includes(variable) ? variable : names.find((n) => keys.offeredName(n, variable, word));
+        if (name) { found = { file, name }; break; }
+    }
+    return { variable, kind, scope, files, found };
 }
 
-// local for a local route (its paths and Python are this machine's); project for a hosted route - except a hosted route
-// that needs a key, which project scope reads only from the environment Claude Code starts with: there the key's state
-// decides (the user's ruling, 2026-11-10). A token route: project when set in this shell, else local, which writes the key
-// in from its key file. An optional key: set - project; only in a key file - local; neither - project, keyless.
+// local for a local route (its paths and Python are this machine's); for a hosted route, global when it will use a key
+// (spec D5, O7: a global helper has an absolute path, needs no folder trust and serves every session, a workspace child
+// included) - a required key, or an optional one whose name is filled in the global chain - else project. The scope is
+// asked before the key, so `keyState` is read at global scope.
 function recommendedScope(row, routeId, keyState = null)
 {
     if (row.kind === 'plugin') return row.recommendedScope;
     if (routeId !== 'remote') return 'local';
-    const auth = row.routes[routeId] && row.routes[routeId].auth;
-    if (!keyState || !['token', 'optional-token'].includes(auth)) return 'project';
-    if (keyState.set) return 'project';
-    return auth === 'token' || keyState.file ? 'local' : 'project';
+    const route = row.routes[routeId];
+    if (!route || !route.helper) return 'project';
+    return route.auth === 'token' || Boolean(keyState && keyState.found) ? 'user' : 'project';
 }
-// a key worth sending by default: set in this shell, or held in a key file the scope reads - project scope reads none, so
-// there only a key set in this shell is sent (a ${VAR} with nothing behind it is an empty Bearer)
-const keyToSend = (keyState, scope) => Boolean(keyState && (keyState.set || (scope !== 'project' && keyState.file)));
+// an optional key is sent by default when a name D9 offers is filled in the chain the chosen scope reads
+const keyToSend = (keyState) => Boolean(keyState && keyState.found);
 
 function chunk(list, n)
 {
@@ -188,7 +201,10 @@ function scopesFor(row, routeId, ctx = null)
 {
     if (row.kind === 'plugin') return ['project', 'local', 'user'];
     const serenaWin = row.locations && row.locations.windowsAbsolute && ctx && ctx.platform === 'win32';
-    return ['local', 'project', 'user'].filter((s) => s !== 'project' || !serenaWin || !E.serenaWindowsHome(ctx).needsInput);
+    // a stdio route that needs a key holds it written in, which the committed .mcp.json never carries (spec D5)
+    const route = row.routes && row.routes[routeId];
+    const stdioKey = routeId !== 'remote' && route && route.auth === 'token';
+    return ['local', 'project', 'user'].filter((s) => s !== 'project' || (!stdioKey && !(serenaWin && E.serenaWindowsHome(ctx).needsInput)));
 }
 
 // The scopes offered, the recommended one first. `current` is the registration configure changes; for an install,
@@ -196,7 +212,7 @@ function scopesFor(row, routeId, ctx = null)
 function scopeOrder(row, inv, { route, current = null, copyOf = [], ctx = null } = {})
 {
     const routeId = route || (current && current.route) || row.recommendedRoute;
-    const rec = current ? current.scope : recommendedScope(row, routeId, keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled));
+    const rec = current ? current.scope : recommendedScope(row, routeId, keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled, 'user'));
     const all = scopesFor(row, routeId, ctx);
     const free = all.filter((s) => !copyOf.some((c) => c.scope === s));
     const scopes = free.length ? free : all;
@@ -391,14 +407,23 @@ function toolAsk(row, inv, { route, scope = null, name = null, current = null, c
                 : first([engine, named]),
         });
     }
-    else if (row.routes[routeId].auth === 'optional-token')
+    // an optional key (spec D5): asked at every scope but for a stdio route at project scope, which runs keyless
+    else if (row.routes[routeId].auth === 'optional-token' && !(routeId !== 'remote' && at === 'project'))
+    {
+        const route = row.routes[routeId];
+        const ks = keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled, at || 'user');
+        const file = ks && ks.files[0];
+        const useKey = route.helper
+            ? { label: 'Use a key from .mcps-secrets', description: `mcp-headers.js reads it each time Claude Code connects${file ? `, from ${file} first` : ''} - never written into the registration` }
+            : { label: 'Use a key from .mcps-secrets', description: `the apply writes it into the registration from ${file || '.mcps-secrets'}, never printed` };
+        const noKey = route.noKey === 'oauth'
+            ? { label: 'Sign in with OAuth', description: 'run /mcp once in a session to log in' }
+            : { label: 'No key - lower rate limits', description: 'works anonymously' };
         qs.push({
             id: `token-${row.id}`, header: 'API key', multiSelect: false, question: `${row.label}: send an API key?`,
-            options: first([
-                { label: 'No key - low rate limits', description: 'works anonymously' },
-                { label: `Use \${${row.routes[routeId].tokenVar}}`, description: 'project scope keeps the reference, read from the environment Claude Code starts with; local and user scope write the key in from its key file, never printed' },
-            ], current ? Boolean(sameRoute && current.token) : keyToSend(keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled), at)),
+            options: first([noKey, useKey], current ? Boolean(sameRoute && current.token) : keyToSend(ks)),
         });
+    }
     else if (row.params)
     {
         const host = current && current.host && current.host !== row.params[0].default ? current.host : null;
@@ -472,7 +497,7 @@ function needsRoot(row, routeId)
 {
     if (row.kind !== 'mcp') return false;
     const route = row.routes && row.routes[routeId];
-    return Boolean(row.locations) || Boolean(route && route.tokenVar);
+    return Boolean(row.locations) || Boolean(route && (route.tokenVar || route.helper));
 }
 
 // The families the questions input needs a root for: each pick at its answered (else recommended) scope, and each answer

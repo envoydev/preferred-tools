@@ -156,6 +156,8 @@ function plainFilesFor(project, scope, { env = process.env, alfredEnabled = fals
 // is dropped here.
 const KEY_SHAPED = /(?:TOKEN|KEY|PAT)$/;
 const nearMiss = (n, name, word) => n !== name && Boolean(word) && n.toUpperCase().includes(word) && KEY_SHAPED.test(n.toUpperCase());
+// A name D9 offers for a row's key: the catalog's default, or a key-shaped name holding the row id in upper case.
+const offeredName = (n, name, word) => n === name || nearMiss(n, name, word);
 function presence(project, scope, wants, opts = {})
 {
     const files = plainFilesFor(project, scope, opts);
@@ -319,5 +321,5 @@ function oldHolding(project, home, name)
 
 module.exports = {
     readDotenv, alfredPresent, filesFor, plainFilesFor, presence, keysFor, tokenFields, fillKeys, keysInto, homeFile, projectFile, PLACEHOLDER,
-    SECRETS, NAME_RULE, hostedChain, stdioChain, valueIn, filledNames, oldFiles, oldHolding,
+    SECRETS, NAME_RULE, hostedChain, stdioChain, valueIn, filledNames, oldFiles, oldHolding, offeredName,
 };

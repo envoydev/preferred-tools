@@ -200,3 +200,21 @@ test('every fix row has the fields the brief names and points at an existing row
         assert.ok(f.os.every((o) => OSES.includes(o)), f.id);
     }
 });
+
+test('hosted keyed routes carry a helper block and no Authorization header', () => {
+    const want = { context7: ['CONTEXT7_API_KEY', 'Bearer', 'optional-token'], github: ['GITHUB_PERSONAL_ACCESS_TOKEN', 'Bearer', 'token'], sentry: ['SENTRY_ACCESS_TOKEN', 'Sentry-Bearer', 'optional-token'] };
+    for (const row of cat.tools.filter((r) => r.kind === 'mcp' && r.routes.remote))
+    {
+        const r = row.routes.remote;
+        assert.ok(!r.headers || !Object.keys(r.headers).some((h) => h.toLowerCase() === 'authorization'), `${row.id}: no Authorization header`);
+        assert.ok(!JSON.stringify(r).includes('${'), `${row.id}: no \${VAR} in a hosted route`);
+        assert.ok(!('tokenVar' in r), `${row.id}: a hosted route names its key through helper.var`);
+        if (want[row.id])
+        {
+            assert.deepStrictEqual([r.helper.var, r.helper.scheme, r.auth], want[row.id], row.id);
+            assert.match(r.helper.var, /^[A-Za-z_][A-Za-z0-9_]*$/);
+            assert.match(r.helper.scheme, /^[!-~]+$/);
+        }
+        else assert.strictEqual(r.helper, undefined, `${row.id}: OAuth only`);
+    }
+});

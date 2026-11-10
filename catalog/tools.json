@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "note": "The 17 rows of preferred-tools. Facts are checked against the vendor docs in docs/sources.md (read 2026-10-27; pins refreshed 2026-11-10). Placeholders: {root} location root, {name} registration name, {host}, {value}. No secret in this file: a token is only ever a ${VAR} reference.",
+  "note": "The 17 rows of preferred-tools. Facts are checked against the vendor docs in docs/sources.md (read 2026-10-27; pins refreshed 2026-11-10). Placeholders: {root} location root, {name} registration name, {host}, {value}. No secret in this file: a hosted key is named by its helper block, which mcp-headers.js reads from .mcps-secrets; a stdio key is only ever a ${VAR} reference.",
   "rules": {
     "ageGateDays": 7,
     "cutoff": "2026-10-20T23:59:59Z",
@@ -214,9 +214,9 @@
           "type": "http",
           "url": "https://mcp.context7.com/mcp",
           "auth": "optional-token",
-          "tokenVar": "CONTEXT7_API_KEY",
-          "headers": {
-            "Authorization": "Bearer ${CONTEXT7_API_KEY}"
+          "helper": {
+            "var": "CONTEXT7_API_KEY",
+            "scheme": "Bearer"
           },
           "fingerprints": [
             {
@@ -274,9 +274,9 @@
           "type": "http",
           "url": "https://api.githubcopilot.com/mcp/",
           "auth": "token",
-          "tokenVar": "GITHUB_PERSONAL_ACCESS_TOKEN",
-          "headers": {
-            "Authorization": "Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN}"
+          "helper": {
+            "var": "GITHUB_PERSONAL_ACCESS_TOKEN",
+            "scheme": "Bearer"
           },
           "fingerprints": [
             {
@@ -842,7 +842,12 @@
         "remote": {
           "type": "http",
           "url": "https://mcp.sentry.dev/mcp",
-          "auth": "oauth",
+          "auth": "optional-token",
+          "helper": {
+            "var": "SENTRY_ACCESS_TOKEN",
+            "scheme": "Sentry-Bearer"
+          },
+          "noKey": "oauth",
           "fingerprints": [
             {
               "host": "mcp.sentry.dev",

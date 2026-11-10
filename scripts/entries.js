@@ -47,7 +47,8 @@ function currentOf(row, reg)
         name: reg.name, scope: reg.scope, route: reg.route, entry: e,
         rootStr: row.locations ? rootOfEntry(row, e) : null,
         executablePath: flag('--executable-path'),
-        token: Boolean((e.headers && e.headers.Authorization) || (e.args || []).includes('--api-key')),
+        token: Boolean(e.headersHelper || (e.headers && e.headers.Authorization) || (e.args || []).includes('--api-key')),
+        keyName: helperNameOf(e.headersHelper),
         host: e.url ? new URL(e.url).hostname : null,
     };
 }
@@ -279,15 +280,52 @@ function subst(text, values)
     return String(text).replace(/\{(\w+)\}/g, (m, k) => (k in values ? values[k] : m));
 }
 
-// A fresh entry from the catalog. `a` = { rootStr, executablePath, token, params }.
+// ---- the header helper (spec D4) ------------------------------------------------------------------------------------
+
+// The registration's `headersHelper`: `node <path> <NAME> <SCHEME> [<global root>]`, a path holding a space in double
+// quotes. The command line names the helper and a variable name, never the key file or a value.
+function helperCommand({ helperPath, name, scheme, globalRoot = null })
+{
+    const q = (s) => (/\s/.test(s) ? `"${s}"` : s);
+    return ['node', q(helperPath), name, scheme, ...(globalRoot ? [q(globalRoot)] : [])].join(' ');
+}
+
+// Where a registration at `scope` finds the helper: relative to the project at project scope (it runs in the folder whose
+// .mcp.json declares it), else absolute - in the root of the scope's family.
+function helperPathFor(scope, ctx)
+{
+    const P = pathFor(ctx.platform);
+    const root = rootOf(scope === 'user' ? 'global' : 'project', ctx);
+    if (scope !== 'project') return P.join(root, 'mcp-headers.js');
+    const rel = P.relative(ctx.project, root).split(P.sep).join('/');
+    return `${rel ? `${rel}/` : ''}mcp-headers.js`;
+}
+
+// The helper's third argument: the global root, at local scope only and only when it is a named folder - the helper reads
+// ~/.preferred-tools and ~/.alfred itself.
+const helperGlobalRoot = (scope, ctx) => (scope === 'local' && ctx.roots && ctx.roots.globalNamed ? ctx.roots.global : null);
+
+// The key name a `headersHelper` passes, or null.
+function helperNameOf(command)
+{
+    const m = typeof command === 'string' ? /mcp-headers\.js["']?\s+([A-Za-z_][A-Za-z0-9_]*)\s/.exec(command) : null;
+    return m ? m[1] : null;
+}
+
+// The helper command a hosted keyed route gets at `scope`: the key's name (`keyName`, else the catalog's default) and
+// the route's scheme.
+const helperFor = (route, scope, ctx, keyName = null) => helperCommand({ helperPath: helperPathFor(scope, ctx), name: keyName || route.helper.var, scheme: route.helper.scheme, globalRoot: helperGlobalRoot(scope, ctx) });
+
+// A fresh entry from the catalog. `a` = { rootStr, scope, executablePath, token, keyName, params }. A hosted route that
+// sends a key gets `headersHelper` and no `headers`: the key stays in .mcps-secrets (spec D4).
 function buildEntry(row, routeId, a, ctx, rules)
 {
     const route = row.routes[routeId];
     if (routeId === 'remote')
     {
         const entry = { type: route.type, url: subst(route.url, a.params || {}) };
-        const useToken = route.auth === 'token' || (route.auth === 'optional-token' && a.token);
-        if (useToken && route.headers) entry.headers = { ...route.headers };
+        const useKey = route.helper && (route.auth === 'token' || (route.auth === 'optional-token' && a.token));
+        if (useKey) entry.headersHelper = helperFor(route, a.scope, ctx, a.keyName);
         return entry;
     }
 
@@ -399,4 +437,5 @@ module.exports = {
     pathFor, slashes, isWindowsArm, pythonRequest, parseRoot, logicalRoot, currentOf, formatRoot, withSub, homeVar, serenaWindowsHome, serenaSpaceFree, validWindowsSerenaHome,
     defaultRoot, alfredRoot, otherSide, otherPlace, rootOfEntry, applyRoot, buildEntry, nameProblem, subst, fetchStep,
     ALFRED_ENTRIES, alfredData, alfredNameProblem, recommendedSide, rootOf, machinePath, expandVars,
+    helperCommand, helperPathFor, helperGlobalRoot, helperNameOf, helperFor,
 };

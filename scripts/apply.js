@@ -54,10 +54,24 @@ function makeRunner({ project, env, runCli })
     };
 }
 
-function addAndVerify(call, ctx, name, scope, entry)
+// The CLI's own output can echo the JSON it was given, so a failure's text shows each credential value the entry holds -
+// a value put back from the registration, a key written in - as the marker, raw and JSON-escaped alike.
+function masked(text, entry, row)
+{
+    const values = [];
+    const walk = (node, k) =>
+    {
+        if (typeof node === 'string') { if (node !== k && node) values.push(node, JSON.stringify(node).slice(1, -1)); return; }
+        if (node && typeof node === 'object') for (const key of Object.keys(node)) walk(node[key], k == null ? undefined : k[key]);
+    };
+    walk(entry, kept.keep(entry, row));
+    return [...new Set(values)].sort((a, b) => b.length - a.length).reduce((t, v) => t.split(v).join(kept.MARKER), text);
+}
+
+function addAndVerify(call, ctx, name, scope, entry, row = null)
 {
     const a = call(['mcp', 'add-json', name, JSON.stringify(entry), '-s', scope]);
-    if (!a.ok) return { ok: false, detail: `claude mcp add-json ${name} -s ${scope} failed: ${a.out}` };
+    if (!a.ok) return { ok: false, detail: `claude mcp add-json ${name} -s ${scope} failed: ${masked(a.out, entry, row)}` };
     const got = readRegistration(name, scope, ctx.project, ctx.env);
     if (!got || !deepEqual(got, entry)) return { ok: false, detail: `'${name}' at ${scope} scope did not read back as written` };
     return { ok: true, detail: `added '${name}' at ${scope} scope` };
@@ -127,7 +141,7 @@ function runStep(step, ctx)
             fs.writeFileSync(file, '*\n');
             return { ok: true, detail: `wrote ${file} holding *` };
         }
-        case 'mcp-add': return addAndVerify(call, ctx, step.name, step.scope, step.entry);
+        case 'mcp-add': return addAndVerify(call, ctx, step.name, step.scope, step.entry, rowOf(ctx, step));
         case 'mcp-remove': return removeAndVerify(call, ctx, step.name, step.scope);
         case 'mcp-replace': {
             const file = path.join(ctx.tmp, 'rollback.json');
@@ -135,13 +149,13 @@ function runStep(step, ctx)
             fs.writeFileSync(file, JSON.stringify({ name: step.name, scope: step.scope, entry: kept.keep(step.old, rowOf(ctx, step)), project: ctx.project }, null, 2));
             const rm = removeAndVerify(call, ctx, step.name, step.scope);
             if (!rm.ok) return { ok: false, detail: `${rm.detail} - the old entry is untouched or restored by hand: ${restoreBy(ctx, step, step.name, step.scope, step.old)}` };
-            const add = addAndVerify(call, ctx, step.name, step.scope, step.entry);
+            const add = addAndVerify(call, ctx, step.name, step.scope, step.entry, rowOf(ctx, step));
             if (add.ok) return { ok: true, detail: `rewrote '${step.name}' at ${step.scope} scope (old entry saved in ${file})` };
-            const back = addAndVerify(call, ctx, step.name, step.scope, step.old);
+            const back = addAndVerify(call, ctx, step.name, step.scope, step.old, rowOf(ctx, step));
             return { ok: false, detail: `${add.detail}; ${back.ok ? 'the old entry was re-added' : `RESTORE BY HAND: ${restoreBy(ctx, step, step.name, step.scope, step.old)}`}` };
         }
         case 'mcp-move': {
-            const add = addAndVerify(call, ctx, step.to.name, step.to.scope, step.entry);
+            const add = addAndVerify(call, ctx, step.to.name, step.to.scope, step.entry, rowOf(ctx, step));
             if (!add.ok) return { ok: false, detail: `${add.detail}; the old '${step.from.name}' at ${step.from.scope} scope is untouched` };
             const rm = removeAndVerify(call, ctx, step.from.name, step.from.scope);
             if (!rm.ok) return { ok: false, detail: `${rm.detail}; the new one is in place, the old one is still there - remove it by hand: claude mcp remove ${step.from.name} -s ${step.from.scope}` };

@@ -226,12 +226,15 @@ test('alfred-code enabled in a project it never set up (no engine, no store) rea
     finally { w.clean(); }
 });
 
-test('fillKeys writes each token field the route defines: the ${VAR} form at project scope, the value at local and user', () => {
+test('fillKeys writes each token field a stdio route defines: the ${VAR} form at project scope, the value at local and user; a hosted route has none', () => {
     const v = `x%y^z"${val()}`;
+    // a hosted route's key is read by mcp-headers.js: the entry holds no token field, and an old header is fix's to move
     const hosted = { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headers: { Authorization: 'Bearer old', 'X-Other': 'keep' } };
-    assert.deepStrictEqual(keys.fillKeys(hosted, row('github'), 'remote', 'project', { [G]: v }).headers, { Authorization: `Bearer \${${G}}`, 'X-Other': 'keep' });
-    assert.deepStrictEqual(keys.fillKeys(hosted, row('github'), 'remote', 'local', { [G]: v }).headers, { Authorization: `Bearer ${v}`, 'X-Other': 'keep' });
-    assert.deepStrictEqual(keys.fillKeys(hosted, row('github'), 'remote', 'user', {}), hosted, 'a missing key keeps what the entry holds');
+    for (const scope of ['project', 'local', 'user']) assert.deepStrictEqual(keys.fillKeys(hosted, row('github'), 'remote', scope, { [G]: v }), hosted, scope);
+    const docker = { command: 'docker', args: ['run', '-i', '--rm', '-e', G, 'ghcr.io/github/github-mcp-server:v2.1.0', 'stdio'], env: { [G]: 'old' } };
+    assert.deepStrictEqual(keys.fillKeys(docker, row('github'), 'local', 'project', { [G]: v }).env, { [G]: `\${${G}}` }, 'a project registration already there keeps the reference');
+    assert.deepStrictEqual(keys.fillKeys(docker, row('github'), 'local', 'local', { [G]: v }).env, { [G]: v });
+    assert.deepStrictEqual(keys.fillKeys(docker, row('github'), 'local', 'user', {}), docker, 'a missing key keeps what the entry holds');
     const c7 = { command: 'npx', args: ['-y', '@upstash/context7-mcp@4.4.4', '--api-key', '${CONTEXT7_API_KEY}'] };
     assert.deepStrictEqual(keys.fillKeys(c7, row('context7'), 'local', 'local', { CONTEXT7_API_KEY: v }).args.slice(-2), ['--api-key', v]);
     const noToken = { type: 'http', url: 'https://mcp.context7.com/mcp' };

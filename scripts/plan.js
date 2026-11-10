@@ -149,10 +149,14 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     const routeId = pick.route || (cur ? cur.route : row.recommendedRoute);
     const route = row.routes[routeId];
     if (!route) return out.errors.push(`${row.id}: no ${routeId} route (routes: ${Object.keys(row.routes).join(', ')})`);
-    // a fresh pick's defaults follow where its key is (names only, never a value): the scope that can read it, and the key sent
-    const keyState = cur ? null : asks.keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled);
-    const scope = pick.scope || (cur ? cur.scope : asks.recommendedScope(row, routeId, keyState));
+    // a fresh pick's scope follows where its key is (names only, never a value): read at global scope, as the scope
+    // question is asked before the key (spec D5, D8)
+    const scope = pick.scope || (cur ? cur.scope : asks.recommendedScope(row, routeId, asks.keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled, 'user')));
     if (!SCOPES.includes(scope)) return out.errors.push(`${row.id}: unknown scope '${scope}'`);
+    // a stdio route that needs a key holds it written in, which the committed .mcp.json never carries (spec D5); a
+    // registration already there is configure's to keep
+    if (scope === 'project' && routeId !== 'remote' && route.auth === 'token' && !(cur && cur.scope === 'project'))
+        return out.errors.push(`${row.id}: its local route needs a key written into the registration, so it is not offered at project scope - the committed .mcp.json carries no key; pick local or global scope, or the hosted route`);
     const bad = inv.unreadable.find((u) => (u.scope === scope) || (scope !== 'project' && ['local', 'user'].includes(u.scope) && ['local', 'user'].includes(scope)));
     if (bad) return out.errors.push(`${row.id}: the ${scope} scope is unreadable (${bad.file} is ${bad.state}); nothing is written there`);
 
@@ -194,9 +198,16 @@ function planMcp(row, pick, inv, ctx, catalog, out)
 
     // the answers that edit an entry
     const params = { host: row.params ? (pick.params && pick.params.host) || (cur && cur.host) || row.params[0].default : undefined, ...(pick.params || {}) };
-    const wantToken = pick.token === undefined ? (cur ? Boolean(cur.token) : route.auth === 'optional-token' && asks.keyToSend(keyState, scope)) : Boolean(pick.token);
-    if (pick.token === undefined && !cur && route.auth === 'optional-token' && scope === 'project' && keyState && keyState.file && !keyState.set)
-        out.notes.push(`${row.id}: no API key sent - ${route.tokenVar} is not set in this shell and project scope reads only the environment Claude Code starts with; the key in ${keyState.file} reaches it at local or user scope`);
+    // an optional key: sent when picked, else when a name D9 offers is filled in the chain the scope reads; a stdio route
+    // at project scope runs keyless (spec D5)
+    const keyless = scope === 'project' && routeId !== 'remote' && route.auth === 'optional-token';
+    if (keyless && pick.token) return out.errors.push(`${row.id}: its local route runs keyless at project scope - the committed .mcp.json carries no key; pick local or global scope for a key, or the hosted route`);
+    let wantToken = pick.token === undefined ? (cur ? Boolean(cur.token) : route.auth === 'optional-token' && asks.keyToSend(asks.keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled, scope))) : Boolean(pick.token);
+    if (keyless && wantToken)
+    {
+        out.notes.push(`${row.id}: --api-key is left out - its local route runs keyless at project scope`);
+        wantToken = false;
+    }
     let wantExec = pick.executablePath === undefined ? (cur ? cur.executablePath : undefined) : (pick.executablePath || undefined);
     // the committed .mcp.json carries no machine path: a binary named there is refused, one a move carries is left out
     if (scope === 'project' && E.machinePath(wantExec))
@@ -232,7 +243,7 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     let entry;
     let fresh = !cur || cur.route !== routeId;
     if (fresh)
-        entry = E.buildEntry(row, routeId, { rootStr, scope, executablePath: wantExec, token: wantToken, params }, ctx, catalog.rules);
+        entry = E.buildEntry(row, routeId, { rootStr, scope, executablePath: wantExec, token: wantToken, keyName: cur && cur.keyName, params }, ctx, catalog.rules);
     else
     {
         entry = JSON.parse(JSON.stringify(cur.entry));
@@ -245,17 +256,26 @@ function planMcp(row, pick, inv, ctx, catalog, out)
             if (wantExec) args.push('--executable-path', wantExec);
             entry.args = args;
         }
-        if (route.auth === 'optional-token' && wantToken !== cur.token)
+        if (routeId === 'remote' && route.helper)
         {
-            if (routeId === 'remote') { if (wantToken) entry.headers = { ...route.headers }; else delete entry.headers; }
-            else
+            // the helper follows the scope and its root, under the name it passes now; an Authorization header of the
+            // 0.1.x kind is fix's to move (key-to-helper, spec D7), never dropped here while a key is wanted
+            const header = Boolean(entry.headers && entry.headers.Authorization);
+            if (!wantToken)
             {
-                const args = (entry.args || []).slice();
-                const i = args.indexOf('--api-key');
-                if (i >= 0) args.splice(i, 2);
-                if (wantToken) args.push(...route.optionalArgs.token);
-                entry.args = args;
+                delete entry.headersHelper;
+                if (header) { delete entry.headers.Authorization; if (!Object.keys(entry.headers).length) delete entry.headers; }
             }
+            else if (header) out.notes.push(`${row.id}: '${cur.name}' sends its key from an Authorization header - /preferred-tools:fix moves it into .mcps-secrets, read by mcp-headers.js (key-to-helper)`);
+            else entry.headersHelper = E.helperFor(route, scope, ctx, cur.keyName);
+        }
+        else if (route.auth === 'optional-token' && wantToken !== cur.token)
+        {
+            const args = (entry.args || []).slice();
+            const i = args.indexOf('--api-key');
+            if (i >= 0) args.splice(i, 2);
+            if (wantToken) args.push(...route.optionalArgs.token);
+            entry.args = args;
         }
         if (row.params && cur.host && params.host !== cur.host) entry.url = E.subst(route.url, params);
     }
@@ -282,24 +302,27 @@ function planMcp(row, pick, inv, ctx, catalog, out)
         }
     }
 
-    // the key: at project scope the ${VAR} stays for each session's environment; at local and user scope apply.js writes
-    // it in from the key file the scope reads (keys.js), and a plan naming the project's own file first makes it ignored
-    if (route.tokenVar)
+    // the key (spec D3-D5): a hosted route's helper reads the hosted chain each time Claude Code connects, a stdio route's
+    // key is written in by the apply from the stdio chain. The line names the files, never a value; a name found only in
+    // a file 0.1.x read names that file.
+    const usesKey = route.auth === 'token' || (route.auth === 'optional-token' && wantToken);
+    const ks = usesKey && !(entry.headers && entry.headers.Authorization) ? asks.keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled, scope) : null;
+    if (ks && !(ks.kind === 'stdio' && scope === 'project'))
     {
-        const needsVar = route.auth === 'token' || (route.auth === 'optional-token' && wantToken);
-        const files = needsVar ? keys.filesFor(ctx.project, scope, { env: { ...ctx.env, HOME: ctx.home, USERPROFILE: ctx.home }, alfredEnabled: inv.alfredCodeEnabled }) : [];
-        if (needsVar)
-        {
-            const word = row.id.toUpperCase().replace(/-/g, '_');
-            const seen = keys.presence(ctx.project, scope, [{ name: route.tokenVar, word }], { env: { ...ctx.env, HOME: ctx.home, USERPROFILE: ctx.home }, alfredEnabled: inv.alfredCodeEnabled, home: ctx.home });
-            // the line names the files the key was looked for in - with alfred-code's engine, its chain up the parent folders
-            out.tokens.push({ row: row.id, name, variable: route.tokenVar, scope, set: Boolean(ctx.env[route.tokenVar]), files: seen.files, found: seen.found[route.tokenVar], near: seen.near[route.tokenVar] });
-        }
-        const ignore = path.join(ctx.project, '.preferred-tools');
-        if (files.includes(keys.projectFile(ctx.project)) && !(ctx.exists || fs.existsSync)(path.join(ignore, '.gitignore')) && !out.steps.some((s) => s.op === 'ensure-ignore'))
-            out.steps.unshift({ op: 'ensure-ignore', path: ignore, why: 'key file: .preferred-tools/.gitignore holding *, so the .secrets beside it is never committed' });
+        const variable = (cur && cur.keyName) || ks.variable;
+        const filled = keys.filledNames(ks.files).some((f) => f.names.includes(variable));
+        out.keys.push({ row: row.id, name, scope, variable, kind: ks.kind, files: ks.files, filled, old: filled ? null : keys.oldHolding(ctx.project, ctx.home, variable) });
     }
-    if (route.auth === 'oauth') out.oauth.push({ row: row.id, name, scope });
+    // the helper's own conditions (spec D4): the folder's trust at project and local scope, the declaring folder only at
+    // project scope, node on the PATH - each said once
+    if (ks && ks.kind === 'helper')
+    {
+        const once = (text) => { if (!out.notes.includes(text)) out.notes.push(text); };
+        if (scope !== 'user' && inv.trusted === false) once(`accept the trust dialog the next time Claude Code starts in ${ctx.project} - until then the server connects without its key`);
+        if (scope === 'project') out.notes.push(`${row.id}: a session started in a subfolder or a child project does not get this key - install it there too, or at global scope`);
+        once('node must be on the PATH Claude Code starts with - mcp-headers.js runs under it, as this plugin\'s commands do');
+    }
+    if (route.auth === 'oauth' || (route.noKey === 'oauth' && !wantToken)) out.oauth.push({ row: row.id, name, scope });
     if (row.dangerous && row.dangerous.length) out.dangerous.push({ row: row.id, name, tools: row.dangerous });
     out.expect.push({ kind: 'mcp', row: row.id, name, scope, route: routeId });
 
@@ -382,7 +405,7 @@ function plan(inv, answers, opts = {})
     const catalog = opts.catalog || catalogLib.load();
     // answers.machine: what prereq.js found (docker: false picks github's binary fallback); an explicit option wins
     const ctx = { ...makeCtx(inv, { ...opts, machine: opts.machine || answers.machine }), changing: new Set(Object.keys(answers.change || {})) };
-    const out = { version: 1, project: inv.project, os: inv.os, alfredCodeEnabled: Boolean(inv.alfredCodeEnabled), steps: [], notes: [], errors: [], unchanged: [], tokens: [], oauth: [], dangerous: [], expect: [], hud: null };
+    const out = { version: 1, project: inv.project, os: inv.os, alfredCodeEnabled: Boolean(inv.alfredCodeEnabled), steps: [], notes: [], errors: [], unchanged: [], keys: [], oauth: [], dangerous: [], expect: [], hud: null };
     // the root folders (spec D2): every data folder, key file and helper of a family sits in its root
     const resolved = roots.resolve(inv, answers.roots, { ...ctx, catalog });
     out.errors.push(...resolved.errors);
@@ -444,27 +467,14 @@ function argvOf(step)
     }
 }
 
-// The plan's line for one key: where the registration reads it, where its name is (never a value), and - at project
-// scope, which reads only the environment Claude Code starts with - what serves the children of a workspace.
-function tokenLine(t)
+// The plan's line for one key: who reads it, from which files, and whether its name is filled there - never a value.
+function keyLine(k)
 {
-    const parts = [];
-    if (t.scope === 'project')
-    {
-        parts.push(`Token: ${t.name} reads \${${t.variable}} from the environment Claude Code starts with - ${t.set ? 'set in this shell.' : 'NOT set in this shell.'}`);
-        if (t.set) parts.push('A Claude Code started from the dock or an IDE may not have it - the account settings.json "env" reaches every start.');
-        else
-        {
-            parts.push(t.found ? `Its name is in ${t.found}, which project scope does not read.` : `It is in none of the key files local scope would read either${(t.files || []).length ? `: ${t.files.join(', ')}` : ''}.`);
-            parts.push(`Choose local scope, which writes the key in from a key file but serves only this folder (a child that is its own project does not see it - install it there too); or user scope, which serves every project; or set ${t.variable} in the account settings.json "env" and keep one project-scope entry for the whole workspace.`);
-        }
-    }
-    else
-    {
-        parts.push(`Token: ${t.name} (${t.scope} scope) - the apply writes ${t.variable} into the registration from ${(t.files || []).join(', then ')}; a key in none of them stays \${${t.variable}}. The key is never printed.`);
-        parts.push(t.found ? `Found in ${t.found}.` : 'In none of them.');
-    }
-    if (!t.found && !t.set) for (const n of t.near || []) parts.push(`${n.file} holds ${n.name}, not ${t.variable}: add the key under ${t.variable}.`);
+    const reader = k.kind === 'helper' ? 'mcp-headers.js reads it each time Claude Code connects' : 'the apply writes it into the registration';
+    const parts = [`Key: ${k.name} (${k.scope} scope) - ${k.variable}; ${reader}, from ${k.files.join(', then ')}. The key is never printed.`];
+    if (k.filled) parts.push('Filled.');
+    else if (k.old) parts.push(`${k.variable} is in ${k.old}, which preferred-tools no longer reads: move it to ${k.files[0]}`);
+    else parts.push(`Not filled yet: add ${k.variable}=<your key> to ${k.files[0]}${k.kind === 'helper' ? ' - until then the server connects without its key' : ', then run /preferred-tools:fix'}.`);
     return parts.join(' ');
 }
 
@@ -484,7 +494,7 @@ function render(p)
         else if (s.op === 'fetch') lines.push(`   ${s.argv.map(shq).join(' ')}`, '   (after the apply, in the background: fills the cache only; if it fails the registration stays and the first start tries again)');
         else if (s.op === 'hud') lines.push(`   node scripts/hud-statusline.js ${s.mode === 'replace' ? '--replace' : s.mode === 'skip' ? '--statusline-only' : ''}`.trimEnd());
     });
-    if (p.tokens.length) lines.push('', ...p.tokens.map(tokenLine));
+    if (p.keys.length) lines.push('', ...p.keys.map(keyLine));
     if (p.oauth.length) lines.push('', `OAuth: run /mcp once in a session to log in to ${p.oauth.map((o) => o.name).join(', ')}.`);
     if (p.dangerous.length) lines.push('', ...p.dangerous.map((d) => `Code-running tool on '${d.name}': ${d.tools.map((t) => `${t.tool} (${t.why})`).join('; ')}. This plugin adds no guard.`));
     if (p.notes.length) lines.push('', ...p.notes.map((n) => `Note: ${n}`));

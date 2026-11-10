@@ -325,7 +325,8 @@ test('no token value reaches any file the install wrote', () => {
             const body = fs.readFileSync(f, 'utf8');
             for (const [name, value] of Object.entries(tokens)) assert.ok(!body.includes(value), `${name} value found in ${path.relative(w.dir, f)}`);
         }
-        assert.match(fs.readFileSync(path.join(w.project, '.mcp.json'), 'utf8'), /Bearer \$\{GITHUB_PERSONAL_ACCESS_TOKEN\}/);
+        // a hosted key is read by mcp-headers.js when Claude Code connects: the committed entry names the helper, no key
+        assert.deepStrictEqual(mcpJson(w).mcpServers.github, { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headersHelper: 'node .preferred-tools/mcp-headers.js GITHUB_PERSONAL_ACCESS_TOKEN Bearer' });
         assert.match(JSON.stringify(accountDoc(w)), /\$\{SENTRY_ACCESS_TOKEN\}/);
     }
     finally { w.clean(); }
@@ -521,7 +522,7 @@ const noValueIn = (w, r, values) =>
     for (const v of values) assert.ok(!r.text.includes(v) && !JSON.stringify(r.p).includes(v), 'no key value printed or in the plan');
 };
 
-test('a token route at local scope is written with the key file\'s value, .mcp.json at project scope keeps ${VAR}, and no file under <tmp> holds the value', () => {
+test('a stdio key at local scope is written in from the key file, a hosted route at project scope gets the helper and no ${VAR}, and no file under <tmp> holds the value', () => {
     const w = world();
     try
     {
@@ -531,26 +532,32 @@ test('a token route at local scope is written with the key file\'s value, .mcp.j
         assert.deepStrictEqual(r.p.errors, []);
         assert.strictEqual(r.report.failed, null, r.text);
         assert.strictEqual(accountDoc(w).projects[accountKey(w.project)].mcpServers.sentry.env[S], s, 'the value, as the file holds it');
-        assert.strictEqual(mcpJson(w).mcpServers.github.headers.Authorization, `Bearer \${${G}}`, 'the committed file keeps the variable');
+        assert.deepStrictEqual(mcpJson(w).mcpServers.github, { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headersHelper: `node .preferred-tools/mcp-headers.js ${G} Bearer` }, 'the committed file names the helper');
         assert.match(r.text, new RegExp(`${S} for 'sentry' \\(local\\) from .*\\.preferred-tools.\\.secrets`));
         noValueIn(w, r, [s, g]);
     }
     finally { w.clean(); }
 });
 
-test('a configure move local -> project of a filled github remote writes ${GITHUB_PERSONAL_ACCESS_TOKEN} into .mcp.json', () => {
+test('a configure move local -> project of a github remote re-adds its helper with a relative path and no ${VAR}; an old Authorization header is refused there', () => {
     const w = world();
     try
     {
-        const g = `g-${hex(12)}`;
-        register(w, 'github', { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headers: { Authorization: `Bearer ${g}` } });
+        const helper = (p) => `node ${p} ${G} Bearer`;
+        register(w, 'github', { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headersHelper: helper(path.join(w.project, '.preferred-tools', 'mcp-headers.js')) });
         const r = keptWalk(w, { change: { 'mcp:github~local': { scope: 'project' } } });
         assert.deepStrictEqual(r.p.errors, []);
         assert.strictEqual(r.report.failed, null, r.text);
-        assert.strictEqual(mcpJson(w).mcpServers.github.headers.Authorization, `Bearer \${${G}}`);
-        assert.ok(!fs.readFileSync(path.join(w.project, '.mcp.json'), 'utf8').includes(g));
+        assert.deepStrictEqual(mcpJson(w).mcpServers.github, { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headersHelper: helper('.preferred-tools/mcp-headers.js') });
+        assert.ok(!fs.readFileSync(path.join(w.project, '.mcp.json'), 'utf8').includes('${'));
         assert.strictEqual((accountDoc(w).projects[accountKey(w.project)].mcpServers || {}).github, undefined, 'the local one is gone');
-        noValueIn(w, r, [g]);
+        // a 0.1.x registration holding the key in its header: never carried into the committed file (fix moves it first)
+        const g = `g-${hex(12)}`;
+        register(w, 'gh-old', { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headers: { Authorization: `Bearer ${g}` } });
+        const old = keptWalk(w, { change: { 'mcp:gh-old~local': { scope: 'project' } } });
+        assert.match(old.p.errors.join(), /'gh-old' holds a credential in headers\.Authorization, which the committed \.mcp\.json must not carry/);
+        assert.ok(!fs.readFileSync(path.join(w.project, '.mcp.json'), 'utf8').includes(g));
+        noValueIn(w, old, [g]);
     }
     finally { w.clean(); }
 });
@@ -576,17 +583,31 @@ test('a configure move to project scope is refused while the entry holds a crede
     finally { w.clean(); }
 });
 
-test('a configure move local -> user fills the key from the user-scope source', () => {
+test('a configure move local -> user points the helper into the global root and keeps the name it passes', () => {
     const w = world();
     try
     {
-        const [home, live] = [`h-${hex(12)}`, `l-${hex(12)}`];
-        keyFile(w.home, { [G]: home });
-        register(w, 'github', { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headers: { Authorization: `Bearer ${live}` } });
+        register(w, 'github', { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headersHelper: `node ${path.join(w.project, '.preferred-tools', 'mcp-headers.js')} ACME_GITHUB_TOKEN Bearer` });
         const r = keptWalk(w, { change: { 'mcp:github~local': { scope: 'user' } } });
         assert.strictEqual(r.report.failed, null, r.text);
-        assert.strictEqual(accountDoc(w).mcpServers.github.headers.Authorization, `Bearer ${home}`);
-        noValueIn(w, r, [home, live]);
+        assert.deepStrictEqual(accountDoc(w).mcpServers.github, { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headersHelper: `node ${path.join(w.home, '.preferred-tools', 'mcp-headers.js')} ACME_GITHUB_TOKEN Bearer` });
+        assert.deepStrictEqual(r.p.keys.map((k) => [k.variable, k.scope, k.files[0]]), [['ACME_GITHUB_TOKEN', 'user', path.join(w.home, '.preferred-tools', '.mcps-secrets')]]);
+    }
+    finally { w.clean(); }
+});
+
+test('a failed add prints a key the apply wrote in as the marker, never the value - raw or JSON-escaped', () => {
+    const w = world();
+    try
+    {
+        const s = `s%^"\\${hex(12)}`;
+        keyFile(w.project, { [S]: s });
+        const r = walk(w, { picks: { sentry: { route: 'local', scope: 'local' } } }, { fail: 'add-json sentry' });
+        assert.strictEqual(r.report.failed.op, 'mcp-add');
+        assert.match(r.report.failed.detail, /injected failure/, 'the CLI output is still shown');
+        assert.ok(r.report.failed.detail.includes(MARKER), r.report.failed.detail);
+        noValueIn(w, r, [s, JSON.stringify(s).slice(1, -1)]);
+        assert.ok(!r.report.failed.detail.includes(s) && !r.report.failed.detail.includes(JSON.stringify(s).slice(1, -1)));
     }
     finally { w.clean(); }
 });
@@ -599,23 +620,6 @@ test('a missing key keeps ${VAR} and the report names the file', () => {
         assert.strictEqual(r.report.failed, null, r.text);
         assert.strictEqual(accountDoc(w).projects[accountKey(w.project)].mcpServers.sentry.env[S], `\${${S}}`);
         assert.match(r.text, new RegExp(`${S} for 'sentry' \\(local\\) is in none of .*\\.preferred-tools.\\.secrets.* - it stays \\$\\{${S}\\}; put it in .*\\.preferred-tools.\\.secrets`));
-    }
-    finally { w.clean(); }
-});
-
-test('a plan that names .preferred-tools/.secrets writes .preferred-tools/.gitignore holding * first', () => {
-    const w = world();
-    try
-    {
-        const r = walk(w, { picks: { sentry: { route: 'local', scope: 'local' } } });
-        assert.strictEqual(r.p.steps[0].op, 'ensure-ignore');
-        assert.strictEqual(r.p.steps[0].path, path.join(w.project, '.preferred-tools'));
-        assert.match(require('../scripts/plan.js').render(r.p), /writes .*\.preferred-tools\/\.gitignore {2}\(contents: \*\)/);
-        assert.strictEqual(fs.readFileSync(path.join(w.project, '.preferred-tools', '.gitignore'), 'utf8'), '*\n');
-        const again = plan(inventory.buildInventory({ project: w.project, env: w.env }), { picks: { sentry: { route: 'local', scope: 'local', name: 'sentry-2' } } }, { home: w.home, env: w.env });
-        assert.ok(!again.steps.some((s) => s.op === 'ensure-ignore'), 'a .gitignore already there: no step');
-        const user = plan(inventory.buildInventory({ project: w.project, env: w.env }), { picks: { github: { route: 'remote', scope: 'user' } } }, { home: w.home, env: w.env });
-        assert.ok(!user.steps.some((s) => s.op === 'ensure-ignore'), 'user scope names no project key file');
     }
     finally { w.clean(); }
 });
