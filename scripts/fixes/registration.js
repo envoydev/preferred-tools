@@ -116,13 +116,16 @@ function windowsNpxCmdFix(entry)
 }
 
 // ---- playwright-webmcp ----------------------------------------------------------------------------------------------
+// The release whose README documents --no-webmcp (catalog/fixes.json verifiedOn): a fixed floor, never the catalog's pin,
+// which moves on every refresh and would block a registration that already has the flag.
+const NO_WEBMCP_SINCE = '0.0.83';
 function playwrightWebmcpDetect(ctx)
 {
-    return eachReg(ctx, 'playwright-webmcp', (reg, route) =>
+    return eachReg(ctx, 'playwright-webmcp', (reg) =>
     {
         if (C.launchArgs(reg.entry).includes('--no-webmcp')) return null;
         const pin = C.pinnedVersion(reg.entry, '@playwright/mcp');
-        const documented = route.package.version;
+        const documented = NO_WEBMCP_SINCE;
         const older = pin && C.compareVersions(pin, documented) === -1;
         return C.finding('playwright-webmcp', reg, 'page-registered WebMCP tools are not switched off (no --no-webmcp)',
             older ? { blocked: `pinned @${pin} is older than ${documented}, the version whose README documents --no-webmcp - update it first (/preferred-tools:update), then fix` } : {});

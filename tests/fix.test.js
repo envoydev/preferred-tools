@@ -202,6 +202,11 @@ test('playwright-webmcp: --no-webmcp goes right after --browser, an executable p
     const old = { ...without, args: without.args.map((a) => (a.startsWith('@playwright/mcp@') ? '@playwright/mcp@0.0.50' : a)) };
     const [b] = detect(ctxFor({ registrations: [reg('playwright-chrome', old)] })).found;
     assert.match(b.blocked, /older than 0\.0\.83/);
+    // the floor is the release that documents the flag, not the catalog's moving pin: 0.0.83 is fixed, never blocked
+    const at83 = { ...without, args: without.args.map((a) => (a.startsWith('@playwright/mcp@') ? '@playwright/mcp@0.0.83' : a)) };
+    const [ok83] = detect(ctxFor({ registrations: [reg('playwright-chrome', at83)] })).found;
+    assert.strictEqual(ok83.id, 'playwright-webmcp');
+    assert.strictEqual(ok83.blocked, undefined, 'a pin that documents --no-webmcp is not blocked by a newer catalog pin');
     // a dist-tag compares as unknown, so it is not blocked
     const tagged = { ...without, args: without.args.map((a) => (a.startsWith('@playwright/mcp@') ? '@playwright/mcp@latest' : a)) };
     assert.ok(!detect(ctxFor({ registrations: [reg('playwright-chrome', tagged)] })).found[0].blocked);
