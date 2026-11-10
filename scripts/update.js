@@ -3,8 +3,9 @@
 // THE UPDATE ENGINE - what is installed and behind its release: plugins (catalog or not), the pinned MCP servers, the
 // language servers on PATH.
 //
-//   node update.js --check [--json] [--no-refresh] [--project <dir>]     read-only (it refreshes the marketplace clones)
-//   node update.js --questions [--no-refresh] [--project <dir>]          the asks, as data
+//   node update.js --check [--json] [--no-refresh] [--project <dir>] [--data <dir>]   read-only (it refreshes the marketplace clones)
+//   node update.js --questions [--no-refresh] [--project <dir>] [--data <dir>]        the asks, as data
+//   --data: the plugin's data folder, whose roots map finds the records - a server left on its own (spec D6) is skipped
 //   node update.js --apply <id,id | all> [--project <dir>] [--tmp <dir>]  changes the install
 //
 // An offer id is `plugin:<plugin id>~<scope>`, `mcp:<name>~<scope>` or `lsp:typescript`; `all` is every offer whose newer
@@ -116,6 +117,7 @@ async function mcpOffers(ctx, out)
     for (const r of ctx.inv.registrations)
     {
         if (r.own || r.alfredRetired) continue;
+        if (r.choice === 'own') { out.skipped.push(`${r.name} (${r.scope}): on its own - not checked`); continue; }
         if (r.scope === 'inherited') { out.skipped.push(`${r.name} (inherited): inherited from ${inventory.fromHere(ctx.inv, r.from)} - update it there`); continue; }
         const row = ctx.catalog.byId.get(r.rowId);
         const def = row.routes[r.route];
@@ -328,7 +330,7 @@ function parseArgs(argv)
     {
         const a = argv[i];
         if (['--check', '--questions', '--json', '--no-refresh'].includes(a)) { args[a.slice(2)] = true; continue; }
-        if (!['--apply', '--project', '--tmp'].includes(a)) throw new Error(`unknown argument '${a}'`);
+        if (!['--apply', '--project', '--tmp', '--data'].includes(a)) throw new Error(`unknown argument '${a}'`);
         const v = argv[i + 1];
         if (v === undefined || v.startsWith('--')) throw new Error(`${a} needs a value`);
         i++;
@@ -343,9 +345,9 @@ async function main(argv, { env = process.env, out = (s) => process.stdout.write
 {
     let args;
     try { args = parseArgs(argv); }
-    catch (e) { out(`update: ${e.message}\nusage: node scripts/update.js --check | --questions | --apply <id,id|all> [--no-refresh] [--project <dir>] [--tmp <dir>]`); return 2; }
+    catch (e) { out(`update: ${e.message}\nusage: node scripts/update.js --check | --questions | --apply <id,id|all> [--no-refresh] [--project <dir>] [--tmp <dir>] [--data <dir>]`); return 2; }
     const project = path.resolve(args.project || process.cwd());
-    const inv = inventory.buildInventory({ project, env, run: runCli || cli.run });
+    const inv = inventory.buildInventory({ project, env, run: runCli || cli.run, data: args.data || null });
     if (!inv.cli.ok) { out('preferred-tools: the claude CLI is not on PATH - install Claude Code, then run this again.'); return 3; }
     const ctx = makeCtx({ inv, project, env, machine, registry, now, runCli: runCli || cli.run, refresh: !args['no-refresh'] });
     const found = await check(ctx);

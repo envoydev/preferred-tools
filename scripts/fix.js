@@ -2,9 +2,12 @@
 'use strict';
 // THE FIX ENGINE - known problems and their recorded fixes (catalog/fixes.json, detectors in scripts/fixes/).
 //
-//   node fix.js --detect [--only <fix id | tool | registration name>] [--json] [--project <dir>]
-//   node fix.js --questions [--project <dir>]            the asks, as data (the same --only narrows it)
-//   node fix.js --apply <id,id | all> [--only <x>] [--input key=value] [--project <dir>] [--tmp <dir>]
+//   node fix.js --detect [--only <fix id | tool | registration name>] [--json] [--project <dir>] [--data <dir>]
+//   node fix.js --questions [--project <dir>] [--data <dir>]   the asks, as data (the same --only narrows it)
+//   node fix.js --apply <id,id | all> [--only <x>] [--input key=value] [--project <dir>] [--tmp <dir>] [--data <dir>]
+//
+// --data: the plugin's data folder, whose roots map finds the records - a registration left on its own (spec D6) is
+// not checked, and is listed once as such.
 //
 // A detector looks at the inventory and the machine and returns findings; a row that finds nothing is not shown. A
 // registration fix edits the entry AS READ and is written through apply.js (remove, then add-json, with a rollback), one
@@ -28,18 +31,20 @@ const { realMachine, clone } = require('./fixes/common.js');
 const { deepEqual } = require('./plan.js');
 const E = require('./entries.js');
 
-function makeCtx({ inv, catalog = catalogLib.load(), env = process.env, machine, platform, arch })
+function makeCtx({ inv, catalog = catalogLib.load(), env = process.env, machine, platform, arch, data = null })
 {
     const p = platform || inv.os;
-    return { inv, catalog, platform: p, arch: arch || inv.arch, env, home: account.homeDir(env), rules: catalog.rules, machine: machine || realMachine({ env, platform: p }) };
+    return { inv, catalog, platform: p, arch: arch || inv.arch, env, home: account.homeDir(env), rules: catalog.rules, machine: machine || realMachine({ env, platform: p }), data };
 }
 
 const matches = (f, only) => !only || [f.id, f.row, f.name].includes(only);
 
-// -> { found: [finding + { kind, symptom }], held: [{ id, why }], unknown: [] }
+// -> { found: [finding + { kind, symptom }], held: [{ id, why }], own: [{ name, scope }] } - `own`: the registrations left
+// on their own (spec D6), which no detector reads
 function detectAll(ctx, { only } = {})
 {
-    const out = { found: [], held: [] };
+    const own = (ctx.inv.registrations || []).filter((r) => r.choice === 'own' && (!only || [r.name, r.rowId].includes(only)));
+    const out = { found: [], held: [], own: own.map((r) => ({ name: r.name, scope: r.scope })) };
     for (const fix of ctx.catalog.fixes)
     {
         if (fix.hold) { out.held.push({ id: fix.id, why: fix.hold }); continue; }
@@ -74,6 +79,7 @@ function render(detected)
         }
     }
     for (const h of held) lines.push('', `Held, not checked: ${h.id} - ${h.why}`);
+    if ((detected.own || []).length) lines.push('', ...detected.own.map((o) => `${o.name} (${o.scope}): on its own - not checked`));
     return lines.join('\n');
 }
 
@@ -176,7 +182,7 @@ function applyFixes(ctx, ids, { only, input = {}, tmp, log = console.log, runCli
     }
 
     // read back: the same detectors, run again on what is installed now
-    const after = detectAll({ ...ctx, inv: inventory.buildInventory({ project: ctx.inv.project, env: ctx.env }) }, { only });
+    const after = detectAll({ ...ctx, inv: inventory.buildInventory({ project: ctx.inv.project, env: ctx.env, data: ctx.data }) }, { only });
     for (const f of todo)
     {
         const left = after.found.some((a) => a.id === f.id && a.name === f.name && a.scope === f.scope);
@@ -202,7 +208,7 @@ function parseArgs(argv)
     {
         const a = argv[i];
         if (['--detect', '--questions', '--json'].includes(a)) { args[a.slice(2)] = true; continue; }
-        if (!['--apply', '--only', '--input', '--project', '--tmp'].includes(a)) throw new Error(`unknown argument '${a}'`);
+        if (!['--apply', '--only', '--input', '--project', '--tmp', '--data'].includes(a)) throw new Error(`unknown argument '${a}'`);
         const v = value(i, a);
         i++;
         if (a === '--input')
@@ -226,11 +232,12 @@ function main(argv, { env = process.env, out = (s) => process.stdout.write(`${s}
 {
     let args;
     try { args = parseArgs(argv); }
-    catch (e) { out(`fix: ${e.message}\nusage: node scripts/fix.js --detect | --questions | --apply <id,id|all> [--only <x>] [--input key=value] [--project <dir>]`); return 2; }
+    catch (e) { out(`fix: ${e.message}\nusage: node scripts/fix.js --detect | --questions | --apply <id,id|all> [--only <x>] [--input key=value] [--project <dir>] [--data <dir>]`); return 2; }
     const project = path.resolve(args.project || process.cwd());
-    const inv = inventory.buildInventory({ project, env });
+    const data = args.data || null;
+    const inv = inventory.buildInventory({ project, env, data });
     if (!inv.cli.ok) { out('preferred-tools: the claude CLI is not on PATH - install Claude Code, then run this again.'); return 3; }
-    const ctx = makeCtx({ inv, env, machine });
+    const ctx = makeCtx({ inv, env, machine, data });
     if (args.apply)
     {
         const log = (...a) => out(a.join('\n'));

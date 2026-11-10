@@ -1833,3 +1833,29 @@ test('the existing block, and the detector run, come only with --connectors', ()
     }
     finally { w.clean(); }
 });
+
+test("configure: the 'On their own' group, and 'Let preferred-tools manage it' plans only a record-choice step", () => {
+    const asks = require('../scripts/asks.js');
+    const gh = reg('github', 'user', { type: 'http', url: 'https://api.githubcopilot.com/mcp/' }, 'github', 'remote', { choice: 'own' });
+    const c7 = reg('context7', 'local', { type: 'http', url: 'https://mcp.context7.com/mcp' }, 'context7', 'remote', { choice: null });
+    const i = inv(MAC, { registrations: [gh, c7], pluginServers: [], records: { project: null, global: null } });
+    const ch = asks.changeQuestions(i, catalog);
+    assert.strictEqual(ch.keys['github (github, user) - on its own'], 'mcp:github~user');
+    assert.strictEqual(ch.keys['context7 (context7, local)'], 'mcp:context7~local');
+    assert.ok(!('github (github, user)' in ch.keys), 'not among the servers configure changes');
+    const opt = ch.calls.flat().flatMap((q) => q.options).find((o) => o.label === 'github (github, user) - on its own');
+    assert.match(opt.description, /left on its own/);
+    // its pick asks one question: keep it, or hand it over
+    const t = asks.all(i, { targets: ['mcp:github~user'] }, catalog).targets['mcp:github~user'];
+    assert.strictEqual(t.kind, 'own');
+    assert.deepStrictEqual(t.own.question.options.map((o) => o.label), ['Keep it on its own (Recommended)', 'Let preferred-tools manage it']);
+    assert.deepStrictEqual(Object.values(t.own.answers).map((a) => a.choice), ['own', 'manage']);
+    assert.ok(!t.questions && !t.route, 'no route, scope or name to change');
+    const all = asks.all(i, { targets: ['mcp:github~user'] }, catalog);
+    assert.ok(!('mcp:github~user' in all.keyNames) && !('mcp:github~user' in all.settings));
+    // the answer is a record-choice step only
+    const p = plan(i, { existing: { 'mcp:github~user': 'manage' } }, opts('/Users/me'));
+    assert.deepStrictEqual(p.errors, []);
+    assert.deepStrictEqual(regSteps(p), []);
+    assert.deepStrictEqual(p.steps.filter((s) => s.op === 'record-choice').map((s) => s.entries), [[{ name: 'github', scope: 'user', fingerprint: 'url:api.githubcopilot.com/mcp', choice: 'manage' }]]);
+});

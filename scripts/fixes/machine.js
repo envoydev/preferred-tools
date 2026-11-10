@@ -66,7 +66,7 @@ function dataFolderIgnoreDetect(ctx)
     const out = [];
     for (const r of ctx.inv.registrations)
     {
-        if (r.own || r.alfredRetired || !tools.includes(r.rowId)) continue;
+        if (r.own || r.alfredRetired || r.choice === 'own' || !tools.includes(r.rowId)) continue;
         // starts here: a project-scope one not rejected, or a parent's not rejected and not shadowed by a nearer one
         if (r.scope === 'inherited' ? r.approval === 'rejected' || r.shadowed : r.scope !== 'project' || r.approval === 'rejected') continue;
         const row = C.rowOf(ctx, r.rowId);
@@ -153,7 +153,7 @@ function npmCacheOf(ctx, reg, memo)
 // Every server that starts in this folder, a parent folder's included: the npx cache is the machine's, so fix run in a
 // child folder repairs the parent's server too. One rejected here, or a parent's that a nearer server of its name
 // shadows, does not start here.
-const startsHere = (ctx, r) => !r.own && !r.alfredRetired && r.approval !== 'rejected' && !(r.scope === 'inherited' && r.shadowed)
+const startsHere = (ctx, r) => !r.own && !r.alfredRetired && r.choice !== 'own' && r.approval !== 'rejected' && !(r.scope === 'inherited' && r.shadowed)
     && C.fixOf(ctx, 'npx-cache-entry').tool.includes(r.rowId);
 
 function npxCacheEntryDetect(ctx)

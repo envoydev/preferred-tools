@@ -208,9 +208,37 @@ function offerRule(inv, catalog, answers = {})
     return { own, add };
 }
 
+// The servers left on their own, as configure lists them (spec D6): a registration, a plugin's server or a connector
+// whose recorded choice is 'own'.
+function ownItems(inv, catalog)
+{
+    return [
+        ...(inv.registrations || []).filter((r) => asked(r) && r.choice === 'own').map((r) => regItem(r, catalog)),
+        ...(inv.pluginServers || []).filter((s) => s.rowId && s.choice === 'own').map((s) => pluginItem(s, catalog)),
+        ...((inv.records && inv.records.global && inv.records.global.servers) || []).filter((e) => typeof e.connector === 'string' && e.choice === 'own')
+            .map((e) => connectorItem(e.connector, inv, catalog)).filter(Boolean),
+    ];
+}
+
+// configure's question for one of them: keep it so, or hand it over - a registration to preferred-tools, a plugin's
+// server or a connector to install's offer beside it. The answer is a record-choice step only.
+function ownQuestion(item)
+{
+    const reg = item.kind === 'mcp';
+    const opts = reg
+        ? [{ label: 'Keep it on its own', choice: 'own', description: 'nothing in this plugin changes it' }, { label: 'Let preferred-tools manage it', choice: 'manage', description: 'configure, update and fix look after it from now on' }]
+        : [{ label: `Keep it with ${ownerOf(item)}`, choice: 'own', description: `install does not offer ${item.label} here` }, { label: "Let install offer preferred-tools' own as well", choice: 'add', description: `${item.label} is offered again - ${twoServers(item.label, ownerOf(item))}` }];
+    const labeled = opts.map((o, i) => ({ ...o, label: `${o.label}${i === 0 ? REC : ''}` }));
+    const what = reg ? `${item.name} (${scopeWord(item.scope)}) is on its own` : item.kind === 'plugin' ? `${item.label} is left with the ${ownerOf(item)} plugin` : `${item.label} is left with claude.ai (${item.connector})`;
+    return {
+        question: { id: `own-${item.key}`, header: 'On its own', multiSelect: false, question: `${what}. Who looks after it?`, options: labeled.map(({ label, description }) => ({ label, description })) },
+        answers: Object.fromEntries(labeled.map((o) => [o.label, { key: item.key, choice: o.choice }])),
+    };
+}
+
 const twoServers = (label, owner) => `two servers of ${label} then run - ${owner}'s and this one`;
 
 module.exports = {
     HOSTED_ROWS, CHOICES, parseConnectors, matchConnector, pluginServers, fingerprintOf, items, itemOf, questions, recordEntry,
-    liveOf, offerRule, ownerOf, twoServers,
+    liveOf, offerRule, ownerOf, twoServers, ownItems, ownQuestion,
 };

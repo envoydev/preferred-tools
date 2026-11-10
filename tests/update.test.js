@@ -400,3 +400,52 @@ test('update --apply keeps <tmp> while a fetch file is handed on, and apply() ca
         w.clean();
     }
 });
+
+// ---- a server left on its own (spec D6) --------------------------------------------------------------------------------
+const C7_PINNED = { command: 'npx', args: ['-y', '@upstash/context7-mcp@2.0.0'] };
+const C7_AHEAD = () => fakeRegistry({ 'npm:@upstash/context7-mcp': [{ version: '9.0.0', time: ago(90) }] });
+const ownRecord = (dir) => writeJson(path.join(dir, 'preferred-tools.json'), { version: 1, servers: [{ name: 'context7', scope: 'local', fingerprint: 'pkg:@upstash/context7-mcp', choice: 'own' }] });
+
+test('update: a pinned server on its own is skipped, not offered', async () =>
+{
+    const w = world();
+    try
+    {
+        assert.strictEqual(cli.run(['mcp', 'add-json', 'context7', JSON.stringify(C7_PINNED), '-s', 'local'], { cwd: w.project, env: w.env }).status, 0);
+        assert.match((await run(w, ['--check', '--no-refresh'], { registry: C7_AHEAD() })).text, /2\.0\.0 -> 9\.0\.0/, 'managed: offered');
+        ownRecord(path.join(w.project, '.preferred-tools'));
+        const c = await run(w, ['--check', '--no-refresh'], { registry: C7_AHEAD() });
+        assert.strictEqual(c.code, 0);
+        assert.match(c.text, /context7 \(local\): on its own - not checked/);
+        assert.doesNotMatch(c.text, /2\.0\.0 -> 9\.0\.0/);
+        const q = await run(w, ['--questions', '--no-refresh'], { registry: C7_AHEAD() });
+        assert.doesNotMatch(q.text, /context7/, 'not in the asks either');
+    }
+    finally { w.clean(); }
+});
+
+test('fix and update take --data after their read-only flag', async () =>
+{
+    const fix = require('../scripts/fix.js');
+    const roots = require('../scripts/roots.js');
+    const w = world();
+    try
+    {
+        assert.strictEqual(cli.run(['mcp', 'add-json', 'context7', JSON.stringify(C7_PINNED), '-s', 'local'], { cwd: w.project, env: w.env }).status, 0);
+        const data = path.join(w.dir, 'data');
+        const named = path.join(w.project, 'tools');
+        ownRecord(named);
+        writeJson(path.join(data, 'roots.json'), { version: 1, global: null, projects: { [roots.mapKey(w.project)]: named } });
+        const lines = [];
+        assert.strictEqual(fix.main(['--detect', '--data', data, '--project', w.project], { env: w.env, out: (s) => lines.push(s) }), 0, lines.join('\n'));
+        assert.match(lines.join('\n'), /context7 \(local\): on its own - not checked/);
+        const c = await run(w, ['--check', '--no-refresh', '--data', data], { registry: C7_AHEAD() });
+        assert.strictEqual(c.code, 0, c.text);
+        assert.match(c.text, /context7 \(local\): on its own - not checked/);
+        assert.doesNotMatch(c.text, /2\.0\.0 -> 9\.0\.0/);
+        // without --data the named root's record is not found: managed, so offered
+        assert.match((await run(w, ['--check', '--no-refresh'], { registry: C7_AHEAD() })).text, /2\.0\.0 -> 9\.0\.0/);
+        assert.strictEqual(fix.main(['--detect', '--data'], { env: w.env, out: () => {} }), 2, 'a flag without its value');
+    }
+    finally { w.clean(); }
+});

@@ -991,3 +991,17 @@ test('one ${VAR} expander, Claude Code\'s rule (2.1.322): a variable set to empt
     assert.strictEqual(fetch.expand('${B:-x}', { B: '' }), C.expandVars('${B:-x}', { B: '' }));
     assert.strictEqual(fetch.expand('${B:-x}', {}), 'x');
 });
+
+// ---- a registration left on its own (spec D6) --------------------------------------------------------------------------
+test('fix: a registration on its own is not checked and is listed once', () =>
+{
+    const direct = { command: 'npx', args: ['-y', '@upstash/context7-mcp@4.4.4'], env: { npm_config_before: '2026-10-20T23:59:59Z' } };
+    const r = reg('context7', direct, { name: 'context7' });
+    assert.deepStrictEqual(ids(detect(ctxFor({ platform: 'win32', registrations: [r] })).found), ['windows-npx-cmd']);
+    const own = detect(ctxFor({ platform: 'win32', registrations: [{ ...r, choice: 'own' }, { ...r, name: 'c7-managed', choice: 'manage' }] }));
+    assert.deepStrictEqual(own.found.map((f) => [f.id, f.name]), [['windows-npx-cmd', 'c7-managed']], 'only the one on its own is left out');
+    assert.deepStrictEqual(own.own, [{ name: 'context7', scope: 'local' }]);
+    const text = fix.render(own);
+    assert.deepStrictEqual(text.split('\n').filter((l) => l.includes('on its own - not checked')), ['context7 (local): on its own - not checked']);
+    assert.deepStrictEqual(detect(ctxFor({ platform: 'win32', registrations: [r] })).own, []);
+});

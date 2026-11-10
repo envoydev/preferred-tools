@@ -14,7 +14,7 @@ const REC = ' (Recommended)';
 // The `remote` route is worded 'hosted' in every ask: alfred-code's stop guard reads a bare 'remote' in an ask as git
 // state and sends Claude to fetch and re-ask (docs/sources.md, 'alfred-code hooks over the commands').
 const ROUTE_WORD = { remote: 'hosted', local: 'local' };
-const HEADER = { code: 'Code', docs: 'Docs, forges', browsers: 'Browsers', machine: 'Machine' };
+const HEADER = { code: 'Code', docs: 'Docs, forges', browsers: 'Browsers', machine: 'Machine', own: 'On their own' };
 const SCOPE_TEXT = {
     local: 'this project, only you (~/.claude.json, under this project)',
     project: "this project, for everyone who opens it (the committed .mcp.json - relative paths and ${VAR} only)",
@@ -211,14 +211,17 @@ function pickQuestions(inv, catalog, existing = {})
     return packed(items, { id: 'pick', question: 'which tools do you want to install?', none: 'install nothing' });
 }
 
+const leftAlone = (inv, h) => h.kind === 'mcp' && inv.registrations.some((r) => r.name === h.name && r.scope === h.scope && r.choice === 'own');
+
 // Every catalog registration and plugin installed here, one item each (a row at two scopes is two), grouped. An
-// inherited server is not here: it is changed by running the command in its own folder.
+// inherited server is not here: it is changed by running the command in its own folder, and one left on its own is in
+// its own group (changeQuestions).
 function installedItems(inv, catalog, describe)
 {
     const items = [];
     for (const g of catalog.groups)
         for (const row of catalog.tools.filter((r) => r.group === g.id))
-            for (const h of installedOf(inv, row.id).filter((x) => x.scope !== 'inherited'))
+            for (const h of installedOf(inv, row.id).filter((x) => x.scope !== 'inherited' && !leftAlone(inv, x)))
                 items.push({ group: g, row, h, label: h.kind === 'mcp' ? `${h.name} (${row.label}, ${h.scope})` : `${row.label} (${h.scope})`, description: describe(row, h) });
     return items;
 }
@@ -234,9 +237,18 @@ function changeQuestions(inv, catalog)
         return `${ROUTE_WORD[h.route] || h.route} route${pin ? `, pin ${pin}` : ''}`;
     };
     const items = installedItems(inv, catalog, describe);
+    // the servers left on their own (spec D6, R3): a group of their own, whose pick keeps them so or hands them over
+    const X = require('./existing.js');
+    const group = { id: 'own', label: 'On their own' };
+    for (const it of X.ownItems(inv, catalog))
+    {
+        const label = it.kind === 'mcp' ? `${it.name} (${it.label}, ${it.scope}) - on its own` : it.kind === 'plugin' ? `${it.server} (${it.label}, from ${X.ownerOf(it)}) - on its own` : `${it.connector} (${it.label}, claude.ai) - on its own`;
+        const description = it.kind === 'mcp' ? 'left on its own at install - pick it to keep it so or let preferred-tools manage it' : `left with ${X.ownerOf(it)} - pick it to keep it so or let install offer preferred-tools' own beside it`;
+        items.push({ group, label, description, h: { kind: 'own', key: it.key } });
+    }
     return {
         calls: packed(items, { id: 'change', question: 'which do you want to change?', none: 'change nothing' }),
-        keys: Object.fromEntries(items.map((i) => [i.label, keyOf(i.h.kind, i.h.name, i.h.scope)])),
+        keys: Object.fromEntries(items.map((i) => [i.label, i.h.kind === 'own' ? i.h.key : keyOf(i.h.kind, i.h.name, i.h.scope)])),
     };
 }
 
@@ -635,8 +647,16 @@ function all(inv, picks, catalog, { env = {}, home = null, connectors = null } =
         // install only adds, so its questions never start from an installed registration
         out.tools[id] = { route: row.kind === 'mcp' ? routeQuestion(row) : null, ...toolAsk(row, inv, { route: routes[id], scope: scopes[id], name: names[id], ctx, catalog, copyOf: installedOf(inv, id) }) };
     }
+    const own = new Map(require('./existing.js').ownItems(inv, catalog).map((it) => [it.key, it]));
     for (const key of (picks && picks.targets) || [])
     {
+        // a server left on its own: one question, keep it so or hand it over (spec D6)
+        if (own.has(key))
+        {
+            const it = own.get(key);
+            out.targets[key] = { row: it.rowId, kind: 'own', current: { name: it.name || it.server || it.connector, scope: it.scope || null, route: null }, own: require('./existing.js').ownQuestion(it) };
+            continue;
+        }
         const t = targetOf(inv, key);
         const row = t && t.item.rowId && !t.item.alfredRetired ? catalog.byId.get(t.item.rowId) : null;
         if (!row) { out.targets[key] = { error: `'${key}' is not a catalog tool installed here` }; continue; }
@@ -667,6 +687,7 @@ function all(inv, picks, catalog, { env = {}, home = null, connectors = null } =
     }
     for (const key of (picks && picks.targets) || [])
     {
+        if (own.has(key)) continue;
         const t = targetOf(inv, key);
         const row = t && t.kind === 'mcp' && t.item.rowId && !t.item.alfredRetired ? catalog.byId.get(t.item.rowId) : null;
         if (!row) continue;
