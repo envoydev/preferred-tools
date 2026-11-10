@@ -306,3 +306,92 @@ test('presence follows the scope: user reads the home file first; project reads 
     }
     finally { w.clean(); }
 });
+
+// ---- 0.2.0: .mcps-secrets chains (spec D3) ---------------------------------------------------------------------------
+
+const sec = (dir) => path.join(dir, '.mcps-secrets');
+
+test('hosted chain per scope: the root beside the helper, the named global root at local scope only, then the two home files', () => {
+    const p = path.join(path.sep, 'w', 'p', '.alfred');
+    const k = path.join(path.sep, 'k');
+    const h = path.join(path.sep, 'h');
+    const homeFiles = [sec(path.join(h, '.preferred-tools')), sec(path.join(h, '.alfred'))];
+    assert.deepStrictEqual(keys.hostedChain({ scope: 'project', projectRoot: p, globalRoot: k, globalNamed: true, home: h }), [sec(p), ...homeFiles]);
+    assert.deepStrictEqual(keys.hostedChain({ scope: 'local', projectRoot: p, globalRoot: k, globalNamed: true, home: h }), [sec(p), sec(k), ...homeFiles]);
+    assert.deepStrictEqual(keys.hostedChain({ scope: 'local', projectRoot: p, globalRoot: k, globalNamed: false, home: h }), [sec(p), ...homeFiles], 'a global root that is not named is not the third argument');
+    assert.deepStrictEqual(keys.hostedChain({ scope: 'user', projectRoot: p, globalRoot: path.join(h, '.preferred-tools'), globalNamed: false, home: h }), homeFiles, 'duplicates dropped');
+    assert.deepStrictEqual(keys.hostedChain({ scope: 'user', projectRoot: p, globalRoot: k, globalNamed: true, home: h }), [sec(k), ...homeFiles]);
+});
+
+test('stdio chain: local reads the project root then the global root; global reads the global root alone', () => {
+    const p = path.join(path.sep, 'w', 'p', '.preferred-tools');
+    const g = path.join(path.sep, 'h', '.preferred-tools');
+    assert.deepStrictEqual(keys.stdioChain({ scope: 'local', projectRoot: p, globalRoot: g }), [sec(p), sec(g)]);
+    assert.deepStrictEqual(keys.stdioChain({ scope: 'user', projectRoot: p, globalRoot: g }), [sec(g)]);
+    assert.deepStrictEqual(keys.stdioChain({ scope: 'project', projectRoot: p, globalRoot: g }), [], 'a stdio keyed route is not offered at project scope');
+});
+
+test('valueIn: the first non-empty value wins, an empty value is missing, and the dotenv grammar is readDotenv\'s', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pt-keys-'));
+    try
+    {
+        const a = path.join(dir, 'a', '.mcps-secrets');
+        const b = path.join(dir, 'b', '.mcps-secrets');
+        const v = val();
+        put(a, 'A=\n# comment\n');
+        put(b, `A=${v}\n`);
+        assert.deepStrictEqual(keys.valueIn([a, b], 'A'), { value: v, file: b });
+        assert.strictEqual(keys.valueIn([a, path.join(dir, 'none')], 'A'), null, 'empty and missing are both missing');
+        const forms = {
+            crlf: Buffer.from('X=1\r\nA=crlf\r\n'),
+            bom: Buffer.from('﻿A=bom\n'),
+            utf16: Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('A=utf16\n', 'utf16le')]),
+            export: Buffer.from('export A=exported\n'),
+            quoted: Buffer.from('A="quoted"\n'),
+            equals: Buffer.from('A=b=c\n'),
+        };
+        for (const [name, bytes] of Object.entries(forms))
+        {
+            const f = path.join(dir, name, '.mcps-secrets');
+            put(f, bytes);
+            assert.strictEqual(keys.valueIn([f], 'A').value, keys.readDotenv(f).A, name);
+        }
+        assert.strictEqual(keys.valueIn([path.join(dir, 'equals', '.mcps-secrets')], 'A').value, 'b=c');
+        assert.deepStrictEqual(keys.filledNames([a, b]), [{ file: a, names: [] }, { file: b, names: ['A'] }], 'names only');
+        assert.ok(!JSON.stringify(keys.filledNames([a, b])).includes(v), 'no value in filledNames');
+        assert.ok(keys.NAME_RULE.test('ACME_GITHUB_TOKEN') && !keys.NAME_RULE.test('1BAD') && !keys.NAME_RULE.test('A-B'));
+        assert.strictEqual(keys.SECRETS, '.mcps-secrets');
+    }
+    finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('oldHolding names the old file and never the value', () => {
+    const w = world();
+    try
+    {
+        const v = val();
+        const store = path.join(w.project, '.alfred', '.secrets');
+        put(store, dotenv({ [G]: v }));
+        const found = keys.oldHolding(w.project, w.home, G);
+        assert.strictEqual(found, store);
+        assert.ok(!JSON.stringify(found).includes(v));
+        assert.strictEqual(keys.oldHolding(w.project, w.home, S), null);
+        const files = keys.oldFiles(w.project, w.home);
+        assert.deepStrictEqual(files.slice(0, 2), [store, path.join(w.project, '.alfred', '.sensitive-data')]);
+        assert.ok(files.includes(path.join(w.project, '.preferred-tools', '.secrets')) && files.includes(path.join(w.home, '.preferred-tools', '.secrets')));
+    }
+    finally { w.clean(); }
+});
+
+test('oldHolding finds a key in a parent folder\'s alfred-code store', () => {
+    const w = world();
+    try
+    {
+        const child = path.join(w.project, 'api');
+        fs.mkdirSync(child, { recursive: true });
+        const rootStore = path.join(w.project, '.alfred', '.secrets');
+        put(rootStore, dotenv({ [G]: val() }));
+        assert.strictEqual(keys.oldHolding(child, w.home, G), rootStore);
+    }
+    finally { w.clean(); }
+});

@@ -254,4 +254,70 @@ function keysInto(entry, row, routeId, scope, { project, env = process.env, alfr
     return { entry: filled, note: `${v} for ${where} from ${k.from[v]}` };
 }
 
-module.exports = { readDotenv, alfredPresent, filesFor, plainFilesFor, presence, keysFor, tokenFields, fillKeys, keysInto, homeFile, projectFile, PLACEHOLDER };
+// ---- 0.2.0: .mcps-secrets (spec D3) ----------------------------------------------------------------------------------
+// One key file per root folder, `.mcps-secrets`, in the grammar above, its values written by the user alone. A hosted
+// route's key is read by the header helper (mcp-headers.js) when Claude Code connects, a stdio route's by the apply; each
+// chain below is the order its reader takes, so a plan reads what the registration will read. A value leaves this file
+// only through valueIn, in the process that asked.
+const SECRETS = '.mcps-secrets';
+const NAME_RULE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const secretsIn = (dir) => path.join(dir, SECRETS);
+const uniq = (list) => [...new Set(list)];
+
+// hostedChain({ scope, projectRoot, globalRoot, globalNamed, home }) -> the files the helper reads, in order: the root
+// beside it (the project root at project and local scope, the global root at user scope); at local scope the global root
+// when it is a named folder (the helper's third argument); then ~/.preferred-tools, then ~/.alfred.
+function hostedChain({ scope, projectRoot, globalRoot, globalNamed = false, home })
+{
+    const beside = scope === 'user' ? globalRoot : projectRoot;
+    const named = scope === 'local' && globalNamed ? globalRoot : null;
+    return uniq([beside, named, path.join(home, '.preferred-tools'), path.join(home, '.alfred')].filter(Boolean).map(secretsIn));
+}
+
+// stdioChain({ scope, projectRoot, globalRoot }) -> the files the apply reads a stdio key from: local scope the project
+// root's, then the global root's; user scope the global root's. Project scope takes no stdio key (spec D5).
+function stdioChain({ scope, projectRoot, globalRoot })
+{
+    if (scope === 'local') return uniq([projectRoot, globalRoot].filter(Boolean).map(secretsIn));
+    if (scope === 'user') return globalRoot ? [secretsIn(globalRoot)] : [];
+    return [];
+}
+
+// The first non-empty value of `name` in `files` -> { value, file } | null. An empty value counts as missing.
+function valueIn(files, name)
+{
+    for (const file of files)
+    {
+        const values = readDotenv(file);
+        if (values && values[name]) return { value: values[name], file };
+    }
+    return null;
+}
+
+// The names each file holds with a value -> [{ file, names }]. Every value is dropped here.
+const filledNames = (files) => files.map((file) => ({ file, names: Object.entries(readDotenv(file) || {}).filter(([, v]) => v !== '').map(([k]) => k) }));
+
+// The key files 0.1.x read, which 0.2.0 reads for names only: alfred-code's store in the project and in each parent folder
+// (its chain walks the parents, so a workspace root's store served its child repos), the project's
+// .preferred-tools/.secrets, then the home one.
+function oldFiles(project, home)
+{
+    const stores = [];
+    for (let dir = path.resolve(project); ; dir = path.dirname(dir))
+    {
+        stores.push(...alfredStores(dir));
+        if (path.dirname(dir) === dir) break;
+    }
+    return uniq([...stores, projectFile(project), path.join(home, KEY_FILE)]);
+}
+
+// The first old file holding `name` with a value -> its path | null. The value is never returned.
+function oldHolding(project, home, name)
+{
+    return oldFiles(project, home).find((file) => Boolean((readDotenv(file) || {})[name])) || null;
+}
+
+module.exports = {
+    readDotenv, alfredPresent, filesFor, plainFilesFor, presence, keysFor, tokenFields, fillKeys, keysInto, homeFile, projectFile, PLACEHOLDER,
+    SECRETS, NAME_RULE, hostedChain, stdioChain, valueIn, filledNames, oldFiles, oldHolding,
+};
