@@ -1214,3 +1214,19 @@ test('project scope: --executable-path takes no machine path - refused when name
     const fresh = asks.all(inv(MAC), { rows: ['playwright-chrome'], scopes: { 'playwright-chrome': 'project' } }, catalog, { home: '/Users/me' }).tools['playwright-chrome'].questions.find((q) => q.id === 'browser-playwright-chrome');
     assert.match(fresh.options.find((o) => o.label === 'A browser binary I name').description, /\$\{VAR\} path - the committed \.mcp\.json takes no machine path/);
 });
+
+test("a move to project scope carries no machine path in env: appium's SDK homes are left out, any other is refused", () => {
+    const local = installed('appium', { scope: 'local' });
+    const withSdk = { ...local, entry: { ...local.entry, env: { ...local.entry.env, ANDROID_HOME: '/Users/me/Library/Android/sdk', JAVA_HOME: '/Library/Java/JavaVirtualMachines/jdk-21/Contents/Home' } } };
+    const moved = plan(inv(MAC, { registrations: [withSdk] }), changeOf(withSdk, { scope: 'project' }), opts('/Users/me'));
+    assert.deepStrictEqual(moved.errors, []);
+    const env = moved.steps.find((s) => s.op === 'mcp-move').entry.env;
+    assert.strictEqual(env.ANDROID_HOME, undefined);
+    assert.strictEqual(env.JAVA_HOME, undefined);
+    assert.ok(!Object.values(env).some((v) => /^\//.test(v)), JSON.stringify(env));
+    assert.ok(moved.notes.some((n) => /ANDROID_HOME and JAVA_HOME are left out - machine paths the committed \.mcp\.json must not carry/.test(n)), moved.notes.join('\n'));
+    const own = { ...local, entry: { ...local.entry, env: { ...local.entry.env, MY_TOOL: '/Users/me/bin/tool' } } };
+    const refused = plan(inv(MAC, { registrations: [own] }), changeOf(own, { scope: 'project' }), opts('/Users/me'));
+    assert.match(refused.errors.join(' '), /appium: '.*' holds a machine path in env\.MY_TOOL, which the committed \.mcp\.json must not carry - keep it at local scope, or put a \$\{VAR\} there first/);
+    assert.strictEqual(refused.steps.length, 0);
+});

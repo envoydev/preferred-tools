@@ -30,6 +30,8 @@ const { installedOf, keyOf, targetOf, fromHere, otherWindowsMcp } = require('./i
 const { blockingStdio } = require('./json-file.js');
 
 const SCOPES = ['local', 'project', 'user'];
+// the SDK homes appium-sdk-env writes into a local or user registration (scripts/fixes/registration.js)
+const APPIUM_SDK_ENV = ['ANDROID_HOME', 'JAVA_HOME'];
 const deepEqual = (a, b) => JSON.stringify(sortKeys(a)) === JSON.stringify(sortKeys(b));
 function sortKeys(v)
 {
@@ -276,6 +278,19 @@ function planMcp(row, pick, inv, ctx, catalog, out)
         const own = new Set(keys.tokenFields(entry, route).map((f) => f.at.join('.')));
         const held = kept.credentialPaths(entry, row).filter((p) => !own.has(p));
         if (held.length) return out.errors.push(`${row.id}: '${cur.name}' holds a credential in ${held.join(', ')}, which the committed .mcp.json must not carry - keep it at ${cur.scope} scope, or put a \${VAR} there first`);
+        // nor a machine path: appium's SDK homes (appium-sdk-env writes them in at local and user scope) are read from
+        // the environment Claude Code starts with there; any other is the user's to replace
+        const env = { ...(entry.env || {}) };
+        const dropped = (row.id === 'appium' ? APPIUM_SDK_ENV : []).filter((k) => E.machinePath(env[k]));
+        for (const k of dropped) delete env[k];
+        const machine = Object.keys(env).filter((k) => E.machinePath(env[k]));
+        if (machine.length) return out.errors.push(`${row.id}: '${cur.name}' holds a machine path in ${machine.map((k) => `env.${k}`).join(', ')}, which the committed .mcp.json must not carry - keep it at ${cur.scope} scope, or put a \${VAR} there first`);
+        if (dropped.length)
+        {
+            entry.env = env;
+            const many = dropped.length > 1;
+            out.notes.push(`${row.id}: ${dropped.join(' and ')} ${many ? 'are' : 'is'} left out - machine paths the committed .mcp.json must not carry; there the server reads ${many ? 'them' : 'it'} from the environment Claude Code starts with (/preferred-tools:fix appium-sdk-env checks it)`);
+        }
     }
 
     // the key: at project scope the ${VAR} stays for each session's environment; at local and user scope apply.js writes
