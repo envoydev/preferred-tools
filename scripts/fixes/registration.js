@@ -34,7 +34,14 @@ function serenaWindowsHomeDetect(ctx)
             const expanded = C.expandVars(value, ctx.env);
             if (expanded === null) return C.finding('serena-windows-home', reg, `SERENA_HOME is '${value}'`, { blocked: `SERENA_HOME names \${${C.firstUnset(value, ctx.env)}}, which this environment does not set` });
             if (E.validWindowsSerenaHome(expanded)) return null;
-            return C.finding('serena-windows-home', reg, `SERENA_HOME is '${value}' (${expanded} on this machine)`, { blocked: 'serena\'s home on Windows must be absolute, in backslashes and space-free: write it under ${USERPROFILE}\\..., or move it to local (/preferred-tools:configure, Scope)' });
+            // a profile folder with a space puts one in every ${USERPROFILE} path: only another scope's folder can work
+            const profile = ctx.env.USERPROFILE;
+            const spaced = /\$\{USERPROFILE\}/.test(value) && /\s/.test(profile || '');
+            return C.finding('serena-windows-home', reg, `SERENA_HOME is '${value}' (${expanded} on this machine)`, {
+                blocked: spaced
+                    ? `serena's home on Windows must be space-free, and ${profile} has a space, so no \${USERPROFILE} path works - move it to local (/preferred-tools:configure, Scope), which takes a space-free folder on this machine`
+                    : 'serena\'s home on Windows must be absolute, in backslashes and space-free: write it under ${USERPROFILE}\\..., or move it to local (/preferred-tools:configure, Scope)',
+            });
         }
         const faults = [!path.win32.isAbsolute(value) && 'not absolute', value.includes('/') && 'forward slashes', /\s/.test(value) && 'a space'].filter(Boolean);
         const what = `SERENA_HOME is '${value}' (${faults.join(', ')})`;

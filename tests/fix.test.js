@@ -761,6 +761,11 @@ test('serena-windows-home at project scope: ${USERPROFILE}\\.serena passes on a 
     assert.match(detect(unset, 'serena-windows-home').found[0].blocked, /USERPROFILE/);
     const fallback = { ...entry, env: { SERENA_HOME: '${NOPE:-C:\\serena}' } };
     assert.deepStrictEqual(ids(detect(ctxFor({ platform: 'win32', registrations: [reg('serena', fallback, { scope: 'project' })] }), 'serena-windows-home').found), []);
+    // a profile folder with a space: no ${USERPROFILE} path can work, so the advice is local scope, never that path
+    const spaced = ctxFor({ platform: 'win32', registrations: [reg('serena', entry, { scope: 'project' })], env: { USERPROFILE: 'C:\\Users\\Jane Doe' } });
+    const [f] = detect(spaced, 'serena-windows-home').found;
+    assert.doesNotMatch(f.blocked, /write it under \$\{USERPROFILE\}/);
+    assert.match(f.blocked, /C:\\Users\\Jane Doe has a space, so no \$\{USERPROFILE\} path works.*local/);
 });
 
 test('appium-sdk-env at project scope: the variables in the environment count; a missing one is blocked, never written', () => {
