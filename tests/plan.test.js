@@ -59,10 +59,10 @@ test('serena on Windows: SERENA_HOME is absolute, in backslashes and space-free;
     assert.strictEqual(addStep(emu).entry.args[1], 'cpython-3.13-windows-x86_64-none');
 });
 
-test('serena on Windows: a profile path with a space asks for a folder; a typed one must be absolute and space-free', () => {
+test('serena on Windows: a profile path with a space takes the space-free folder by default; a typed one must be absolute and space-free', () => {
     const spaced = plan(inv(WIN), pickOne('serena'), opts('C:\\Users\\Jo Doe'));
-    assert.match(spaced.errors[0], /has a space/);
-    assert.strictEqual(spaced.steps.length, 0);
+    assert.deepStrictEqual(spaced.errors, []);
+    assert.strictEqual(addStep(spaced).entry.env.SERENA_HOME, 'C:\\serena-home');
     const typed = plan(inv(WIN), pickOne('serena', { location: { side: 'path', path: 'C:/serena-home' } }), opts('C:\\Users\\Jo Doe'));
     assert.deepStrictEqual(typed.errors, []);
     assert.strictEqual(addStep(typed).entry.env.SERENA_HOME, 'C:\\serena-home');
@@ -1292,4 +1292,52 @@ test('project scope in .preferred-tools: the plan and the option say another clo
     assert.match(q.question.options.find((o) => o.label.startsWith('.preferred-tools')).description, /its \.gitignore is never committed, so another clone needs \.preferred-tools\/ in the project's \.gitignore$/);
     const local = asks.locationQuestion(catalog.byId.get('playwright-chrome'), inv(MAC), { scope: 'local', ctx: { project: '/work/shop', platform: 'darwin', home: '/Users/me', env: {}, exists: () => false } });
     assert.match(local.question.options[0].description, /the plugin's own folder, with its \.gitignore$/);
+});
+
+// ---- minor findings -------------------------------------------------------------------------------------------------
+test('serena on Windows with a spaced profile: a space-free folder is offered and recommended, so the question has two options', () => {
+    const home = 'C:\\Users\\Jane Doe';
+    const ctx = { project: WIN.project, platform: 'win32', home, env: {}, exists: () => false };
+    const l = asks.locationQuestion(catalog.byId.get('serena'), inv(WIN), { scope: 'local', ctx });
+    assert.ok(l.question, 'asked');
+    checkQuestion(l.question);
+    assert.strictEqual(l.question.options[0].label, 'A space-free folder (Recommended)');
+    assert.match(l.question.options[0].description, /^C:\\serena-home - /);
+    assert.deepStrictEqual(l.answers['A space-free folder (Recommended)'], { side: 'path', path: 'C:\\serena-home' });
+    // the plan's default is the same folder, never an error
+    const p = plan(inv(WIN), pickOne('serena', { scope: 'local' }), opts(home));
+    assert.deepStrictEqual(p.errors, []);
+    assert.strictEqual(addStep(p).entry.env.SERENA_HOME, 'C:\\serena-home');
+    // the system drive, when the environment names it
+    const d = asks.locationQuestion(catalog.byId.get('serena'), inv(WIN), { scope: 'local', ctx: { ...ctx, env: { SystemDrive: 'D:' } } });
+    assert.deepStrictEqual(d.answers['A space-free folder (Recommended)'], { side: 'path', path: 'D:\\serena-home' });
+});
+
+test("the question's recommended folder and the plan's default write the same entry: every located row and scope, alfred-code or not, a spaced profile, a guarded name", () => {
+    const located = catalog.tools.filter((r) => r.locations);
+    for (const base of [MAC, WIN])
+        for (const home of base.os === 'win32' ? ['C:\\Users\\me', 'C:\\Users\\Jane Doe'] : ['/Users/me'])
+            for (const alfred of [false, true])
+                for (const name of [undefined, 'docs'])
+                {
+                    const P = base.os === 'win32' ? path.win32 : path.posix;
+                    const gi = P.join(base.project, '.alfred', '.gitignore');
+                    const exists = (p) => alfred && p === gi;
+                    const i = inv(base, { alfredCodeEnabled: alfred });
+                    const ctx = { project: base.project, platform: base.os, arch: base.arch, home, env: {}, exists };
+                    for (const row of located.filter((r) => r.os.includes(base.os)))
+                        for (const scope of asks.scopesFor(row, row.recommendedRoute, ctx))
+                        {
+                            const at = `${base.os} ${home} ${row.id} ${scope} alfred:${alfred} name:${name}`;
+                            const l = asks.locationQuestion(row, i, { scope, name, ctx });
+                            if (l.question) checkQuestion(l.question);
+                            const rec = l.question ? l.answers[l.question.options[0].label] : l.only;
+                            assert.ok(rec, `${at}: the recommended option has an answer`);
+                            const pick = { scope, ...(name ? { name } : {}) };
+                            const byDefault = plan(i, pickOne(row.id, pick), opts(home, { exists }));
+                            const byAnswer = plan(i, pickOne(row.id, { ...pick, location: rec }), opts(home, { exists }));
+                            assert.deepStrictEqual(byDefault.errors, byAnswer.errors, at);
+                            assert.deepStrictEqual(addStep(byDefault) && addStep(byDefault).entry, addStep(byAnswer) && addStep(byAnswer).entry, at);
+                        }
+                }
 });

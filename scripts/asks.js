@@ -291,9 +291,15 @@ function locationQuestion(row, inv, { scope, name = null, current = null, copyOf
     if (!serenaWin) places.push({ side: 'account', root: E.otherPlace(row, folder, 'account') });
     else
     {
-        // serena's account folder on Windows is the profile's .serena, plan.js's default for it
+        // serena's account folder on Windows is the profile's .serena, plan.js's default for it; a profile path with a
+        // space gets a space-free folder in its place (plan.js takes the same one by default)
         const profile = E.serenaWindowsHome(ctx);
         if (!profile.needsInput) places.push({ side: 'account', root: profile.root, answer: { side: 'default' } });
+        else
+        {
+            const free = E.serenaSpaceFree(ctx);
+            places.push({ side: 'account', root: free, label: 'A space-free folder', answer: { side: 'path', path: free.path }, description: `${free.path} - your profile path ${ctx.home} has a space, which serena's home cannot hold; one folder for every project on this machine` });
+        }
     }
     const old = !current && !serenaWin ? E.alfredRoot(row, ctx) : null;
     if (old && writable(old)) places.push({ side: 'alfred', root: old });
@@ -307,16 +313,12 @@ function locationQuestion(row, inv, { scope, name = null, current = null, copyOf
     }
     const at = (p) => E.formatRoot(p.root, scope, ctx, { backslash: serenaWin }).value;
     const listed = keep ? [keep, ...places.filter((p) => at(p) !== at(keep))] : places;
-    if (serenaWin)
-    {
-        const profile = E.serenaWindowsHome(ctx);
-        listed.push(profile.needsInput ? { side: 'path', label: 'Another folder', description: `${profile.needsInput} - under Other` } : { side: 'path', label: 'Another space-free folder', description: 'type the path under Other' });
-    }
+    if (serenaWin) listed.push({ side: 'path', label: 'Another space-free folder', description: 'type the path under Other' });
 
     let rec = 'keep';
     if (!keep)
     {
-        const side = E.recommendedSide(row, scope, ctx, { alfredHere, copy: !current && copyOf.length > 0 });
+        const side = E.recommendedSideFor(row, folder, scope, ctx, { alfredHere: E.alfredData(ctx, inv.alfredCodeEnabled), copy: !current && copyOf.length > 0 });
         rec = side === 'default' ? (serenaWin ? 'account' : loc.defaultSide) : side;
     }
     const first = listed.find((p) => p.side === rec) || listed[0];
@@ -333,7 +335,7 @@ function locationQuestion(row, inv, { scope, name = null, current = null, copyOf
     };
     const options = order.map((p, i) => ({ label: `${label(p)}${i === 0 ? REC : ''}`, description: describe(p) }));
     const answers = Object.fromEntries(order.map((p, i) => [options[i].label, p]).filter(([, p]) => p.side !== 'path').map(([l, p]) => [l, p.answer || { side: p.side }]));
-    // one place left: nothing to ask (serena on Windows with a spaced profile and no other folder still asks for one)
+    // one place left: nothing to ask
     if (order.length < 2 && first && first.side !== 'path') return { question: null, answers: {}, only: first.answer || { side: first.side } };
     if (!order.length) return { question: null, answers: {}, only: null };
     return { question: { id: `location-${row.id}`, header: 'Location', multiSelect: false, question: `${row.label}: where does its data live?`, options }, answers, only: null };

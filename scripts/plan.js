@@ -66,19 +66,10 @@ function resolveName(pick, row, cur, ctx)
     return n;
 }
 
-// The side a pick with no location takes: D3's table (E.recommendedSide), never .alfred/<name> for a name alfred-code
-// keeps for itself or one taken by a file there.
-function recommendedSideFor(row, name, scope, ctx, copy)
-{
-    const side = E.recommendedSide(row, scope, ctx, { alfredHere: ctx.alfredHere, copy });
-    if (side === 'alfred-data' && E.alfredNameProblem(name, ctx)) return E.recommendedSide(row, scope, ctx, { alfredHere: false, copy });
-    return side;
-}
-
 // `copy`: an install beside a registration of the same row at another scope (see E.recommendedSide).
 function wantedRoot(row, pick, cur, name, scope, ctx, copy = false)
 {
-    const loc = pick.location || { side: cur ? 'keep' : recommendedSideFor(row, name, scope, ctx, copy) };
+    const loc = pick.location || { side: cur ? 'keep' : E.recommendedSideFor(row, name, scope, ctx, { alfredHere: ctx.alfredHere, copy }) };
     const serenaWin = row.locations.windowsAbsolute && ctx.platform === 'win32';
     // serena on Windows at project scope: the committed file names the profile's .serena as ${USERPROFILE}\.serena, the
     // one absolute, space-free folder it can name without a machine path
@@ -115,8 +106,9 @@ function wantedRoot(row, pick, cur, name, scope, ctx, copy = false)
     else
     {
         const d = E.defaultRoot(row, name, ctx);
-        if (d.needsInput) return { error: d.needsInput };
-        root = d.root;
+        // serena on Windows with a spaced profile: the space-free folder the question recommends in its place
+        if (d.needsInput && !serenaWin) return { error: d.needsInput };
+        root = d.needsInput ? E.serenaSpaceFree(ctx) : d.root;
         existing = Boolean(d.existing);
     }
     if (row.locations.windowsAbsolute && ctx.platform === 'win32')

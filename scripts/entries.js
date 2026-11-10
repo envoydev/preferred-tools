@@ -117,6 +117,14 @@ function serenaWindowsHome(ctx)
     return { needsInput: `the profile path ${profile || '(unknown)'} has a space, and serena's home must be space-free on Windows: type an absolute folder without spaces (for example C:\\serena-home)` };
 }
 
+// A profile path with a space leaves serena no home under it: the space-free folder offered and taken by default in its
+// place, on the system drive.
+function serenaSpaceFree(ctx)
+{
+    const drive = (ctx.env && ctx.env.SystemDrive) || '';
+    return { kind: 'abs', path: `${/^[A-Za-z]:$/.test(drive) ? drive : 'C:'}\\serena-home` };
+}
+
 function validWindowsSerenaHome(rootStr)
 {
     return path.win32.isAbsolute(rootStr) && !/\s/.test(rootStr) && !rootStr.includes('/') && /^[A-Za-z]:\\/.test(rootStr);
@@ -196,6 +204,16 @@ function recommendedSide(row, scope, ctx, { alfredHere = false, copy = false } =
     if (copy && loc.defaultSide === 'account') return 'project';
     if (scope !== 'user' && alfredHere && loc.defaultSide !== 'account') return 'alfred-data';
     return 'default';
+}
+
+// The side recommended for a registration name: recommendedSide with `alfredHere` meaning alfred-code is set up here, and
+// never .alfred/<name> for a name alfred-code keeps for itself or one taken by a file there. The question and the plan's
+// default both ask this, so they agree.
+function recommendedSideFor(row, name, scope, ctx, { alfredHere = false, copy = false } = {})
+{
+    const side = recommendedSide(row, scope, ctx, { alfredHere, copy });
+    if (side === 'alfred-data' && alfredNameProblem(name, ctx)) return recommendedSide(row, scope, ctx, { alfredHere: false, copy });
+    return side;
 }
 
 function otherPlace(row, name, side)
@@ -368,7 +386,7 @@ function fetchOf(name, entry, rowId)
 }
 
 module.exports = {
-    pathFor, slashes, isWindowsArm, pythonRequest, parseRoot, logicalRoot, currentOf, formatRoot, withSub, homeVar, serenaWindowsHome, validWindowsSerenaHome,
+    pathFor, slashes, isWindowsArm, pythonRequest, parseRoot, logicalRoot, currentOf, formatRoot, withSub, homeVar, serenaWindowsHome, serenaSpaceFree, validWindowsSerenaHome,
     defaultRoot, alfredRoot, otherSide, otherPlace, rootOfEntry, applyRoot, buildEntry, nameProblem, subst, fetchStep,
-    ALFRED_ENTRIES, alfredData, alfredNameProblem, recommendedSide, machinePath, expandVars,
+    ALFRED_ENTRIES, alfredData, alfredNameProblem, recommendedSide, recommendedSideFor, machinePath, expandVars,
 };
