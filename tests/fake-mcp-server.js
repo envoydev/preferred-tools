@@ -3,13 +3,15 @@
 // A stdio MCP server for fetch.js's first start: `answer` replies to initialize and keeps running, as a real server does;
 // `exit` exits 3 before answering, as a server with a bad launch does. With `--log <file> --tag <tag>` it appends
 // {"tag", "cwd"} to the file as one JSON line when it starts, so a probe can tell which registrations a session started,
-// and exits when its stdin closes, so a session that ends leaves none running.
+// and exits when its stdin closes, so a session that ends leaves none running. FAKE_MCP_LOG_ENV (names, comma-separated)
+// adds "env": ["env:<NAME>=set|unset", ...] - whether the server inherited each variable, never its value.
 const fs = require('node:fs');
 const mode = process.argv[2] || 'answer';
 const opt = (name) => { const at = process.argv.indexOf(name); return at > 0 ? process.argv[at + 1] : null; };
 if (opt('--log'))
 {
-    fs.appendFileSync(opt('--log'), `${JSON.stringify({ tag: opt('--tag'), cwd: process.cwd() })}\n`);
+    const env = String(process.env.FAKE_MCP_LOG_ENV || '').split(',').filter(Boolean).map((n) => `env:${n}=${process.env[n] ? 'set' : 'unset'}`);
+    fs.appendFileSync(opt('--log'), `${JSON.stringify({ tag: opt('--tag'), cwd: process.cwd(), ...(env.length ? { env } : {}) })}\n`);
     process.stdin.on('end', () => process.exit(0));
 }
 if (mode === 'exit') { process.stderr.write('fake server: cannot start\n'); process.exit(3); }

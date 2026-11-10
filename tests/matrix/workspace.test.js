@@ -7,7 +7,10 @@
 //   W2  alfred-code solo, root and child: the same steps, a pasted key moved by configure, a server of the user's own,
 //       and every file alfred-code wrote left as it was
 //   W3  a subfolder session: the project file and the local key land where Claude Code puts them (M4)
-//   W4  key files: the key written in from the file the scope reads, ${VAR} at project scope, token-sync after a change
+//   W4  key files: the key written in from the file the scope reads, ${VAR} at project scope, token-sync after a change,
+//       and a near-miss name in a parent's store named by the plan
+//   W5  a root's project-scope tool in alfred-code's folder: inherited by the child, its ignores in a child and a
+//       subfolder (data-folder-ignore), and the environment a server starts with
 //
 // alfred-code's source is --alfred, else PREFERRED_TOOLS_ALFRED, else ../alfred-code (Global Constraints); a version it
 // cannot resolve is NOT RUN, named.
@@ -206,13 +209,25 @@ test('W4 - key files with alfred-code: the child reads its parent\'s store; v2.9
     if (b.workspaceNotRun) return t.skip(`NOT RUN - workspace: ${b.workspaceNotRun}`);
     const h = b.harness;
     const s = keyValue('ws');
-    putKeys(path.join(b.root, '.alfred', '.secrets'), { [S]: s });
+    const tg = keyValue('tg');
+    const store = path.join(b.root, '.alfred', '.secrets');
+    putKeys(store, { [S]: s, ACME_GITHUB_ACCESS_TOKEN: tg });
     const r = h.run(b.child, { picks: { sentry: { route: 'local', scope: 'local', name: 'sentry-keys' } } });
     noErrors(r);
     ok(r);
     assert.strictEqual(localOf(h, b.child)['sentry-keys'].env[S], s, "the workspace parent's store, through alfred-code's own chain");
     assert.ok(!fs.existsSync(path.join(b.child, '.preferred-tools')), 'no preferred-tools key file named or made');
     noValueInTmp(h, [s]);
+
+    // the near-miss: the root's store holds the GitHub key under another name, and project scope reads no key file
+    const gh = h.run(b.root, { picks: { github: { route: 'remote', scope: 'project' } } });
+    noErrors(gh);
+    ok(gh);
+    assert.ok(gh.rendered.includes(`reads \${${G}} from the environment Claude Code starts with - NOT set in this shell.`), gh.rendered);
+    assert.ok(gh.rendered.includes(`${store} holds ACME_GITHUB_ACCESS_TOKEN, not ${G}: add the key under ${G}.`), gh.rendered);
+    assert.ok(![gh.rendered, gh.text, JSON.stringify(gh.plan)].join('\n').includes(tg), 'no value printed');
+    noValueInTmp(h, [s, tg]);
+    ok(h.run(b.root, { remove: [{ kind: 'mcp', name: 'github', scope: 'project' }] }));
 
     const old = buildAlfred(path.join(root, 'w4-old'), { version: '2.9.0' });
     if (old.notRun) return t.diagnostic(`NOT RUN - v2.9.0: ${old.notRun}`);
@@ -222,4 +237,79 @@ test('W4 - key files with alfred-code: the child reads its parent\'s store; v2.9
     ok(r2);
     assert.strictEqual(localOf(old.harness, old.solo).sentry.env[S], o, 'the older store name, read with no engine');
     noValueInTmp(old.harness, [o]);
+});
+
+// ---- W5 ---------------------------------------------------------------------------------------------------------------
+
+test('W5 - a root\'s project-scope tool in alfred-code\'s folder: the child inherits it, and the ignores in a child and a subfolder', T, (t) =>
+{
+    const b = alfredWorld();
+    if (b.notRun) return t.skip(`NOT RUN - ${b.notRun}`);
+    if (b.workspaceNotRun) return t.skip(`NOT RUN - workspace: ${b.workspaceNotRun}`);
+    const lacking = [b.root, b.child].filter((d) => !fs.existsSync(path.join(d, '.alfred', '.gitignore')));
+    if (lacking.length) return t.skip(`NOT RUN - alfred-code wrote no .alfred/.gitignore in ${lacking.map((d) => path.basename(d)).join(', ')}`);
+    const h = b.harness;
+    const relative = catalog.byId.get('playwright-chrome').locations.relative === true;
+    const r = h.run(b.root, { picks: { 'playwright-chrome': { scope: 'project' } } });
+    noErrors(r);
+    ok(r);
+    const args = readJson(path.join(b.root, '.mcp.json')).mcpServers['playwright-chrome'].args;
+    const homeVar = process.platform === 'win32' ? '${USERPROFILE}' : '${HOME}';
+    assert.strictEqual(args[args.indexOf('--user-data-dir') + 1], relative ? '.alfred/playwright-chrome' : `${homeVar}/.preferred-tools/playwright-chrome`, "alfred-code's folder when the row is proven relative, else the account folder");
+    assert.ok(h.inventory(b.child).registrations.some((x) => x.scope === 'inherited' && x.name === 'playwright-chrome' && x.from === b.root), 'the child lists it inherited');
+
+    const ctxAt = (dir) => fix.makeCtx({ inv: h.inventory(dir), env: h.env });
+    const findings = (dir) => fix.detectAll(ctxAt(dir), { only: 'data-folder-ignore' }).found;
+    assert.deepStrictEqual(findings(b.child), [], "the child's own .alfred/.gitignore covers it");
+    const bare = gitDir(path.join(b.root, 'bare'));
+    const src = path.join(b.child, 'src');
+    fs.mkdirSync(src, { recursive: true });
+    if (!relative)
+    {
+        for (const d of [bare, src]) assert.deepStrictEqual(findings(d), [], `${path.basename(d)}: no relative folder anywhere`);
+        t.diagnostic('NOT RUN - the relative cases (a child without alfred-code, a subfolder): playwright-chrome is relative: false, so the root holds no relative folder');
+    }
+    else
+        for (const d of [bare, src])
+        {
+            const want = path.join(d, '.alfred', 'playwright-chrome');
+            assert.deepStrictEqual(findings(d).map((f) => f.proposal.path), [want], `${path.basename(d)}: found`);
+            const lines = [];
+            const res = fix.applyFixes(ctxAt(d), ['data-folder-ignore'], { tmp: path.join(h.root, 'tmp', 'fix-w5'), log: (...a) => lines.push(a.join(' ')) });
+            assert.strictEqual(res.failed, null, lines.join('\n'));
+            assert.strictEqual(fs.readFileSync(path.join(want, '.gitignore'), 'utf8'), '*\n', `${path.basename(d)}: read back from disk`);
+            assert.deepStrictEqual(findings(d), [], `${path.basename(d)}: covered after the fix`);
+        }
+    ok(h.run(b.root, { remove: [{ kind: 'mcp', name: 'playwright-chrome', scope: 'project' }] }));
+});
+
+// What a `claude -p` needs and nothing more (tests/probes/mcp-tree.js): no credential of the shell running the matrix.
+const KEEP = new Set(['PATH', 'PATHEXT', 'SYSTEMROOT', 'SYSTEMDRIVE', 'COMSPEC', 'WINDIR', 'PROGRAMFILES', 'PROGRAMDATA', 'TEMP', 'TMP', 'TMPDIR', 'LANG', 'TERM']);
+const FAKE = path.resolve(__dirname, '..', 'fake-mcp-server.js');
+
+test('W5 - a stdio server inherits the environment Claude Code starts with: a parent\'s project server started from its child', T, (t) =>
+{
+    const h = new Harness({ root: path.join(root, 'w5-env') });
+    const ws = gitDir(path.join(h.projects, 'ws'));
+    const api = gitDir(path.join(ws, 'api'));
+    const log = path.join(h.root, 'env.log');
+    const entry = { command: process.execPath, args: [FAKE, 'answer', '--log', log, '--tag', 'env'], env: { FAKE_MCP_LOG_ENV: 'ANDROID_HOME' } };
+    assert.strictEqual(h.claude(ws, ['mcp', 'add-json', 'env-probe', JSON.stringify(entry), '-s', 'project']).status, 0);
+    // approves every project server, a parent's included (M7, M8)
+    fs.writeFileSync(path.join(h.account, 'settings.json'), JSON.stringify({ enableAllProjectMcpServers: true }));
+    const env = Object.fromEntries(Object.entries(h.env).filter(([k]) => KEEP.has(k.toUpperCase())));
+    Object.assign(env, {
+        HOME: h.home, USERPROFILE: h.home, APPDATA: path.join(h.home, 'AppData', 'Roaming'), LOCALAPPDATA: path.join(h.home, 'AppData', 'Local'),
+        CLAUDE_CONFIG_DIR: h.account, DISABLE_AUTOUPDATER: '1', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', MCP_SERVER_CONNECTION_BATCH_SIZE: '20',
+    });
+    const auth = cli.run(['auth', 'status'], { cwd: api, env });
+    if (!/"loggedIn":\s*false/.test(`${auth.stdout || ''}${auth.stderr || ''}`)) return t.skip('NOT RUN - the throwaway account is not reported logged out, and a claude -p never runs logged in');
+    for (const [value, want] of [[path.join(h.home, 'android-sdk'), 'set'], [null, 'unset']])
+    {
+        fs.rmSync(log, { force: true });
+        cli.run(['-p', 'hi'], { cwd: api, env: value ? { ...env, ANDROID_HOME: value } : env, timeout: 90000 });
+        const starts = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
+        assert.ok(starts.length > 0, `the parent's server started from the child (ANDROID_HOME ${want})`);
+        for (const s of starts) assert.deepStrictEqual([s.cwd, s.env], [api, [`env:ANDROID_HOME=${want}`]], 'in the folder Claude started in, with the variable as Claude Code had it');
+    }
 });
