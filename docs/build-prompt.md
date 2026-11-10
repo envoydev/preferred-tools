@@ -137,20 +137,21 @@ tools' data):
 1. The project default `.preferred-tools/<registration name>/`. Memory's default is the account folder
    `~/.preferred-tools/memory/`, shared across projects as before.
 2. The alfred-code data already on disk, when present - the user's existing profiles, index and memories - is offered
-   as a second, not recommended, answer ('Use alfred-code's `x`'), saying the folder is alfred-code's. Read each row's
+   at install, never recommended ('alfred-code 2.x data'), saying the folder is alfred-code's. Read each row's
    old root from its entry in `original-mcps.json`, never from a pattern: serena `.alfred/serena/home` (its
    `SERENA_HOME`, not `.alfred/serena`), each browser `.alfred/<engine>-control`, appium `.alfred/mobile-control`,
    memory `~/.alfred-memory`.
 
-The walk's second option is always the other place: the account folder `~/.preferred-tools/<registration name>/`
-for a project default, the project folder for memory. Path form by scope: at `local` and `user` scope `plan.js`
+The walk also offers the other place: the account folder `~/.preferred-tools/<registration name>/` for a project
+default, the project folder for memory - each option only where it can be written at the scope, the recommended one
+first (alfred-code's folder, below, changes which). Path form by scope: at `local` and `user` scope `plan.js`
 writes the root resolved to an absolute path, with `~` expanded by the script (never left for the server). So a
 session started in a subfolder uses the same profile, index and database. Only `project` scope writes it relative.
 `plan.js` has a test per scope. A folder the plugin creates gets a `.gitignore` holding `*`, so the project's own `.gitignore` is
 never edited. Moving a location never moves data: the walk says where the old data is and leaves it. One exception
 to the defaults: serena on Windows. Its root must be absolute, in backslashes and space-free (fix row
 `serena-windows-home`), so that rule wins over the order above. The walk offers `C:\Users\<name>\.serena` when the
-profile path has no space, else asks for a space-free folder.
+profile path has no space, else `<system drive>\serena-home`, and 'Another space-free folder' to type one.
 
 **alfred-code's folder (the user's rulings, 2026-11-10).** Where alfred-code is set up in the project - enabled for it,
 and its `.alfred/.gitignore` there - three rulings replace the default above: 'Offer it, not default, but also do this
