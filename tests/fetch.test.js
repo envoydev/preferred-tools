@@ -70,6 +70,29 @@ test('fetch.js fetches and then starts each server in turn, from its registratio
     finally { w.clean(); }
 });
 
+test('a step with `from` reads its registration from that folder\'s .mcp.json and starts it here, as a child folder\'s session starts a parent\'s server', async () => {
+    const w = world();
+    try
+    {
+        const parent = path.dirname(w.project);
+        writeJson(path.join(parent, '.mcp.json'), { mcpServers: { pw: NPX } });
+        const step = { ...E.fetchStep('pw', NPX, 'playwright-chrome'), scope: 'project', from: parent };
+        const file = fetchLib.writeJob(path.join(w.dir, 'tmp', 'fetch.json'), fetchLib.job(w.project, [step], ['pw']));
+        assert.strictEqual(JSON.parse(fs.readFileSync(file, 'utf8')).fetch[0].from, parent, 'kept in the file');
+        const started = [];
+        const res = await fetchLib.run(JSON.parse(fs.readFileSync(file, 'utf8')), {
+            env: w.env,
+            runFetch: () => ({ status: 0 }),
+            start: async (entry, o) => { started.push([entry.args[1], o.cwd]); return { ok: true, ms: 900 }; },
+            runCli: () => ({ status: 0, stdout: 'Status: ✔ Connected\n' }),
+            log: () => {},
+        });
+        assert.deepStrictEqual(started, [['@playwright/mcp@0.0.83', w.project]]);
+        assert.deepStrictEqual(res.warnings, []);
+    }
+    finally { w.clean(); }
+});
+
 test('the CLI form: a real first start is answered and stopped; a failed fetch or start is a warning that changes nothing (exit 1); a bad file exits 2', () => {
     const w = world();
     try
@@ -152,6 +175,28 @@ test('the fake server logs its tag and working folder when it starts, and only w
         assert.deepStrictEqual(fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l)), [{ tag: 'p-api', cwd: fs.realpathSync(w.dir) }]);
         spawnSync(process.execPath, [fake, 'answer'], { cwd: w.dir, input: init, encoding: 'utf8', timeout: 1500 });
         assert.strictEqual(fs.readFileSync(log, 'utf8').trim().split('\n').length, 1, 'no --log, no line');
+    }
+    finally { w.clean(); }
+});
+
+test('writeJob with append adds to a fetch file already there: its steps stay as written, the checks once each', () => {
+    const w = world();
+    try
+    {
+        const file = path.join(w.dir, 'tmp', 'fetch.json');
+        const serena = { ...E.fetchStep('serena', UVX, 'serena'), scope: 'user' };
+        fetchLib.writeJob(file, fetchLib.job(w.project, [serena], ['serena']));
+        const first = JSON.parse(fs.readFileSync(file, 'utf8'));
+        const pw = { ...E.fetchStep('pw', NPX, 'playwright-chrome'), scope: 'project' };
+        assert.strictEqual(fetchLib.writeJob(file, fetchLib.job(w.project, [pw], ['pw', 'serena']), { append: true }), file);
+        const both = JSON.parse(fs.readFileSync(file, 'utf8'));
+        assert.deepStrictEqual(both.fetch[0], first.fetch[0], 'the step already there is not rewritten');
+        assert.deepStrictEqual(both.fetch.map((s) => [s.name, s.scope, s.what]), [['serena', 'user', 'serena-agent@2.1.0'], ['pw', 'project', '@playwright/mcp@0.0.83']]);
+        assert.deepStrictEqual(both.check, ['serena', 'pw']);
+        // with no file there yet, append writes a new one
+        const fresh = path.join(w.dir, 'tmp2', 'fetch.json');
+        fetchLib.writeJob(fresh, fetchLib.job(w.project, [pw], ['pw']), { append: true });
+        assert.deepStrictEqual(JSON.parse(fs.readFileSync(fresh, 'utf8')).check, ['pw']);
     }
     finally { w.clean(); }
 });

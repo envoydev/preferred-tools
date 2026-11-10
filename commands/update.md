@@ -82,7 +82,8 @@ One server at a time, it downloads each new pin and starts the server once with 
 server's status (`claude mcp get`): without it the first session start does that download, and any first-run work of
 the new version, inside Claude Code's 30-second limit, and a first download can take minutes. Claude Code asks
 permission for it - it downloads and runs a package's install and starts the server. Tell the user to restart only once
-it reports, so a session start does not download the same package beside it; paste its output when it finishes. A
+it reports, so a session start does not download the same package beside it (an npx server then fails at every start
+with `ENOENT` until `/preferred-tools:fix` repairs it); paste its output when it finishes. A
 `warn` line changes nothing: the registration is updated, and its first start downloads the pin and may time out once. When background runs
 are turned off, run it in the foreground with `timeout: 600000`, and again if the limit stops it. End with the restart line (new
 servers load on the next session start; `/reload-plugins` for plugins).

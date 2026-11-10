@@ -22,6 +22,7 @@ const { apply } = require('./apply.js');
 const tmpdir = require('./tmpdir.js');
 const cli = require('./claude-cli.js');
 const { blockingStdio } = require('./json-file.js');
+const fetchLib = require('./fetch.js');
 const F = require('./fixes/index.js');
 const { realMachine, clone } = require('./fixes/common.js');
 const { deepEqual } = require('./plan.js');
@@ -154,14 +155,24 @@ function applyFixes(ctx, ids, { only, input = {}, tmp, log = console.log, runCli
         if (report.failed) { res.failed = report.failed.detail; return res; }
     }
 
-    // machine fixes; one that says `restart: false` (a .gitignore written) changes nothing a session has started
+    // machine fixes; one that says `restart: false` (a .gitignore written) changes nothing a session has started, and one
+    // that returns `fetch` (an npx cache folder removed) leaves a package for fetch.js to download again
     const noRestart = new Set();
+    const refetch = [];
     for (const f of todo.filter((x) => x.kind === 'machine'))
     {
         const r = F[ctx.catalog.fixes.find((x) => x.id === f.id).fix](f, ctx);
         log(`${r.ok ? 'ok    ' : 'FAILED'} ${f.id}: ${r.detail}`);
         if (!r.ok) { res.failed = r.detail; return res; }
         if (r.restart === false) noRestart.add(f);
+        if (r.fetch) refetch.push(r.fetch);
+    }
+    if (refetch.length)
+    {
+        // beside a fetch file a registration fix already wrote, or in a new one
+        res.tmp = res.tmp || tmp || fs.mkdtempSync(path.join(os.tmpdir(), 'preferred-tools-fix-'));
+        res.fetchFile = fetchLib.writeJob(res.fetchFile || path.join(res.tmp, 'fetch.json'), fetchLib.job(ctx.inv.project, refetch, refetch.map((s) => s.name)), { append: true });
+        log('', ...fetchLib.nextLines(res.fetchFile, JSON.parse(fs.readFileSync(res.fetchFile, 'utf8'))));
     }
 
     // read back: the same detectors, run again on what is installed now
@@ -172,7 +183,7 @@ function applyFixes(ctx, ids, { only, input = {}, tmp, log = console.log, runCli
         (left ? res.remaining : res.applied).push(f);
         log(`${left ? 'STILL FOUND' : 'fixed      '} ${f.id} on ${where(f)}`);
     }
-    if (res.applied.some((f) => !noRestart.has(f))) log('', 'Restart Claude Code so the repaired registrations and the language server start fresh.');
+    if (res.applied.some((f) => !noRestart.has(f))) log('', `Restart Claude Code so the repaired registrations and the language server start fresh${res.fetchFile ? ' - after the fetch reports, so a session start does not download the same package beside it' : ''}.`);
     return res;
 }
 

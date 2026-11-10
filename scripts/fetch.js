@@ -100,11 +100,15 @@ const job = (project, fetch, check) => ({ version: VERSION, project, fetch, chec
 
 // Each step's argv and env as kept.js keeps them, so the file a command line names holds no live credential: a download
 // needs none (a kept value expands to ''), and the first start reads the registration itself.
-function writeJob(file, j)
+// `append` adds to a fetch file already there (fix: a registration's fetch, then a machine fix's): its steps are kept
+// already, so only the new ones go through kept.keep.
+function writeJob(file, j, { append = false } = {})
 {
     fs.mkdirSync(path.dirname(file), { recursive: true });
+    const prior = append && fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
     const fetch = j.fetch.map((s) => { const k = kept.keep({ args: s.argv, env: s.env }, null); return { ...s, argv: k.args, env: k.env }; });
-    fs.writeFileSync(file, `${JSON.stringify({ ...j, fetch }, null, 2)}\n`);
+    const out = prior ? { ...prior, fetch: [...prior.fetch, ...fetch], check: [...new Set([...prior.check, ...j.check])] } : { ...j, fetch };
+    fs.writeFileSync(file, `${JSON.stringify(out, null, 2)}\n`);
     return file;
 }
 
@@ -151,8 +155,9 @@ async function run(j, { env = process.env, runFetch = realFetch, start = realSta
         res.fetched.push(step.what);
         log(`${n}. ok     ${step.what} is in the cache (${Math.round((Date.now() - t0) / 1000)}s)`);
 
-        // the first start, as written: whatever it downloads or builds on top of the package happens now
-        const entry = step.scope ? account.readRegistration(step.name, step.scope, cwd, env) : undefined;
+        // the first start, as written: whatever it downloads or builds on top of the package happens now. `from` names
+        // the parent folder whose .mcp.json holds a server this folder inherits (fix's npx-cache-entry); it starts here.
+        const entry = step.scope ? account.readRegistration(step.name, step.scope, step.from || cwd, env) : undefined;
         if (!entry || !entry.command) { warn(n, `'${step.name}' is not at ${step.scope || 'a known'} scope any more - not started`); continue; }
         const missing = unsetVar(entry, env);
         if (missing)

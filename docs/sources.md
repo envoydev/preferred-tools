@@ -238,6 +238,21 @@ unchanged (every newer release is under 7 days old).
   two first installs of the same package running at once left `_npx/<hash>` without its `package.json` and the start
   failed with `ENOENT` (a local repro, not shipped). Hence `fetch.js` runs one fetch at a time and the commands ask
   for the restart only after it reports.
+- MEASURED on npm 11.6.1, macOS, 2026-11-10 (a throwaway `npm_config_cache`): an `_npx/<hash>` folder without its
+  `package.json` does not heal - the second and the third `npx -y semver@7.6.3` both failed with `ENOENT ... Could not
+  read package.json` (exit 254). The folder's name is libnpmexec's: `sha512` of the package specs, sorted and joined by
+  a newline, hex, the first 16 characters (`node_modules/libnpmexec/lib/index.js` in npm 11.6.1; `semver@7.6.3` ->
+  `efc2fc194987058d`, the folder npx made). `fetch.js`'s `npm exec --yes --package <spec>` names the same folder. Hence
+  fix row `npx-cache-entry`, which removes that one folder and fetches the package again.
+- MEASURED on npm 10.9.2 and 11.6.1, macOS, 2026-11-10 - where that cache is: both refuse `npm config get cache` (and
+  with `--json`): 'The cache option is protected, and can not be retrieved in this way', exit 1. `npm config ls -l`
+  prints every source's `cache` as a JSON string, the one in force as `cache = "<folder>"` and each other commented out,
+  `; cache = "<folder>" ; overridden by env` (a project `.npmrc`'s value was overridden by `npm_config_cache` in the
+  environment, so the environment comes first). `npm config list --json` printed no `cache` key once a `.npmrc` or the
+  environment set one. npm printed a UUID-shaped part of a path as `***` (the throwaway cache's path held one). So the
+  fix reads the registration's own `npm_config_cache`, then the environment's, then `ls -l`, and takes a value with `***`
+  as unknown. End to end, real npm 11.6.1 on a throwaway cache: the broken folder's start exit 254 -> found -> removed ->
+  the fetch step exit 0 -> found no more -> `npx -y semver@7.6.3 1.2.3` printed `1.2.3`, exit 0.
 
 ## Claude Code - plugin CLI
 

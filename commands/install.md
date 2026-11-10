@@ -197,7 +197,8 @@ so this one starts in the background. Claude Code asks permission for it - it do
 starts the server - so it is not in `allowed-tools`.
 
 Tell the user it is running, and to restart Claude Code only once it reports: a session started now begins the same
-download beside it, and two at once is the one case measured to break a start. When it finishes, paste its output
+download beside it, and two at once is the one case measured to break a start - an npx server then fails at every start
+with `ENOENT` until `/preferred-tools:fix` (`npx-cache-entry`) repairs it. When it finishes, paste its output
 verbatim and end with the restart line: the new registrations load on the next session start, and a project-scope
 server also needs the trust prompt then. A `warn` line changes nothing: the registration stays, and its first session
 start does the download or first-run work and may time out once - say so. When background runs are turned off, run it

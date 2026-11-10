@@ -199,7 +199,8 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/fetch.js" "<file>"
 It is `/preferred-tools:install` step 8, word for word: one server at a time, it fills the runtime's cache and starts the
 server once with no 30-second limit, so its first-run work (memory's model download) is done before the next session,
 then prints each changed server's status (`claude mcp get`); Claude Code asks permission for it. Tell the user to
-restart only once it reports, paste its output when it finishes, and say a `warn` line changes nothing.
+restart only once it reports, paste its output when it finishes, and say a `warn` line changes nothing. An npx server
+that fails at every start with `ENOENT` afterwards was started beside the download: `/preferred-tools:fix` repairs it.
 A rename, a scope move or a location change keeps the package: it prints no fetch line, and the apply printed each status
 itself. End with the restart line: a changed registration loads on the next session start, and a project-scope server
 also needs the trust prompt then. When background runs are turned off, run fetch.js in the foreground with

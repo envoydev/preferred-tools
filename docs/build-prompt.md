@@ -305,7 +305,8 @@ Two rules hold for every command and the skill:
    background (stopped, where background runs are off), so its report would not come back in the turn that asked for
    it. `apply.js` writes the written servers' fetch steps, each with its scope, to `<tmp>/fetch.json`, and the command
    runs `fetch.js` on it in the background, one server at a time (two first npx installs at once is the one case
-   measured to break a start), ending with `claude mcp get` for each status. A server whose registration needs an
+   measured to break a start, and it does not heal: fix row `npx-cache-entry` removes the broken folder and fetches it
+   again), ending with `claude mcp get` for each status. A server whose registration needs an
    unset `${VAR}` is fetched, not started. A failed fetch or start is a warning: the registration stays and its first
    session start tries again. With nothing to fetch (a hosted route, a rename, a move) apply asks for the status
    itself. `fetch.js` runs package installs and starts servers, so like `apply.js` it is never in `allowed-tools`.
@@ -426,6 +427,7 @@ rows - each `source` line is the alfred-code file to read for the detail:
 | token-sync | a token server at local or user scope lacks the key its key file has, or holds an older one | write the key in from the key file (a user registration holding a key: only from `~/.preferred-tools/.secrets`) | `scripts/keys.js`, D7 |
 | typescript-lsp-ts7 | typescript-lsp shows no diagnostics (TypeScript 7 ships no `tsserver.js`) | `npm install -g typescript-language-server typescript@6` | alfred-code `meta/stack-manifest.json`, the typescript-lsp row |
 | windows-mcp-one-per-desktop | windows-desktop shows connected in `/mcp` but its desktop tools stay unavailable: windows-mcp 0.8.8 makes one missed overlay confirmation permanent for the process, and a second windows-mcp on the same desktop is the likely cause | advice only (`advice: true`, `fix: null`): two or more windows-mcp servers starting here are reported, each with how its owner drops it; nothing is changed, and a stuck one recovers in a new session | `docs/sources.md` 'windows-mcp 0.8.8 - the sticky overlay failure' |
+| npx-cache-entry | an npx server fails at every start with `ENOENT` reading `<npm cache>/_npx/<hash>/package.json`: two first installs of one package at once (a session started while `fetch.js` runs) left the folder without it, and npx never repairs it. The cache is the machine's, so a server this folder inherits from a parent's `.mcp.json` is checked too | remove that one folder, then `fetch.js` fills it again (a parent's server read from the parent's file, started here) | measured on npm 10.9.2 and 11.6.1 (`docs/sources.md`) |
 
 A new problem the user meets later becomes a new row, with its `verifiedOn`.
 

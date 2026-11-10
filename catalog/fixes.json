@@ -220,6 +220,29 @@
       "fix": "dataFolderIgnoreFix",
       "verifiedOn": "this build: tests/fix.test.js data-folder-ignore (2026-11-10); a stdio server starts in the session's folder (tests/probes/mcp-tree.js)",
       "source": "docs/build-prompt.md 'Locations' (a data folder in another folder Claude starts in); docs/sources.md 'Relative data folders - the probe'"
+    },
+    {
+      "id": "npx-cache-entry",
+      "tool": [
+        "context7",
+        "playwright-chrome",
+        "playwright-msedge",
+        "playwright-firefox",
+        "playwright-webkit",
+        "appium",
+        "sentry"
+      ],
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "kind": "machine",
+      "symptom": "an npx server fails at every start with ENOENT reading <npm cache>/_npx/<hash>/package.json: two first installs of one package at once - a session started while the fetch runs - left npx's cache folder without it, and npx never repairs it",
+      "detect": "npxCacheEntryDetect",
+      "fix": "npxCacheEntryFix",
+      "verifiedOn": "this build: npm 11.6.1 on macOS - an _npx folder without its package.json failed every later start with ENOENT (exit 254), and its name is libnpmexec's sha512 of the package spec; npm 10.9.2 and 11.6.1 refuse npm config get cache, and npm config ls -l names the cache in force; end to end on a throwaway cache: found, removed, fetched, then the start printed its answer (2026-11-10); tests/fix.test.js npx-cache-entry",
+      "source": "docs/sources.md 'Claude Code - time limits behind the fetch step' (the npx measurements); npm 11.6.1 node_modules/libnpmexec/lib/index.js"
     }
   ]
 }

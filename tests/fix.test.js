@@ -349,6 +349,137 @@ test('data-folder-ignore: a relative folder here with no ignore is found and fix
     finally { w.clean(); }
 });
 
+// ---- npx-cache-entry ------------------------------------------------------------------------------------------------
+
+// npx's folder for one package spec, as npm 11.6.1's libnpmexec names it: sha512 of the spec, hex, the first 16
+const npxFolder = (cache, spec) => path.join(cache, '_npx', require('node:crypto').createHash('sha512').update(spec).digest('hex').slice(0, 16));
+// npm in force with this cache, as npm 10.9.2 and 11.6.1 answer (measured): `config get cache` is refused, and
+// `config ls -l` prints each source's value, all but the one in force commented out; any other call fails
+const npmAt = (cache, over = {}) => noMachine({
+    exists: (p) => require('node:fs').existsSync(p),
+    run: (cmd, args) =>
+    {
+        const a = `${cmd} ${args.join(' ')}`;
+        if (a === 'npm config get cache') return { status: 1, stdout: '', stderr: 'npm error The cache option is protected, and can not be retrieved in this way\n' };
+        if (a === 'npm config ls -l') return { status: 0, stdout: `; "default" config\n; cache = ${JSON.stringify(path.join(cache, 'not-this'))} ; overridden by env\ncache-max = null\n\n; "env" config from environment\ncache = ${JSON.stringify(cache)}\r\n`, stderr: '' };
+        return { status: 1, stdout: '', stderr: '' };
+    },
+    ...over,
+});
+
+test('npx-cache-entry: an npx server whose cache folder lost its package.json is found; the fix removes that folder only and fetches it again', () =>
+{
+    const fs = require('node:fs');
+    const w = world();
+    try
+    {
+        const cache = path.join(w.home, '.npm');
+        const spec = '@playwright/mcp@0.0.84';
+        const folder = npxFolder(cache, spec);
+        const pw = reg('playwright-chrome', { command: 'npx', args: ['-y', spec, '--browser', 'chrome'], env: { npm_config_before: '2026-11-10T23:59:59Z' } }, { scope: 'project' });
+        const ctx = (registrations = [pw], machine = npmAt(cache)) => ctxFor({ platform: process.platform, project: w.project, registrations, machine });
+        const found = (registrations, machine) => F.npxCacheEntryDetect(ctx(registrations, machine));
+
+        assert.deepStrictEqual(found(), [], 'no folder yet: npx has not run');
+        fs.mkdirSync(path.join(folder, 'node_modules'), { recursive: true });
+        fs.writeFileSync(path.join(folder, 'package.json'), '{}\n');
+        assert.deepStrictEqual(found(), [], 'a whole folder');
+        fs.rmSync(path.join(folder, 'package.json'));
+        const [f] = found();
+        assert.deepStrictEqual([f.id, f.row, f.name, f.scope, f.proposal], ['npx-cache-entry', 'playwright-chrome', 'playwright-chrome', 'project', { path: folder, what: spec }]);
+        assert.match(f.found, /no package\.json/);
+        assert.match(f.found, /ENOENT/);
+        assert.ok(!JSON.stringify(f).includes('npm_config_before'), 'a finding carries no env - a key could be in it');
+        assert.deepStrictEqual(fix.detectAll(ctx(), { only: 'npx-cache-entry' }).found.map((x) => [x.id, x.kind, Boolean(x.blocked)]), [['npx-cache-entry', 'machine', false]]);
+        // Windows' cmd /c npx is the same package, the same folder: two registrations of it, one finding
+        const edge = reg('playwright-msedge', { command: 'cmd', args: ['/c', 'npx', '-y', spec, '--browser', 'msedge'] }, { scope: 'local' });
+        assert.strictEqual(found([pw, edge]).length, 1);
+        // a parent folder's server, as a child folder inherits it: npx's cache is the machine's, so fix run here finds
+        // it too; one a nearer server of its name shadows, or one rejected here, does not start here
+        const parentDir = path.dirname(w.project);
+        const inherited = { ...pw, scope: 'inherited', from: parentDir, approval: 'pending', shadowed: null };
+        const [fi] = found([inherited]);
+        assert.deepStrictEqual([fi && fi.scope, fi && fi.proposal.path], ['inherited', folder]);
+        assert.deepStrictEqual(found([{ ...inherited, shadowed: { scope: 'local', from: null } }]), []);
+        assert.deepStrictEqual(found([{ ...inherited, approval: 'rejected' }]), []);
+        assert.deepStrictEqual(found([{ ...pw, approval: 'rejected' }]), []);
+        // the registration's own npm_config_cache wins over npm's answer
+        const other = path.join(w.home, 'other-cache');
+        fs.mkdirSync(npxFolder(other, spec), { recursive: true });
+        const own = reg('playwright-chrome', { command: 'npx', args: ['-y', spec], env: { npm_config_cache: other } }, { name: 'pw-own' });
+        assert.deepStrictEqual(found([own], npmAt(path.join(w.home, 'nowhere'))).map((x) => x.proposal.path), [npxFolder(other, spec)]);
+        // npm_config_cache in the environment fix runs in is npm's own first source, ahead of any .npmrc - and npm prints
+        // a UUID-shaped part of a path as *** (measured), so a value it redacted is no folder
+        const inEnv = (env, machine) => F.npxCacheEntryDetect(ctxFor({ platform: process.platform, project: w.project, registrations: [pw], machine, env }));
+        assert.deepStrictEqual(inEnv({ NPM_CONFIG_CACHE: other }, npmAt(path.join(w.home, 'nowhere'))).map((x) => x.proposal.path), [npxFolder(other, spec)]);
+        assert.deepStrictEqual(inEnv({ npm_config_cache: '' }, npmAt(cache)).map((x) => x.proposal.path), [folder], 'an empty value is no value to npm');
+        assert.deepStrictEqual(inEnv({}, npmAt(path.join(w.home, '***', 'npm-cache'), { exists: (p) => !p.endsWith('package.json') })), []);
+
+        // what is not found: npm cannot answer, a user's own server, an alfred-code leftover, a uvx server
+        assert.deepStrictEqual(found([pw], noMachine({ exists: (p) => fs.existsSync(p) })), []);
+        assert.deepStrictEqual(found([{ ...pw, own: true, rowId: null }]), []);
+        assert.deepStrictEqual(found([{ ...pw, alfredRetired: true }]), []);
+        assert.deepStrictEqual(found([reg('serena', { command: 'uvx', args: ['--from', 'serena-agent@2.1.0', 'serena'] })]), []);
+
+        // the fix: that folder goes, its neighbour stays, and the package is asked for again from the registration as read
+        const neighbour = path.join(cache, '_npx', '0123456789abcdef');
+        fs.mkdirSync(neighbour, { recursive: true });
+        const r = F.npxCacheEntryFix(f, ctx());
+        assert.strictEqual(r.ok, true, r.detail);
+        assert.ok(!fs.existsSync(folder));
+        assert.ok(fs.existsSync(neighbour));
+        assert.deepStrictEqual([r.fetch.op, r.fetch.name, r.fetch.scope, r.fetch.what, r.fetch.argv], ['fetch', 'playwright-chrome', 'project', spec, ['npm', 'exec', '--yes', '--package', spec, '--', 'node', '-e', '0']]);
+        assert.deepStrictEqual(r.fetch.env, { npm_config_before: '2026-11-10T23:59:59Z' }, 'the fetch resolves as the registration does');
+        assert.deepStrictEqual(found(), [], 'read back');
+        // a parent's server: the fetch reads it from the nearest parent's .mcp.json naming it, never a farther one it shadows
+        fs.mkdirSync(folder, { recursive: true });
+        const farther = { ...inherited, from: path.dirname(parentDir), entry: { command: 'npx', args: ['-y', '@playwright/mcp@0.0.80'] }, shadowed: { scope: 'inherited', from: parentDir } };
+        const ri = F.npxCacheEntryFix(fi, ctx([farther, inherited]));
+        assert.strictEqual(ri.ok, true, ri.detail);
+        assert.deepStrictEqual([ri.fetch.name, ri.fetch.scope, ri.fetch.from, ri.fetch.what], ['playwright-chrome', 'project', parentDir, spec]);
+        assert.ok(!fs.existsSync(folder));
+        // never a folder that is not an npx cache folder
+        for (const bad of [w.project, path.join(cache, '_npx'), path.join(w.home, 'x', '0123456789abcdef')])
+        {
+            const no = F.npxCacheEntryFix({ ...f, proposal: { ...f.proposal, path: bad } }, ctx());
+            assert.strictEqual(no.ok, false, bad);
+            assert.match(no.detail, /not an npx cache folder/);
+        }
+        assert.ok(fs.existsSync(w.project) && fs.existsSync(neighbour));
+    }
+    finally { w.clean(); }
+});
+
+test('apply: npx-cache-entry removes the folder and hands the package to fetch.js; the restart waits for the fetch', () =>
+{
+    const fs = require('node:fs');
+    const w = world();
+    try
+    {
+        const spec = '@playwright/mcp@0.0.84';
+        seed(w, 'playwright-chrome', 'user', { command: 'npx', args: ['-y', spec, '--browser', 'chrome', '--no-webmcp'], env: {} });
+        const cache = path.join(w.home, '.npm');
+        const folder = npxFolder(cache, spec);
+        fs.mkdirSync(path.join(folder, 'node_modules'), { recursive: true });
+        const lines = [];
+        const res = fix.applyFixes(ctxOf(w, { machine: npmAt(cache) }), ['npx-cache-entry'], { tmp: path.join(w.dir, 'tmp'), log: (...a) => lines.push(a.join(' ')) });
+        const text = lines.join('\n');
+        assert.strictEqual(res.failed, null, text);
+        assert.ok(!fs.existsSync(folder));
+        assert.deepStrictEqual(res.applied.map((f) => f.id), ['npx-cache-entry']);
+        assert.strictEqual(res.steps, 0, 'no registration is rewritten');
+        assert.ok(res.fetchFile && fs.existsSync(res.fetchFile), text);
+        const job = readJson(res.fetchFile);
+        assert.deepStrictEqual(job.fetch.map((s) => [s.name, s.scope, s.what]), [['playwright-chrome', 'user', spec]]);
+        assert.deepStrictEqual(job.check, ['playwright-chrome']);
+        assert.match(text, /Fetch next, in the background/);
+        assert.match(text, /fixed +npx-cache-entry on playwright-chrome/);
+        assert.match(text, /Restart Claude Code.*after the fetch reports/);
+        assert.deepStrictEqual(w.writes(), [['mcp', 'add-json', 'playwright-chrome', JSON.stringify({ command: 'npx', args: ['-y', spec, '--browser', 'chrome', '--no-webmcp'], env: {} }), '-s', 'user']], 'only the seed: the fix writes no registration');
+    }
+    finally { w.clean(); }
+});
+
 // ---- typescript-lsp-ts7 ---------------------------------------------------------------------------------------------
 
 test('typescript-lsp-ts7: a global TypeScript 7 under the installed plugin is found, fixed with typescript@6 and read back', () =>

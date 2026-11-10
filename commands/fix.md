@@ -50,14 +50,16 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/fix.js" --apply <id,id | all> [--only "$ARGU
 
 Claude Code asks permission for this call itself - `--apply` is deliberately not in `allowed-tools`. It rewrites each registration through the `claude` CLI (remove, then add with the same name and scope) from the entry as
 it is now, so the user's pin, cut-off and added args stay. Several fixes on one registration are one rewrite. A machine
-fix (a global npm install, or a data folder's `.gitignore`) runs after. Each fix is read back by running its detector again.
+fix (a global npm install, a data folder's `.gitignore`, or a broken npx cache folder removed - also for a server a
+parent folder's `.mcp.json` gives this folder, since that cache is the machine's) runs after. Each fix is read back by running its detector again.
 
 Run it with the Bash tool's `timeout: 600000` (10 minutes, the most it allows by default); a global npm install is the slow part.
 Paste the output verbatim. Report each fix as 'fixed' or 'STILL FOUND', each skipped one with its reason, and a failure
 with the line it printed - a failed rewrite prints a `RESTORE BY HAND` line, give it to the user as written.
 A key in it shows as `${PREFERRED_TOOLS_KEPT}`, never its value: the user puts their key back there.
 
-A fix that changes what a server launches (a python request, a cut-off) prints `Fetch next, in the background (...):
+A fix that changes what a server launches (a python request, a cut-off), or removes a broken npx cache folder
+(`npx-cache-entry`), prints `Fetch next, in the background (...):
 <file>`. Run, with the Bash tool's `run_in_background`, `node "${CLAUDE_PLUGIN_ROOT}/scripts/fetch.js" "<file>"`: it
 downloads the new launch into the runtime's cache and starts the server once with no 30-second limit, one at a time, so
 the next session's start answers inside Claude Code's 30 seconds, then prints each repaired server's status (`claude mcp

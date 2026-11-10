@@ -56,7 +56,8 @@ in `docs/sources.md`.
 - A new package is downloaded right after its registration is written, and the server is started once, in the
   background, so the first session start answers inside Claude Code's 30-second limit (memory's first start downloads
   an embedding model for about 2 minutes). Restart Claude Code once that reports. If it fails, nothing is undone and
-  the first session start does it instead.
+  the first session start does it instead. A session started during that download can break an npx server's cache for
+  good (every start then fails with `ENOENT`); `/preferred-tools:fix` (`npx-cache-entry`) repairs it.
 
 Requires Node 22 for the scripts (built-ins only, no dependencies) and the `claude` CLI on PATH. The design record is
 `docs/build-prompt.md`; this repo's own rules are in `.claude/CLAUDE.md` (not loaded by installs).
