@@ -38,6 +38,34 @@ function parseRoot(text, ctx)
     return { kind: 'project', rel: slashes(t.replace(/^\.[\\/]/, '')) };
 }
 
+// The installed registration's own answers, read back from the entry.
+function currentOf(row, reg)
+{
+    const e = reg.entry;
+    const flag = (f) => { const i = (e.args || []).indexOf(f); return i >= 0 ? e.args[i + 1] : undefined; };
+    return {
+        name: reg.name, scope: reg.scope, route: reg.route, entry: e,
+        rootStr: row.locations ? rootOfEntry(row, e) : null,
+        executablePath: flag('--executable-path'),
+        token: Boolean((e.headers && e.headers.Authorization) || (e.args || []).includes('--api-key')),
+        host: e.url ? new URL(e.url).hostname : null,
+    };
+}
+
+// A written root read back as a logical one: an absolute path under the project or the account home becomes that side
+// again, so a move to project scope can write it relative.
+function logicalRoot(text, ctx)
+{
+    const root = parseRoot(text, ctx);
+    if (root.kind !== 'abs') return root;
+    const P = pathFor(ctx.platform);
+    const rel = P.relative(ctx.project, root.path);
+    if (rel && !rel.startsWith('..') && !P.isAbsolute(rel)) return { kind: 'project', rel: slashes(rel) };
+    const homeRel = P.relative(ctx.home, root.path);
+    if (homeRel && !homeRel.startsWith('..') && !P.isAbsolute(homeRel)) return { kind: 'home', rel: slashes(homeRel) };
+    return root;
+}
+
 const homeVar = (platform) => (platform === 'win32' ? '${USERPROFILE}' : '${HOME}');
 
 // ${NAME} and ${NAME:-fallback} in an MCP entry, as Claude Code expands them (2.1.322, read from its own expander): a
@@ -340,7 +368,7 @@ function fetchOf(name, entry, rowId)
 }
 
 module.exports = {
-    pathFor, slashes, isWindowsArm, pythonRequest, parseRoot, formatRoot, withSub, homeVar, serenaWindowsHome, validWindowsSerenaHome,
+    pathFor, slashes, isWindowsArm, pythonRequest, parseRoot, logicalRoot, currentOf, formatRoot, withSub, homeVar, serenaWindowsHome, validWindowsSerenaHome,
     defaultRoot, alfredRoot, otherSide, otherPlace, rootOfEntry, applyRoot, buildEntry, nameProblem, subst, fetchStep,
     ALFRED_ENTRIES, alfredData, alfredNameProblem, recommendedSide, machinePath, expandVars,
 };

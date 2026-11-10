@@ -302,7 +302,7 @@ function locationQuestion(row, inv, { scope, name = null, current = null, copyOf
     let keep = null;
     if (current && current.rootStr)
     {
-        const root = require('./plan.js').logicalFromWritten(current.rootStr, current.scope, ctx);
+        const root = E.logicalRoot(current.rootStr, ctx);
         if (current.scope === scope || writable(root)) keep = { side: 'keep', root };
     }
     const at = (p) => E.formatRoot(p.root, scope, ctx, { backslash: serenaWin }).value;
@@ -480,7 +480,7 @@ function all(inv, picks, catalog, { env = {}, home = null } = {})
         const row = t && t.item.rowId && !t.item.alfredRetired ? catalog.byId.get(t.item.rowId) : null;
         if (!row) { out.targets[key] = { error: `'${key}' is not a catalog tool installed here` }; continue; }
         // required here, not at the top: plan.js requires this file
-        const current = t.kind === 'mcp' ? require('./plan.js').currentOf(row, t.item) : { scope: t.item.scope };
+        const current = t.kind === 'mcp' ? E.currentOf(row, t.item) : { scope: t.item.scope };
         out.targets[key] = {
             row: row.id, kind: t.kind, current: { name: t.item.name || t.item.id, scope: t.item.scope, route: current.route || null },
             route: t.kind === 'mcp' ? routeQuestion(row, current.route) : null,

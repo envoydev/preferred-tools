@@ -39,7 +39,6 @@ function sortKeys(v)
     if (v && typeof v === 'object') return Object.fromEntries(Object.keys(v).sort().map((k) => [k, sortKeys(v[k])]));
     return v;
 }
-const flagValue = (args, flag) => { const i = (args || []).indexOf(flag); return i >= 0 ? args[i + 1] : undefined; };
 
 function makeCtx(inv, opts = {})
 {
@@ -65,31 +64,6 @@ function resolveName(pick, row, cur, ctx)
     if (n === 'keep') return cur ? cur.name : row.name;
     if (n === 'prefixed') return `${projectName(ctx)}-${row.name}`.slice(0, 64);
     return n;
-}
-
-// The installed registration's own answers, read back from the entry.
-function currentOf(row, reg)
-{
-    const e = reg.entry;
-    return {
-        name: reg.name, scope: reg.scope, route: reg.route, entry: e,
-        rootStr: row.locations ? E.rootOfEntry(row, e) : null,
-        executablePath: flagValue(e.args, '--executable-path'),
-        token: Boolean((e.headers && e.headers.Authorization) || (e.args || []).includes('--api-key')),
-        host: e.url ? new URL(e.url).hostname : null,
-    };
-}
-
-function logicalFromWritten(str, scope, ctx)
-{
-    const root = E.parseRoot(str, ctx);
-    if (root.kind !== 'abs') return root;
-    const P = E.pathFor(ctx.platform);
-    const rel = P.relative(ctx.project, root.path);
-    if (rel && !rel.startsWith('..') && !P.isAbsolute(rel)) return { kind: 'project', rel: E.slashes(rel) };
-    const homeRel = P.relative(ctx.home, root.path);
-    if (homeRel && !homeRel.startsWith('..') && !P.isAbsolute(homeRel)) return { kind: 'home', rel: E.slashes(homeRel) };
-    return root;
 }
 
 // The side a pick with no location takes: D3's table (E.recommendedSide), never .alfred/<name> for a name alfred-code
@@ -119,7 +93,7 @@ function wantedRoot(row, pick, cur, name, scope, ctx, copy = false)
     }
     let root;
     let existing = false;
-    if (loc.side === 'keep' && cur && cur.rootStr) root = logicalFromWritten(cur.rootStr, cur.scope, ctx);
+    if (loc.side === 'keep' && cur && cur.rootStr) root = E.logicalRoot(cur.rootStr, ctx);
     else if (loc.side === 'project') root = E.otherPlace(row, name, 'project');
     // serena's account folder on Windows is the profile's .serena (the default branch below)
     else if (loc.side === 'account' && !serenaWin) root = E.otherPlace(row, name, 'account');
@@ -166,7 +140,7 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     // configure names its target; an install pick only adds, whatever else of this row is installed
     const here = inv.registrations.filter((r) => r.rowId === row.id && !r.alfredRetired);
     const target = pick.target ? here.find((r) => r.name === pick.target.name && r.scope === pick.target.scope) : null;
-    const cur = target ? currentOf(row, target) : null;
+    const cur = target ? E.currentOf(row, target) : null;
 
     const routeId = pick.route || (cur ? cur.route : row.recommendedRoute);
     const route = row.routes[routeId];
@@ -338,7 +312,7 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     const moved = cur.name !== name || cur.scope !== scope;
     const edited = !deepEqual(entry, cur.entry);
     if (!moved && !edited && !fresh) return out.unchanged.push(`${row.id}: '${name}' at ${scope} scope already as answered`);
-    if (row.locations && cur.rootStr && rootStr !== cur.rootStr && E.formatRoot(logicalFromWritten(cur.rootStr, cur.scope, ctx), 'local', ctx).value !== ensure)
+    if (row.locations && cur.rootStr && rootStr !== cur.rootStr && E.formatRoot(E.logicalRoot(cur.rootStr, ctx), 'local', ctx).value !== ensure)
         out.notes.push(`${row.id}: the old data stays at ${cur.rootStr}; moving a location moves no data`);
     if (ensure && (!cur.rootStr || rootStr !== cur.rootStr)) out.steps.push({ op: 'ensure-dir', path: ensure, why: `${row.id}: new data folder` });
     if (moved)
@@ -530,4 +504,4 @@ function main(argv)
 }
 
 if (require.main === module) process.exit(main(process.argv.slice(2)));
-module.exports = { plan, render, argvOf, currentOf, logicalFromWritten, makeCtx, deepEqual, projectName };
+module.exports = { plan, render, argvOf, makeCtx, deepEqual, projectName };

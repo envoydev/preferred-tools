@@ -68,3 +68,13 @@ test("install maps both API key answers: 'No key' is written, since 'Use ${VAR}'
     const row = text.split('\n').find((l) => l.startsWith('| API key'));
     assert.ok(row && row.includes("'No key'") && row.includes('"token": false'), row);
 });
+
+test('asks.js never requires plan.js: the shared readers (currentOf, logicalRoot) live in entries.js, so there is no require cycle', () => {
+    const fs = require('node:fs');
+    const src = fs.readFileSync(require.resolve('../scripts/asks.js'), 'utf8');
+    assert.doesNotMatch(src, /require\('\.\/plan\.js'\)/);
+    const E = require('../scripts/entries.js');
+    assert.strictEqual(typeof E.currentOf, 'function');
+    assert.deepStrictEqual(E.logicalRoot('/work/shop/.preferred-tools/serena', { platform: 'darwin', project: '/work/shop', home: '/Users/me' }), { kind: 'project', rel: '.preferred-tools/serena' });
+    assert.deepStrictEqual(E.logicalRoot('/Users/me/.preferred-tools/serena', { platform: 'darwin', project: '/work/shop', home: '/Users/me' }), { kind: 'home', rel: '.preferred-tools/serena' });
+});
