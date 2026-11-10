@@ -1193,3 +1193,24 @@ test('configure: a move that leaves one folder writes it - --questions carries `
     // a location question asked: no `only`
     assert.strictEqual(asks.all(j, { targets: [k] }, catalog, { home: '/Users/me' }).targets[k].only, null);
 });
+
+test('project scope: --executable-path takes no machine path - refused when named, left out with a note on a move', () => {
+    const named = plan(inv(MAC), pickOne('playwright-chrome', { scope: 'project', executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' }), opts('/Users/me'));
+    assert.match(named.errors.join(' '), /playwright-chrome: --executable-path .* is a machine path, which the committed \.mcp\.json must not carry/);
+    const byVar = addStep(plan(inv(MAC), pickOne('playwright-chrome', { scope: 'project', executablePath: '${CHROME_BIN}' }), opts('/Users/me')));
+    assert.strictEqual(flag(byVar.entry, '--executable-path'), '${CHROME_BIN}');
+    const local = installed('playwright-chrome', { scope: 'local', executablePath: '/opt/chrome' });
+    const i = inv(MAC, { registrations: [local] });
+    const moved = plan(i, changeOf(local, { scope: 'project' }), opts('/Users/me'));
+    assert.deepStrictEqual(moved.errors, []);
+    assert.ok(!moved.steps.find((s) => s.op === 'mcp-move').entry.args.includes('--executable-path'));
+    assert.ok(moved.notes.some((n) => /--executable-path \/opt\/chrome is left out - a machine path/.test(n)), moved.notes.join('\n'));
+    assert.match(plan(i, changeOf(local, { scope: 'project', executablePath: '/opt/chrome' }), opts('/Users/me')).errors.join(' '), /is a machine path/);
+    // the browser question agrees: at project scope the engine's default is recommended and no machine path is kept
+    const key = `mcp:${local.name}~local`;
+    const browser = asks.all(i, { targets: [key], scopes: { [key]: 'project' } }, catalog, { home: '/Users/me' }).targets[key].questions.find((q) => q.id === 'browser-playwright-chrome');
+    assert.strictEqual(browser.options[0].label, 'Default for this engine (Recommended)');
+    assert.ok(!browser.options.some((o) => o.label.startsWith('Keep')), JSON.stringify(browser.options));
+    const fresh = asks.all(inv(MAC), { rows: ['playwright-chrome'], scopes: { 'playwright-chrome': 'project' } }, catalog, { home: '/Users/me' }).tools['playwright-chrome'].questions.find((q) => q.id === 'browser-playwright-chrome');
+    assert.match(fresh.options.find((o) => o.label === 'A browser binary I name').description, /\$\{VAR\} path - the committed \.mcp\.json takes no machine path/);
+});

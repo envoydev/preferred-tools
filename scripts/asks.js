@@ -352,9 +352,10 @@ function toolAsk(row, inv, { route, scope = null, name = null, current = null, c
     // one place left: no location question, and the walk writes this as the location (a move must not fall back to
     // 'keep' where the folder it uses now cannot stay)
     let only = null;
+    // the scope the questions are built for: the one asked first, else the recommended one
+    const at = ctx ? scope || scopeOrder(row, inv, { route: routeId, current, copyOf, ctx })[0] || (current && current.scope) : scope;
     if (located)
     {
-        const at = scope || scopeOrder(row, inv, { route: routeId, current, copyOf, ctx })[0] || (current && current.scope);
         const l = locationQuestion(row, inv, { scope: at, name: nameFor(row, name, current, ctx), current, copyOf, ctx });
         if (l.question) qs.push(l.question);
         else only = l.only;
@@ -364,15 +365,20 @@ function toolAsk(row, inv, { route, scope = null, name = null, current = null, c
     const first = (opts, keepFirst) => (keepFirst ? [opts[1], opts[0]] : opts).map((o, i) => ({ ...o, label: `${o.label}${i === 0 ? REC : ''}` }));
     const sameRoute = current && current.route === routeId;
     if (row.routes[routeId].optionalArgs && row.routes[routeId].optionalArgs.executablePath)
+    {
+        // the committed .mcp.json carries no machine path: at project scope a binary is a ${VAR} path, and one the
+        // registration has now is not kept (plan.js leaves it out)
+        const committed = at === 'project';
+        const has = Boolean(sameRoute && current.executablePath);
+        const named = { label: 'A browser binary I name', description: committed ? 'a ${VAR} path - the committed .mcp.json takes no machine path; type it under Other' : 'type the path under Other; it sets --executable-path' };
+        const engine = { label: 'Default for this engine', description: has ? 'drops --executable-path' : row.id.endsWith('chrome') || row.id.endsWith('msedge') ? 'the branded browser installed on this machine' : "Playwright's own build" };
         qs.push({
             id: `browser-${row.id}`, header: 'Browser', multiSelect: false, question: `${row.label}: which browser binary?`,
-            options: sameRoute && current.executablePath
-                ? first([{ label: `Keep \`${current.executablePath}\``, description: 'the binary it uses now' }, { label: 'Default for this engine', description: 'drops --executable-path' }])
-                : first([
-                    { label: 'Default for this engine', description: row.id.endsWith('chrome') || row.id.endsWith('msedge') ? 'the branded browser installed on this machine' : "Playwright's own build" },
-                    { label: 'A browser binary I name', description: 'type the path under Other; it sets --executable-path' },
-                ]),
+            options: has && !(committed && E.machinePath(current.executablePath))
+                ? first([{ label: `Keep \`${current.executablePath}\``, description: 'the binary it uses now' }, engine])
+                : first([engine, named]),
         });
+    }
     else if (row.routes[routeId].auth === 'optional-token')
         qs.push({
             id: `token-${row.id}`, header: 'API key', multiSelect: false, question: `${row.label}: send an API key?`,

@@ -215,7 +215,14 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     // the answers that edit an entry
     const params = { host: row.params ? (pick.params && pick.params.host) || (cur && cur.host) || row.params[0].default : undefined, ...(pick.params || {}) };
     const wantToken = pick.token === undefined ? (cur ? Boolean(cur.token) : route.auth === 'optional-token' && asks.keyToSend(keyState)) : Boolean(pick.token);
-    const wantExec = pick.executablePath === undefined ? (cur ? cur.executablePath : undefined) : (pick.executablePath || undefined);
+    let wantExec = pick.executablePath === undefined ? (cur ? cur.executablePath : undefined) : (pick.executablePath || undefined);
+    // the committed .mcp.json carries no machine path: a binary named there is refused, one a move carries is left out
+    if (scope === 'project' && E.machinePath(wantExec))
+    {
+        if (pick.executablePath !== undefined) return out.errors.push(`${row.id}: --executable-path ${wantExec} is a machine path, which the committed .mcp.json must not carry - use the engine's default, a \${VAR} path, or local scope`);
+        out.notes.push(`${row.id}: --executable-path ${wantExec} is left out - a machine path the committed .mcp.json must not carry; the engine's default browser runs`);
+        wantExec = undefined;
+    }
     let rootStr;
     let ensure = null;
     if (row.locations)

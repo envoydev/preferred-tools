@@ -108,6 +108,14 @@ const ALFRED_ENTRIES = ['docs', 'state', 'statistics', 'workspace', 'flow'];
 
 // alfred-code is set up in this project: enabled for it AND <project>/.alfred/.gitignore is there, the file that keeps
 // its data out of git. keys.alfredPresent asks a different question (is its key chain here).
+// A value that names this machine: an absolute path (POSIX, a drive, UNC) or ~, with no ${VAR} in it. The committed
+// .mcp.json carries none (project scope gets relative paths and ${VAR} only).
+function machinePath(value)
+{
+    if (typeof value !== 'string' || value.includes('${')) return false;
+    return /^(\/|~|\\\\)/.test(value) || /^[A-Za-z]:[\\/]/.test(value);
+}
+
 function alfredData(ctx, enabled)
 {
     if (!enabled) return false;
@@ -318,5 +326,5 @@ function fetchOf(name, entry, rowId)
 module.exports = {
     pathFor, slashes, isWindowsArm, pythonRequest, parseRoot, formatRoot, withSub, homeVar, serenaWindowsHome, validWindowsSerenaHome,
     defaultRoot, alfredRoot, otherSide, otherPlace, rootOfEntry, applyRoot, buildEntry, nameProblem, subst, fetchStep,
-    ALFRED_ENTRIES, alfredData, alfredNameProblem, recommendedSide,
+    ALFRED_ENTRIES, alfredData, alfredNameProblem, recommendedSide, machinePath,
 };
