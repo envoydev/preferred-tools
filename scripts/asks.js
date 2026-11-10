@@ -237,24 +237,26 @@ function nameQuestion(row, inv, { current = null, copyOf = [], ctx = null } = {}
     return { id: `name-${row.id}`, header: 'Name', multiSelect: false, question: `${row.label}: registration name?`, options };
 }
 
-// ---- the location question (spec D4) --------------------------------------------------------------------------------
-// A label names the place in words, fixed text, so the walk never reads a path out of it; the description gives the
-// exact folder on this machine and what follows from it. [label at local and user scope, label at project scope]
+// ---- the location question (spec D2) --------------------------------------------------------------------------------
+// A tool's data folder is <root>/<name> in the root of its scope's family, so most picks ask nothing. A question is left
+// only where a tool needs one: memory (the global root's one memory, or this project's own), serena on Windows when the
+// root's path has a space, a tool with alfred-code 2.x data on disk, and configure ('The folder it uses now' first). A
+// label names the place in words, fixed text, so the walk never reads a path out of it; the description gives the exact
+// folder on this machine and what follows from it.
 const SIDE_LABEL = {
-    'alfred-data': ["alfred-code's folder in this project", '.alfred in the folder Claude starts in'],
-    project: ["This project's own folder", '.preferred-tools in the folder Claude starts in'],
-    account: ['Your account folder', 'Your account folder'],
-    alfred: ['alfred-code 2.x data', 'alfred-code 2.x data'],
-    keep: ['The folder it uses now', 'The folder it uses now'],
+    project: "The project root's folder",
+    account: "The global root's folder",
+    'alfred-data': '.alfred in this project',
+    alfred: 'Carry over alfred-code 2.x data',
+    keep: 'The folder it uses now',
 };
 const SIDE_TAIL = {
-    'alfred-data': 'kept out of git by alfred-code; deleting .alfred erases this data',
-    project: "the plugin's own folder, with its .gitignore",
+    project: "this project's own",
     account: 'one folder for every project on this machine',
+    'alfred-data': 'kept out of git by alfred-code; deleting .alfred erases this data',
     alfred: "carries over the data alfred-code 2.x left there; the folder is alfred-code's, so deleting it erases this tool's data",
 };
-// at project scope the folder is made in every clone, and the plugin's .gitignore (it holds *) is never committed
-const COMMITTED_PROJECT_TAIL = "the plugin's own folder; its .gitignore is never committed, so another clone needs .preferred-tools/ in the project's .gitignore";
+const MEMORY_TAIL = { project: "this project's own memory", account: 'one memory for every project on this machine' };
 // serena's home holds its language servers (docs/build-prompt.md, the serena-windows-home row): a home per project
 // downloads them once per project
 const SERENA_PER_PROJECT = 'its language servers (about 327MB) download once per project';
@@ -271,42 +273,48 @@ function placeText(root, scope, ctx, backslash = false)
 }
 
 // The location question for a row with a data folder, at a known scope and registration name (the folder is named
-// after it). -> { question (or null when one place is left), answers: { <label as shown>: <location entry> }, only: the
-// one location left when no question is asked }. The options: the folder it uses now (configure), alfred-code's folder,
-// the project's own, the account folder, alfred-code 2.x data (install), 'Another space-free folder' (serena on
-// Windows) - each only where it can be written at this scope - with the recommended one (E.recommendedSide) first.
+// after it). `ctx.roots` holds the roots answered so far (roots.resolve); none - the recommended ones. -> { question (or
+// null when one place is left), answers: { <label as shown>: <location entry> }, only: the one location left when no
+// question is asked }.
 function locationQuestion(row, inv, { scope, name = null, current = null, copyOf = [], ctx })
 {
+    if (!ctx.roots) ctx = { ...ctx, roots: roots.resolve(inv, null, ctx).roots };
     const loc = row.locations;
     const folder = name || (current ? current.name : row.name);
     const serenaWin = Boolean(loc.windowsAbsolute && ctx.platform === 'win32');
     // the committed file names serena's Windows home only as ${USERPROFILE}\.serena (plan.js wantedRoot)
     if (serenaWin && scope === 'project') return { question: null, answers: {}, only: { side: 'default' } };
-    // project scope writes a folder under the project relative, so only for a row proven to follow its start folder
+    // project scope writes a folder under the project relative, so only for a row proven to follow its start folder; a
+    // folder outside the project and the home folder it cannot name at all
     const writable = (root) => scope !== 'project' || root.kind === 'home' || (root.kind === 'project' && loc.relative === true);
     const winValid = (root) => !serenaWin || E.validWindowsSerenaHome(E.formatRoot(root, 'local', ctx).value);
-    const alfredHere = E.alfredData(ctx, inv.alfredCodeEnabled) && !E.alfredNameProblem(folder, ctx);
+    const copy = !current && copyOf.length > 0;
+    const natural = E.recommendedSide(row, scope, ctx, { copy });
 
     const places = [];
-    const alfredData = { kind: 'project', rel: `.alfred/${folder}` };
-    if (alfredHere && writable(alfredData) && winValid(alfredData)) places.push({ side: 'alfred-data', root: alfredData });
-    const own = E.otherPlace(row, folder, 'project');
-    if (!serenaWin && writable(own)) places.push({ side: 'project', root: own });
-    if (!serenaWin) places.push({ side: 'account', root: E.otherPlace(row, folder, 'account') });
+    const own = scope === 'user' ? null : { side: 'project', root: E.otherPlace(row, folder, 'project', ctx) };
+    const shared = { side: 'account', root: E.otherPlace(row, folder, 'account', ctx) };
+    // global scope: the global root; memory, or a pick whose recommended place is the global root: both roots
+    if (scope === 'user') places.push(shared);
     else
     {
-        // serena's account folder on Windows is the profile's .serena, plan.js's default for it; a profile path with a
-        // space gets a space-free folder in its place (plan.js takes the same one by default)
+        places.push(own);
+        if (loc.defaultSide === 'account' || natural === 'account') places.push(shared);
+    }
+    const usable = places.filter((p) => writable(p.root) && winValid(p.root));
+    if (serenaWin && usable.length < places.length)
+    {
+        // a root with a space: the profile's .serena when it is space-free, else a space-free folder, or one typed next
         const profile = E.serenaWindowsHome(ctx);
-        if (!profile.needsInput) places.push({ side: 'account', root: profile.root, answer: { side: 'default' } });
+        if (!profile.needsInput) usable.push({ side: 'default', root: profile.root, label: "Your profile's .serena", description: `${profile.root.path} - the root's path has a space, which serena's home cannot hold; one folder for every project on this machine` });
         else
         {
             const free = E.serenaSpaceFree(ctx);
-            places.push({ side: 'account', root: free, label: 'A space-free folder', answer: { side: 'path', path: free.path }, description: `${free.path} - your profile path ${ctx.home} has a space, which serena's home cannot hold; one folder for every project on this machine` });
+            usable.push({ side: 'default', root: free, label: 'A space-free folder', answer: { side: 'path', path: free.path }, description: `${free.path} - the root's path and your profile path ${ctx.home} have a space, which serena's home cannot hold; one folder for every project on this machine` });
         }
     }
     const old = !current && !serenaWin ? E.alfredRoot(row, ctx) : null;
-    if (old && writable(old)) places.push({ side: 'alfred', root: old });
+    if (old && writable(old)) usable.push({ side: 'alfred', root: old });
 
     // configure: the folder it uses now, when it can stay at this scope; a place that is the same folder is not repeated
     let keep = null;
@@ -316,28 +324,22 @@ function locationQuestion(row, inv, { scope, name = null, current = null, copyOf
         if (current.scope === scope || writable(root)) keep = { side: 'keep', root };
     }
     const at = (p) => E.formatRoot(p.root, scope, ctx, { backslash: serenaWin }).value;
-    const listed = keep ? [keep, ...places.filter((p) => at(p) !== at(keep))] : places;
-    if (serenaWin) listed.push({ side: 'path', label: 'Another space-free folder', description: 'type the path under Other' });
+    const listed = keep ? [keep, ...usable.filter((p) => at(p) !== at(keep))] : usable;
+    if (serenaWin && listed.some((p) => p.side === 'default')) listed.push({ side: 'path', label: 'Another space-free folder', description: 'an absolute folder without spaces, asked next' });
 
-    let rec = 'keep';
-    if (!keep)
-    {
-        const side = E.recommendedSideFor(row, folder, scope, ctx, { alfredHere: E.alfredData(ctx, inv.alfredCodeEnabled), copy: !current && copyOf.length > 0 });
-        rec = side === 'default' ? (serenaWin ? 'account' : loc.defaultSide) : side;
-    }
+    const rec = keep ? 'keep' : natural;
     const first = listed.find((p) => p.side === rec) || listed[0];
-    const order = [first, ...listed.filter((p) => p !== first)].slice(0, 4);
-    const label = (p) => p.label || SIDE_LABEL[p.side][scope === 'project' ? 1 : 0];
+    const order = [first, ...listed.filter((p) => p !== first)].filter(Boolean).slice(0, 4);
     const describe = (p) =>
     {
         if (p.description) return p.description;
         const text = placeText(p.root, scope, ctx, serenaWin);
         if (p.side === 'keep') return text;
-        const base = p.side === 'project' && scope === 'project' ? COMMITTED_PROJECT_TAIL : SIDE_TAIL[p.side];
-        const tail = row.id === 'serena' && ['alfred-data', 'project'].includes(p.side) ? `${base}; ${SERENA_PER_PROJECT}` : base;
+        const base = row.id === 'memory' && MEMORY_TAIL[p.side] ? MEMORY_TAIL[p.side] : SIDE_TAIL[p.side];
+        const tail = row.id === 'serena' && p.side === 'project' ? `${base}; ${SERENA_PER_PROJECT}` : base;
         return `${text} - ${tail}`;
     };
-    const options = order.map((p, i) => ({ label: `${label(p)}${i === 0 ? REC : ''}`, description: describe(p) }));
+    const options = order.map((p, i) => ({ label: `${p.label || SIDE_LABEL[p.side]}${i === 0 ? REC : ''}`, description: describe(p) }));
     const answers = Object.fromEntries(order.map((p, i) => [options[i].label, p]).filter(([, p]) => p.side !== 'path').map(([l, p]) => [l, p.answer || { side: p.side }]));
     // one place left: nothing to ask
     if (order.length < 2 && first && first.side !== 'path') return { question: null, answers: {}, only: first.answer || { side: first.side } };
@@ -380,7 +382,7 @@ function toolAsk(row, inv, { route, scope = null, name = null, current = null, c
         // registration has now is not kept (plan.js leaves it out)
         const committed = at === 'project';
         const has = Boolean(sameRoute && current.executablePath);
-        const named = { label: 'A browser binary I name', description: committed ? 'a ${VAR} path - the committed .mcp.json takes no machine path; type it under Other' : 'type the path under Other; it sets --executable-path' };
+        const named = { label: 'A browser binary I name', description: committed ? 'a ${VAR} path - the committed .mcp.json takes no machine path; asked next' : 'sets --executable-path to the binary you name, asked next' };
         const engine = { label: 'Default for this engine', description: has ? 'drops --executable-path' : row.id.endsWith('chrome') || row.id.endsWith('msedge') ? 'the branded browser installed on this machine' : "Playwright's own build" };
         qs.push({
             id: `browser-${row.id}`, header: 'Browser', multiSelect: false, question: `${row.label}: which browser binary?`,
@@ -404,7 +406,7 @@ function toolAsk(row, inv, { route, scope = null, name = null, current = null, c
             id: `host-${row.id}`, header: 'Host', multiSelect: false, question: `${row.label}: which ${row.params[0].label}?`,
             options: host
                 ? first([{ label: `Keep ${host}`, description: 'the host it uses now' }, { label: row.params[0].default, description: 'the hosted service' }])
-                : first([{ label: row.params[0].default, description: 'the hosted service' }, { label: 'A self-managed host', description: 'type the host name under Other' }]),
+                : first([{ label: row.params[0].default, description: 'the hosted service' }, { label: 'A self-managed host', description: 'your own GitLab host name, asked next' }]),
         });
     }
     return { first: located ? [scopeQ, nameQ].filter(Boolean) : null, questions: qs, answers, only };
@@ -536,6 +538,8 @@ function all(inv, picks, catalog, { env = {}, home = null, connectors = null } =
     };
     // `exists` reads the disk: alfred-code's .alfred/.gitignore and its 2.x data decide which folders are offered
     const ctx = { project: inv.project, platform: inv.os, arch: inv.arch, home: home || require('./account.js').homeDir(process.env), env, keyHome: home, exists: (p) => fs.existsSync(p) };
+    // the roots answered so far (the walk asks them before a tool's folder), else the recommended ones
+    ctx.roots = roots.resolve(inv, picks && picks.roots, { ...ctx, catalog }).roots;
     const routes = (picks && picks.routes) || {};
     const scopes = (picks && picks.scopes) || {};
     const names = (picks && picks.names) || {};

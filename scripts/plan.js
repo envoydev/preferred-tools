@@ -68,11 +68,22 @@ function resolveName(pick, row, cur, ctx)
     return n;
 }
 
-// `copy`: an install beside a registration of the same row at another scope (see E.recommendedSide).
+// `copy`: an install beside a registration of the same row at another scope (see E.recommendedSide). A data folder is
+// `<root>/<name>` in the root of the scope's family (spec D2): side 'project' - the project root, 'account' - the global
+// root; 'default' is the recommended side (serena on Windows: its profile's .serena, or a space-free folder).
 function wantedRoot(row, pick, cur, name, scope, ctx, copy = false)
 {
-    const loc = pick.location || { side: cur ? 'keep' : E.recommendedSideFor(row, name, scope, ctx, { alfredHere: ctx.alfredHere, copy }) };
     const serenaWin = row.locations.windowsAbsolute && ctx.platform === 'win32';
+    let loc = pick.location || { side: cur ? 'keep' : E.recommendedSide(row, scope, ctx, { copy }) };
+    if (loc.side === 'default' && !serenaWin) loc = { side: E.recommendedSide(row, scope, ctx, { copy }) };
+    // an .alfred project root holds alfred-code's own entries: a registration of this family is never given a name
+    // that is one (a registration already under that name keeps it)
+    const P = E.pathFor(ctx.platform);
+    if (scope !== 'user' && !(cur && cur.name === name) && ctx.roots && ctx.roots.project === P.join(ctx.project, '.alfred'))
+    {
+        const problem = E.alfredNameProblem(name, ctx);
+        if (problem) return { error: problem };
+    }
     // serena on Windows at project scope: the committed file names the profile's .serena as ${USERPROFILE}\.serena, the
     // one absolute, space-free folder it can name without a machine path
     if (serenaWin && scope === 'project')
@@ -87,9 +98,8 @@ function wantedRoot(row, pick, cur, name, scope, ctx, copy = false)
     let root;
     let existing = false;
     if (loc.side === 'keep' && cur && cur.rootStr) root = E.logicalRoot(cur.rootStr, ctx);
-    else if (loc.side === 'project') root = E.otherPlace(row, name, 'project');
-    // serena's account folder on Windows is the profile's .serena (the default branch below)
-    else if (loc.side === 'account' && !serenaWin) root = E.otherPlace(row, name, 'account');
+    else if (loc.side === 'project') root = E.otherPlace(row, name, 'project', ctx);
+    else if (loc.side === 'account') root = E.otherPlace(row, name, 'account', ctx);
     else if (loc.side === 'path') root = E.parseRoot(loc.path, ctx);
     else if (loc.side === 'alfred-data')
     {
@@ -365,33 +375,6 @@ function planChange(key, pick, inv, ctx, catalog, out)
     return planPlugin(row, { ...answers, target: { scope: t.item.scope } }, inv, ctx, catalog, out);
 }
 
-// ---- the root folders (spec D2) -------------------------------------------------------------------------------------
-// answers.roots: { project: { id, path? }, global: { id, path? } } - an option id from the root question, `path` the
-// folder typed for 'named'. No answer: the family's recommended root (D2's first option). -> { project, global,
-// globalNamed } as absolute paths; a bad answer is a plan error with its reason.
-function resolveRoots(inv, answers, ctx, errors)
-{
-    const out = {};
-    for (const family of ['project', 'global'])
-    {
-        const a = (answers && answers[family]) || null;
-        const opts = roots.options(inv, family, ctx);
-        if (!a || !a.id) { out[family] = opts[0].root; continue; }
-        if (a.id === 'named')
-        {
-            const r = roots.resolveNamed(family, a.path, ctx);
-            if (r.error) errors.push(`roots: ${r.error}`);
-            out[family] = r.root || null;
-            continue;
-        }
-        const o = opts.find((x) => x.id === a.id && x.root);
-        if (!o) { errors.push(`roots: '${a.id}' is not a ${family} root offered here (${opts.filter((x) => x.root).map((x) => x.id).join(', ')}, or named with a path)`); out[family] = null; continue; }
-        out[family] = o.root;
-    }
-    out.globalNamed = Boolean(out.global) && !roots.standard('global', ctx).some((x) => x.root === out.global);
-    return out;
-}
-
 // ---- the plan -------------------------------------------------------------------------------------------------------
 
 function plan(inv, answers, opts = {})
@@ -400,7 +383,10 @@ function plan(inv, answers, opts = {})
     // answers.machine: what prereq.js found (docker: false picks github's binary fallback); an explicit option wins
     const ctx = { ...makeCtx(inv, { ...opts, machine: opts.machine || answers.machine }), changing: new Set(Object.keys(answers.change || {})) };
     const out = { version: 1, project: inv.project, os: inv.os, alfredCodeEnabled: Boolean(inv.alfredCodeEnabled), steps: [], notes: [], errors: [], unchanged: [], tokens: [], oauth: [], dangerous: [], expect: [], hud: null };
-    ctx.roots = resolveRoots(inv, answers.roots, { ...ctx, catalog }, out.errors);
+    // the root folders (spec D2): every data folder, key file and helper of a family sits in its root
+    const resolved = roots.resolve(inv, answers.roots, { ...ctx, catalog });
+    out.errors.push(...resolved.errors);
+    ctx.roots = resolved.roots;
     out.roots = ctx.roots;
 
     for (const [rowId, pick] of Object.entries(answers.picks || {}))
@@ -561,4 +547,4 @@ function main(argv)
 }
 
 if (require.main === module) process.exit(main(process.argv.slice(2)));
-module.exports = { plan, render, argvOf, makeCtx, deepEqual, projectName, main, parseArgs, resolveRoots, globalWords };
+module.exports = { plan, render, argvOf, makeCtx, deepEqual, projectName, main, parseArgs, globalWords };

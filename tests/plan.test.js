@@ -49,7 +49,7 @@ test('serena on Windows: SERENA_HOME is absolute, in backslashes and space-free;
     const x64 = plan(inv(WIN), pickOne('serena'), opts('C:\\Users\\me'));
     assert.deepStrictEqual(x64.errors, []);
     const e = addStep(x64).entry;
-    assert.strictEqual(e.env.SERENA_HOME, 'C:\\Users\\me\\.serena');
+    assert.strictEqual(e.env.SERENA_HOME, 'C:\\work\\shop\\.preferred-tools\\serena', 'a space-free root: <root>\\<name>');
     assert.match(e.env.SERENA_HOME, /^[A-Za-z]:\\[^/\s]*$/);
     assert.strictEqual(e.args[1], '3.13');
     const arm = addStep(plan(inv(WINARM), pickOne('serena'), opts('C:\\Users\\me'))).entry;
@@ -59,8 +59,8 @@ test('serena on Windows: SERENA_HOME is absolute, in backslashes and space-free;
     assert.strictEqual(addStep(emu).entry.args[1], 'cpython-3.13-windows-x86_64-none');
 });
 
-test('serena on Windows: a profile path with a space takes the space-free folder by default; a typed one must be absolute and space-free', () => {
-    const spaced = plan(inv(WIN), pickOne('serena'), opts('C:\\Users\\Jo Doe'));
+test('serena on Windows: a root and a profile path with a space take the space-free folder by default; a typed one must be absolute and space-free', () => {
+    const spaced = plan(inv(WIN), pickOne('serena', { scope: 'user' }), opts('C:\\Users\\Jo Doe'));
     assert.deepStrictEqual(spaced.errors, []);
     assert.strictEqual(addStep(spaced).entry.env.SERENA_HOME, 'C:\\serena-home');
     const typed = plan(inv(WIN), pickOne('serena', { location: { side: 'path', path: 'C:/serena-home' } }), opts('C:\\Users\\Jo Doe'));
@@ -75,8 +75,8 @@ test('serena on Windows: a profile path with a space takes the space-free folder
     const spacedProject = plan(inv({ ...WIN, project: 'C:\\my work\\shop' }), pickOne('serena', { location: { side: 'path', path: 'sub' } }), opts('C:\\Users\\me'));
     assert.match(spacedProject.errors.join(' '), /space-free/);
     // the Windows rule wins over alfred-code data already on disk
-    const alfred = plan(inv(WIN), pickOne('serena'), opts('C:\\Users\\me', { exists: () => true }));
-    assert.strictEqual(addStep(alfred).entry.env.SERENA_HOME, 'C:\\Users\\me\\.serena');
+    const alfred = plan(inv(WIN), pickOne('serena'), opts('C:\\Users\\me', { exists: (p) => p === 'C:\\work\\shop\\.alfred\\serena\\home' }));
+    assert.strictEqual(addStep(alfred).entry.env.SERENA_HOME, 'C:\\work\\shop\\.preferred-tools\\serena');
 });
 
 test('uvx rows get their own python: windows-control 3.14 (x64 build on ARM64), memory 3.13', () => {
@@ -610,9 +610,12 @@ test('every question has 2 to 4 options, one Recommended and first, and a call h
             const ctx = { project: i.project, platform: i.os, arch: i.arch, home: base.os === 'win32' ? 'C:\\Users\\me' : '/Users/me', env: {} };
             for (const route of row.kind === 'mcp' ? Object.keys(row.routes) : [undefined])
             {
-                const qs = asks.toolQuestions(row, i, { route, ctx, catalog });
-                assert.ok(qs.length >= 1 && qs.length <= 4, `${row.id}: ${qs.length} questions in one call`);
-                qs.forEach(checkQuestion);
+                // a row with a data folder asks scope and name first; its second call (the folder, an extra) may be empty,
+                // and an empty call is not made
+                const t = asks.toolAsk(row, i, { route, ctx, catalog });
+                const calls = [t.first, t.questions].filter((c) => c && c.length);
+                assert.ok(calls.length >= 1, `${row.id}: no question at all`);
+                for (const c of calls) { assert.ok(c.length <= 4, `${row.id}: ${c.length} questions in one call`); c.forEach(checkQuestion); }
             }
             const rq = row.kind === 'mcp' ? asks.routeQuestion(row) : null;
             if (rq) { checkQuestion(rq); assert.strictEqual(rq.options.length, 2); }
@@ -763,7 +766,7 @@ test('install questions for a copy: the taken scope is not offered, and an accou
     assert.deepStrictEqual(q.tools.memory.first.find((x) => x.id === 'scope-memory').options.map((o) => o.label), ['Local (Recommended)', 'Project'], 'the copy\'s user scope is not offered again');
     assert.match(q.tools.memory.first.find((x) => x.id === 'name-memory').options[0].description, /used instead of the copy for every project/);
     const loc = q.tools.memory.questions.find((x) => x.id === 'location-memory');
-    assert.strictEqual(loc.options[0].label, "This project's own folder (Recommended)");
+    assert.strictEqual(loc.options[0].label, "The project root's folder (Recommended)", 'a copy gets this project\'s own memory');
     assert.match(loc.options[0].description, /^\/work\/shop\/\.preferred-tools\/memory /);
     assert.deepStrictEqual(q.tools['typescript-lsp'].questions[0].options.map((o) => o.label), ['Project (Recommended)', 'Local']);
     for (const t of Object.values(q.tools)) [...(t.first || []), ...t.questions].forEach(checkQuestion);
@@ -907,10 +910,10 @@ test('location: alfred-code data on disk is a second answer, not the recommended
     const loc = (exists) => asks.toolQuestions(catalog.byId.get('playwright-chrome'), inv(MAC), { route: 'local', ctx: ctx(exists), catalog }).find((q) => q.id === 'location-playwright-chrome');
     const withData = loc((p) => p === '/work/shop/.alfred/chrome-control');
     checkQuestion(withData);
-    assert.strictEqual(withData.options[0].label, "This project's own folder (Recommended)");
-    const old = withData.options.find((o) => o.label === 'alfred-code 2.x data');
+    assert.strictEqual(withData.options[0].label, "The project root's folder (Recommended)");
+    const old = withData.options.find((o) => o.label === 'Carry over alfred-code 2.x data');
     assert.match(old.description, /^\/work\/shop\/\.alfred\/chrome-control - carries over the data alfred-code 2\.x left there; the folder is alfred-code's, so deleting it erases this tool's data$/);
-    assert.ok(!loc(() => false).options.some((o) => /alfred/.test(o.label)), 'no alfred-code folder, no answer for it');
+    assert.strictEqual(loc(() => false), undefined, 'no alfred-code folder: one place, no question');
 });
 
 test('plan.js from a kept inventory file leaves location keys as they are', () => {
@@ -1053,7 +1056,7 @@ test('without .alfred/.gitignore there is no alfred-data: today\'s folders, and 
         const p = plan(inv(MAC, { alfredCodeEnabled: enabled }), pickOne('playwright-chrome'), opts('/Users/me', { exists }));
         assert.deepStrictEqual(p.errors, []);
         assert.strictEqual(flag(addStep(p).entry, '--user-data-dir'), '/work/shop/.preferred-tools/playwright-chrome', `enabled ${enabled}`);
-        assert.strictEqual(flag(addStep(plan(inv(MAC, { alfredCodeEnabled: enabled }), pickOne('playwright-chrome', { scope: 'user' }), opts('/Users/me', { exists }))).entry, '--user-data-dir'), '/work/shop/.preferred-tools/playwright-chrome', 'user scope as today');
+        assert.strictEqual(flag(addStep(plan(inv(MAC, { alfredCodeEnabled: enabled }), pickOne('playwright-chrome', { scope: 'user' }), opts('/Users/me', { exists }))).entry, '--user-data-dir'), '/Users/me/.preferred-tools/playwright-chrome', 'global scope: the global root');
         const picked = plan(inv(MAC, { alfredCodeEnabled: enabled }), pickOne('playwright-chrome', { location: { side: 'alfred-data' } }), opts('/Users/me', { exists }));
         assert.match(picked.errors.join(' '), /alfred-code is not set up here \(no \.alfred\/\.gitignore\) - pick another folder/);
         assert.strictEqual(picked.steps.length, 0);
@@ -1066,10 +1069,13 @@ test('the name guard: docs, state, statistics, workspace, flow and an .alfred/<n
     {
         const picked = plan(inv(MAC, { alfredCodeEnabled: true }), pickOne('playwright-chrome', { name, location: { side: 'alfred-data' } }), opts('/Users/me', { exists: ALFRED }));
         assert.match(picked.errors.join(' '), new RegExp(`'${name}' is one of alfred-code's own entries under \\.alfred`), name);
-        // no location picked: the guarded name is not recommended .alfred, it falls back to the plugin's folder
+        // no location picked: the recommended root is .alfred, which refuses the name too (spec D2); the plugin's own
+        // root takes it
         const recommended = plan(inv(MAC, { alfredCodeEnabled: true }), pickOne('playwright-chrome', { name }), opts('/Users/me', { exists: ALFRED }));
-        assert.deepStrictEqual(recommended.errors, [], name);
-        assert.strictEqual(flag(addStep(recommended).entry, '--user-data-dir'), `/work/shop/.preferred-tools/${name}`, name);
+        assert.match(recommended.errors.join(' '), /alfred-code's own entries/, name);
+        const own = plan(inv(MAC, { alfredCodeEnabled: true }), { ...pickOne('playwright-chrome', { name }), roots: { project: { id: 'preferred-tools' } } }, opts('/Users/me', { exists: ALFRED }));
+        assert.deepStrictEqual(own.errors, [], name);
+        assert.strictEqual(flag(addStep(own).entry, '--user-data-dir'), `/work/shop/.preferred-tools/${name}`, name);
     }
     const file = (p) => ALFRED(p) || p === '/work/shop/.alfred/shop-pw';
     const asFile = plan(inv(MAC, { alfredCodeEnabled: true }), pickOne('playwright-chrome', { name: 'shop-pw', location: { side: 'alfred-data' } }), opts('/Users/me', { exists: file, isDir: () => false }));
@@ -1079,16 +1085,17 @@ test('the name guard: docs, state, statistics, workspace, flow and an .alfred/<n
     assert.strictEqual(flag(addStep(asDir).entry, '--user-data-dir'), '/work/shop/.alfred/shop-pw');
 });
 
-test('serena on Windows with alfred-code: local takes <project>\\.alfred\\serena; a spaced project path keeps <profile>\\.serena', () => {
+test('serena on Windows with alfred-code: local takes <project>\\.alfred\\serena, global the global root; a spaced project path keeps <profile>\\.serena', () => {
     const home = (base, pick, exists) => {
         const p = plan(inv(base, { alfredCodeEnabled: true }), pickOne('serena', pick), opts('C:\\Users\\me', { exists }));
         assert.deepStrictEqual(p.errors, [], JSON.stringify(pick));
         return addStep(p).entry.env.SERENA_HOME;
     };
     assert.strictEqual(home(WIN, {}, ALFRED_WIN), 'C:\\work\\shop\\.alfred\\serena');
-    assert.strictEqual(home(WIN, { scope: 'user' }, ALFRED_WIN), 'C:\\Users\\me\\.serena');
+    assert.strictEqual(home(WIN, { scope: 'user' }, ALFRED_WIN), 'C:\\Users\\me\\.preferred-tools\\serena');
     assert.strictEqual(home(WIN, { scope: 'project' }, ALFRED_WIN), '${USERPROFILE}\\.serena');
-    assert.strictEqual(home(WIN, { location: { side: 'account' } }, ALFRED_WIN), 'C:\\Users\\me\\.serena', "serena's account folder on Windows is the profile's .serena");
+    assert.strictEqual(home(WIN, { location: { side: 'account' } }, ALFRED_WIN), 'C:\\Users\\me\\.preferred-tools\\serena', "serena's account folder on Windows is the global root's");
+    assert.strictEqual(home(WIN, { location: { side: 'default' } }, ALFRED_WIN), 'C:\\Users\\me\\.serena', "'default' is the profile's .serena");
     const spaced = { ...WIN, project: 'C:\\my work\\shop' };
     assert.strictEqual(home(spaced, {}, (p) => p === 'C:\\my work\\shop\\.alfred\\.gitignore'), 'C:\\Users\\me\\.serena');
     const picked = plan(inv(spaced, { alfredCodeEnabled: true }), pickOne('serena', { location: { side: 'alfred-data' } }), opts('C:\\Users\\me', { exists: (p) => p === 'C:\\my work\\shop\\.alfred\\.gitignore' }));
@@ -1109,54 +1116,53 @@ test('configure: a local .alfred folder moved to project scope is written relati
 
 // ---- the location question (D4) and scope and name first (D5) -----------------------------------------------------
 test('location labels name the place; descriptions give the exact folder; the answers map covers every label', () => {
-    const q = (scope, alfred, cat = catalog) => asks.locationQuestion(cat.byId.get('playwright-chrome'), inv(WIN, { alfredCodeEnabled: alfred }), { scope, ctx: { project: WIN.project, platform: 'win32', home: 'C:\\Users\\mac', env: {}, exists: (p) => alfred && p === 'C:\\work\\shop\\.alfred\\.gitignore' } });
+    const q = (scope, alfred, cat = catalog) => asks.locationQuestion(cat.byId.get('memory'), inv(WIN, { alfredCodeEnabled: alfred }), { scope, ctx: { project: WIN.project, platform: 'win32', home: 'C:\\Users\\mac', env: {}, exists: (p) => alfred && p === 'C:\\work\\shop\\.alfred\\.gitignore' } });
     const local = q('local', true);
-    assert.deepStrictEqual(local.question.options.map((o) => o.label), ["alfred-code's folder in this project (Recommended)", "This project's own folder", 'Your account folder']);
-    assert.strictEqual(local.question.options[0].description, 'C:\\work\\shop\\.alfred\\playwright-chrome - kept out of git by alfred-code; deleting .alfred erases this data');
-    assert.strictEqual(local.question.options[1].description, "C:\\work\\shop\\.preferred-tools\\playwright-chrome - the plugin's own folder, with its .gitignore");
-    assert.strictEqual(local.question.options[2].description, 'C:\\Users\\mac\\.preferred-tools\\playwright-chrome - one folder for every project on this machine');
-    assert.deepStrictEqual(Object.values(local.answers), [{ side: 'alfred-data' }, { side: 'project' }, { side: 'account' }]);
+    assert.deepStrictEqual(local.question.options.map((o) => o.label), ["The global root's folder (Recommended)", "The project root's folder"]);
+    assert.strictEqual(local.question.options[0].description, 'C:\\Users\\mac\\.preferred-tools\\memory - one memory for every project on this machine');
+    assert.strictEqual(local.question.options[1].description, "C:\\work\\shop\\.alfred\\memory - this project's own memory");
+    assert.deepStrictEqual(Object.values(local.answers), [{ side: 'account' }, { side: 'project' }]);
     assert.deepStrictEqual(Object.keys(local.answers), local.question.options.map((o) => o.label));
-    const project = q('project', true, withRelative('playwright-chrome'));
-    assert.deepStrictEqual(project.question.options.map((o) => o.label), ['.alfred in the folder Claude starts in (Recommended)', '.preferred-tools in the folder Claude starts in', 'Your account folder']);
-    assert.match(project.question.options[0].description, /^`\.alfred\/playwright-chrome` - from C:\\work\\shop: C:\\work\\shop\\\.alfred\\playwright-chrome; from a child or a subfolder: its own - kept out of git/);
-    assert.match(project.question.options[2].description, /^`\$\{USERPROFILE\}\/\.preferred-tools\/playwright-chrome` - on this machine C:\\Users\\mac\\\.preferred-tools\\playwright-chrome/);
-    const unproven = q('project', true, withoutRelative('playwright-chrome'));
+    const project = q('project', true);
+    assert.match(project.question.options[0].description, /^`\$\{USERPROFILE\}\/\.preferred-tools\/memory` - on this machine C:\\Users\\mac\\\.preferred-tools\\memory/);
+    assert.match(project.question.options[1].description, /^`\.alfred\/memory` - from C:\\work\\shop: C:\\work\\shop\\\.alfred\\memory; from a child or a subfolder: its own - this project's own memory$/);
+    const unproven = q('project', true, withoutRelative('memory'));
     assert.strictEqual(unproven.question, null);
     assert.deepStrictEqual(unproven.only, { side: 'account' });
-    // no alfred-code: the plugin's folder is recommended at local and user scope, as today
-    assert.deepStrictEqual(q('user', false).question.options.map((o) => o.label), ["This project's own folder (Recommended)", 'Your account folder']);
-    // with alfred-code, user scope recommends the account folder
-    assert.deepStrictEqual(q('user', true).question.options.map((o) => o.label), ['Your account folder (Recommended)', "alfred-code's folder in this project", "This project's own folder"]);
+    // a tool with one place asks nothing
+    const pw = asks.locationQuestion(catalog.byId.get('playwright-chrome'), inv(MAC, { alfredCodeEnabled: true }), { scope: 'local', ctx: { project: '/work/shop', platform: 'darwin', home: '/Users/me', env: {}, exists: ALFRED } });
+    assert.deepStrictEqual([pw.question, pw.only], [null, { side: 'project' }]);
     // serena: a folder in each project downloads its language servers once per project
-    const serena = asks.locationQuestion(catalog.byId.get('serena'), inv(MAC, { alfredCodeEnabled: true }), { scope: 'local', ctx: { project: '/work/shop', platform: 'darwin', home: '/Users/me', env: {}, exists: ALFRED } });
-    assert.match(serena.question.options[0].description, /^\/work\/shop\/\.alfred\/serena - kept out of git by alfred-code; deleting \.alfred erases this data; its language servers \(about 327MB\) download once per project$/);
-    // the name guard: a name alfred-code keeps for itself has no .alfred option
-    const docs = asks.locationQuestion(catalog.byId.get('playwright-chrome'), inv(MAC, { alfredCodeEnabled: true }), { scope: 'local', name: 'docs', ctx: { project: '/work/shop', platform: 'darwin', home: '/Users/me', env: {}, exists: ALFRED } });
-    assert.ok(!Object.values(docs.answers).some((a) => a.side === 'alfred-data'), JSON.stringify(docs.answers));
+    const serena = asks.locationQuestion(catalog.byId.get('serena'), inv(MAC, { alfredCodeEnabled: true }), { scope: 'local', current: { name: 'serena', scope: 'local', rootStr: '/Users/me/.serena' }, ctx: { project: '/work/shop', platform: 'darwin', home: '/Users/me', env: {}, exists: ALFRED } });
+    assert.deepStrictEqual(serena.question.options.map((o) => o.label), ['The folder it uses now (Recommended)', "The project root's folder"]);
+    assert.match(serena.question.options[1].description, /^\/work\/shop\/\.alfred\/serena - this project's own; its language servers \(about 327MB\) download once per project$/);
 });
 
-test('serena on Windows: alfred-data when the folder is space-free, the profile .serena as the account folder, Another space-free folder', () => {
+test('serena on Windows: the root when it is space-free, the profile .serena when the root has a space, Another space-free folder', () => {
     const q = (project, scope) => asks.locationQuestion(catalog.byId.get('serena'), inv({ ...WIN, project }, { alfredCodeEnabled: true }), { scope, ctx: { project, platform: 'win32', home: 'C:\\Users\\me', env: {}, exists: (p) => p === `${project}\\.alfred\\.gitignore` } });
-    const local = q('C:\\work\\shop', 'local');
-    assert.deepStrictEqual(local.question.options.map((o) => o.label), ["alfred-code's folder in this project (Recommended)", 'Your account folder', 'Another space-free folder']);
-    assert.match(local.question.options[1].description, /^C:\\Users\\me\\\.serena - one folder for every project/);
-    assert.deepStrictEqual(Object.values(local.answers), [{ side: 'alfred-data' }, { side: 'default' }]);
+    assert.deepStrictEqual(q('C:\\work\\shop', 'local'), { question: null, answers: {}, only: { side: 'project' } });
     const spaced = q('C:\\my work\\shop', 'local');
-    assert.deepStrictEqual(spaced.question.options.map((o) => o.label), ['Your account folder (Recommended)', 'Another space-free folder']);
+    assert.deepStrictEqual(spaced.question.options.map((o) => o.label), ["Your profile's .serena (Recommended)", 'Another space-free folder']);
+    assert.match(spaced.question.options[0].description, /^C:\\Users\\me\\\.serena - the root's path has a space/);
+    assert.deepStrictEqual(Object.values(spaced.answers), [{ side: 'default' }]);
     assert.deepStrictEqual(q('C:\\work\\shop', 'project'), { question: null, answers: {}, only: { side: 'default' } });
 });
 
 test('--questions: a location row asks scope and name first; the location follows them; no scopes or names - the recommended scope and the original name', () => {
-    const first = asks.all(inv(MAC), { rows: ['playwright-chrome'] }, catalog).tools['playwright-chrome'];
-    assert.deepStrictEqual(first.first.map((q) => q.id), ['scope-playwright-chrome', 'name-playwright-chrome']);
+    const first = asks.all(inv(MAC), { rows: ['memory'] }, catalog, { home: '/Users/me' }).tools.memory;
+    assert.deepStrictEqual(first.first.map((q) => q.id), ['scope-memory', 'name-memory']);
     assert.ok(!first.questions.some((q) => /^(scope|name)-/.test(q.id)));
-    assert.match(first.questions.find((q) => q.id === 'location-playwright-chrome').options[0].description, /\/work\/shop\/\.preferred-tools\/playwright-chrome/); // Review Focus 1
-    assert.deepStrictEqual(Object.values(first.answers), [{ side: 'project' }, { side: 'account' }]);
-    const named = asks.all(inv(MAC), { rows: ['playwright-chrome'], scopes: { 'playwright-chrome': 'user' }, names: { 'playwright-chrome': 'shop-playwright-chrome' } }, catalog).tools['playwright-chrome'];
-    assert.match(named.questions.find((q) => q.id === 'location-playwright-chrome').options[0].description, /\.preferred-tools[\\/]shop-playwright-chrome/);
-    const kept = asks.all(inv(MAC), { rows: ['playwright-chrome'], names: { 'playwright-chrome': 'keep' } }, catalog).tools['playwright-chrome'];
-    assert.match(kept.questions.find((q) => q.id === 'location-playwright-chrome').options[0].description, /\.preferred-tools\/playwright-chrome /);
+    assert.match(first.questions.find((q) => q.id === 'location-memory').options[1].description, /\/work\/shop\/\.preferred-tools\/memory/); // Review Focus 1
+    assert.deepStrictEqual(Object.values(first.answers), [{ side: 'account' }, { side: 'project' }]);
+    const named = asks.all(inv(MAC), { rows: ['memory'], scopes: { memory: 'local' }, names: { memory: 'shop-memory' } }, catalog, { home: '/Users/me' }).tools.memory;
+    assert.match(named.questions.find((q) => q.id === 'location-memory').options[0].description, /\.preferred-tools[\\/]shop-memory/);
+    const kept = asks.all(inv(MAC), { rows: ['memory'], names: { memory: 'keep' } }, catalog, { home: '/Users/me' }).tools.memory;
+    assert.match(kept.questions.find((q) => q.id === 'location-memory').options[0].description, /\.preferred-tools\/memory /);
+    // the roots answered so far place the folder
+    const rooted = asks.all(inv(MAC), { rows: ['memory'], roots: { project: { id: 'named', path: 'tools/keys' } } }, catalog, { home: '/Users/me' }).tools.memory;
+    assert.match(rooted.questions.find((q) => q.id === 'location-memory').options[1].description, /^\/work\/shop\/tools\/keys\/memory /);
+    const pw = asks.all(inv(MAC), { rows: ['playwright-chrome'] }, catalog).tools['playwright-chrome'];
+    assert.deepStrictEqual([pw.questions.some((q) => q.id === 'location-playwright-chrome'), pw.only], [false, { side: 'project' }], 'one place: no location question');
     const c7 = asks.all(inv(MAC), { rows: ['context7'] }, catalog).tools.context7;
     assert.strictEqual(c7.first, null);
     assert.deepStrictEqual(c7.answers, {});
@@ -1240,7 +1246,11 @@ test('configure: a move that leaves one folder writes it - --questions carries `
     assert.deepStrictEqual(u.only, { side: 'account' });
     assert.deepStrictEqual(plan(j, changeOf(pw, { scope: 'project', location: u.only }), opts('/Users/me', { catalog: cat })).errors, []);
     // a location question asked: no `only`
-    assert.strictEqual(asks.all(j, { targets: [k] }, catalog, { home: '/Users/me' }).targets[k].only, null);
+    const elsewhere = installed('playwright-chrome', { scope: 'local', location: { side: 'path', path: '/work/shop/tools/pw' } });
+    const m = inv(MAC, { registrations: [elsewhere] });
+    assert.strictEqual(asks.all(m, { targets: [`mcp:${elsewhere.name}~local`] }, catalog, { home: '/Users/me' }).targets[`mcp:${elsewhere.name}~local`].only, null);
+    // the folder it uses now is the root's: the one place left is to keep it
+    assert.deepStrictEqual(asks.all(j, { targets: [k] }, catalog, { home: '/Users/me' }).targets[k].only, { side: 'keep' });
 });
 
 test('project scope: --executable-path takes no machine path - refused when named, left out with a note on a move', () => {
@@ -1280,7 +1290,7 @@ test("a move to project scope carries no machine path in env: appium's SDK homes
     assert.strictEqual(refused.steps.length, 0);
 });
 
-test('project scope in .preferred-tools: the plan and the option say another clone needs the folder git-ignored', () => {
+test('project scope in .preferred-tools: the plan says another clone needs the folder git-ignored', () => {
     const own = plan(inv(MAC), pickOne('playwright-chrome', { scope: 'project', location: { side: 'project' } }), opts('/Users/me'));
     assert.deepStrictEqual(own.errors, []);
     assert.ok(own.notes.some((n) => /another clone of this project creates \.preferred-tools\/playwright-chrome unignored - its \.gitignore holds \* and is never committed: add \.preferred-tools\/ to the project's \.gitignore, or run \/preferred-tools:fix there/.test(n)), own.notes.join('\n'));
@@ -1288,28 +1298,25 @@ test('project scope in .preferred-tools: the plan and the option say another clo
     const alfred = plan(inv(MAC, { alfredCodeEnabled: true }), pickOne('playwright-chrome', { scope: 'project', location: { side: 'alfred-data' } }), opts('/Users/me', { exists: ALFRED }));
     assert.deepStrictEqual(alfred.errors, []);
     assert.ok(!alfred.notes.some((n) => /another clone/.test(n)), alfred.notes.join('\n'));
-    const q = asks.locationQuestion(catalog.byId.get('playwright-chrome'), inv(MAC), { scope: 'project', ctx: { project: '/work/shop', platform: 'darwin', home: '/Users/me', env: {}, exists: () => false } });
-    assert.match(q.question.options.find((o) => o.label.startsWith('.preferred-tools')).description, /its \.gitignore is never committed, so another clone needs \.preferred-tools\/ in the project's \.gitignore$/);
-    const local = asks.locationQuestion(catalog.byId.get('playwright-chrome'), inv(MAC), { scope: 'local', ctx: { project: '/work/shop', platform: 'darwin', home: '/Users/me', env: {}, exists: () => false } });
-    assert.match(local.question.options[0].description, /the plugin's own folder, with its \.gitignore$/);
 });
 
 // ---- minor findings -------------------------------------------------------------------------------------------------
-test('serena on Windows with a spaced profile: a space-free folder is offered and recommended, so the question has two options', () => {
+test('serena on Windows with a spaced root and profile: a space-free folder is offered and recommended, so the question has two options', () => {
     const home = 'C:\\Users\\Jane Doe';
-    const ctx = { project: WIN.project, platform: 'win32', home, env: {}, exists: () => false };
-    const l = asks.locationQuestion(catalog.byId.get('serena'), inv(WIN), { scope: 'local', ctx });
+    const project = 'C:\\my work\\shop';
+    const ctx = { project, platform: 'win32', home, env: {}, exists: () => false };
+    const l = asks.locationQuestion(catalog.byId.get('serena'), inv({ ...WIN, project }), { scope: 'local', ctx });
     assert.ok(l.question, 'asked');
     checkQuestion(l.question);
     assert.strictEqual(l.question.options[0].label, 'A space-free folder (Recommended)');
     assert.match(l.question.options[0].description, /^C:\\serena-home - /);
     assert.deepStrictEqual(l.answers['A space-free folder (Recommended)'], { side: 'path', path: 'C:\\serena-home' });
     // the plan's default is the same folder, never an error
-    const p = plan(inv(WIN), pickOne('serena', { scope: 'local' }), opts(home));
+    const p = plan(inv({ ...WIN, project }), pickOne('serena', { scope: 'local' }), opts(home));
     assert.deepStrictEqual(p.errors, []);
     assert.strictEqual(addStep(p).entry.env.SERENA_HOME, 'C:\\serena-home');
     // the system drive, when the environment names it
-    const d = asks.locationQuestion(catalog.byId.get('serena'), inv(WIN), { scope: 'local', ctx: { ...ctx, env: { SystemDrive: 'D:' } } });
+    const d = asks.locationQuestion(catalog.byId.get('serena'), inv({ ...WIN, project }), { scope: 'local', ctx: { ...ctx, env: { SystemDrive: 'D:' } } });
     assert.deepStrictEqual(d.answers['A space-free folder (Recommended)'], { side: 'path', path: 'D:\\serena-home' });
 });
 
@@ -1412,4 +1419,115 @@ test('plan.js --questions takes --data after its files and refuses an unknown fl
         console.error = err;
         fs.rmSync(dir, { recursive: true, force: true });
     }
+});
+
+// ---- 0.2.0: data folders in the root (spec D2) ----------------------------------------------------------------------
+const OTHER_RE = /\b(?:in|into|via|through|using) (?:the )?['‘’]?Other\b|\btype (?:it|them|\w+) (?:in|into)\b[^.]{0,20}\bOther\b/;
+const ALFRED_ROOT = { project: { id: 'alfred' } };
+const callsOf = (x) => (Array.isArray(x) ? x : (x && x.calls) || []).flat();
+
+test('a pick\'s data folder is <root>/<name>: relative at project scope, absolute at local and global scope', () => {
+    const o = opts('/Users/me', { exists: ALFRED });
+    const at = (scope, extra = {}) => flag(addStep(plan(inv(MAC, { alfredCodeEnabled: true }), { picks: { 'playwright-chrome': { scope, ...extra } }, roots: ALFRED_ROOT }, o)).entry, '--user-data-dir');
+    assert.strictEqual(at('project'), '.alfred/playwright-chrome');
+    assert.strictEqual(at('local'), '/work/shop/.alfred/playwright-chrome');
+    assert.strictEqual(at('user'), '/Users/me/.preferred-tools/playwright-chrome', 'global scope: the global root');
+    assert.strictEqual(at('local', { name: 'shop-pw' }), '/work/shop/.alfred/shop-pw', 'named after the registration');
+    const named = (scope) => flag(addStep(plan(inv(MAC), { picks: { 'playwright-chrome': { scope } }, roots: { project: { id: 'named', path: 'tools/keys' }, global: { id: 'named', path: '/srv/keys' } } }, opts('/Users/me'))).entry, '--user-data-dir');
+    assert.strictEqual(named('project'), 'tools/keys/playwright-chrome');
+    assert.strictEqual(named('local'), '/work/shop/tools/keys/playwright-chrome');
+    assert.strictEqual(named('user'), '/srv/keys/playwright-chrome');
+    // no roots answer: the recommended root, as the walk's 'recommended for all' takes it
+    assert.strictEqual(flag(addStep(plan(inv(MAC), pickOne('playwright-chrome'), opts('/Users/me'))).entry, '--user-data-dir'), '/work/shop/.preferred-tools/playwright-chrome');
+    assert.strictEqual(flag(addStep(plan(inv(MAC, { alfredCodeEnabled: true }), pickOne('playwright-chrome'), o)).entry, '--user-data-dir'), '/work/shop/.alfred/playwright-chrome');
+});
+
+test('memory: the global root\'s memory recommended, <root>/memory offered; at project scope the global one only under the home folder', () => {
+    const q = (scope, rootAnswers = null) => asks.locationQuestion(catalog.byId.get('memory'), inv(MAC), { scope, ctx: { project: '/work/shop', platform: 'darwin', home: '/Users/me', env: {}, exists: () => false, roots: rootAnswers } });
+    const local = q('local');
+    assert.deepStrictEqual(local.question.options.map((o) => o.label), ["The global root's folder (Recommended)", "The project root's folder"]);
+    assert.match(local.question.options[0].description, /^\/Users\/me\/\.preferred-tools\/memory - one memory for every project/);
+    assert.match(local.question.options[1].description, /^\/work\/shop\/\.preferred-tools\/memory - this project's own memory/);
+    assert.deepStrictEqual(Object.values(local.answers), [{ side: 'account' }, { side: 'project' }]);
+    assert.match(q('project').question.options[0].description, /^`\$\{HOME\}\/\.preferred-tools\/memory`/);
+    const far = q('project', { project: '/work/shop/.preferred-tools', global: '/srv/keys', globalNamed: true });
+    assert.deepStrictEqual([far.question, far.only], [null, { side: 'project' }], 'a global root outside the home folder cannot be written at project scope');
+    assert.deepStrictEqual([q('user').question, q('user').only], [null, { side: 'account' }], 'global scope: one place');
+    const db = (scope, roots) => addStep(plan(inv(MAC), { picks: { memory: { scope } }, roots }, opts('/Users/me'))).entry.env.MCP_MEMORY_SQLITE_PATH;
+    assert.strictEqual(db('local'), '/Users/me/.preferred-tools/memory/memory.db');
+    assert.strictEqual(db('project'), '${HOME}/.preferred-tools/memory/memory.db');
+    assert.strictEqual(db('project', { global: { id: 'named', path: '/srv/keys' } }), '.preferred-tools/memory/memory.db');
+    assert.strictEqual(addStep(plan(inv(MAC), { picks: { memory: { location: { side: 'project' } } } }, opts('/Users/me'))).entry.env.MCP_MEMORY_SQLITE_PATH, '/work/shop/.preferred-tools/memory/memory.db');
+});
+
+test('serena on Windows: a spaced root gets the space-free folder recommended; ${USERPROFILE}\\.serena at project scope as today', () => {
+    const serena = catalog.byId.get('serena');
+    const ctxOf = (project, home) => ({ project, platform: 'win32', home, env: {}, exists: () => false });
+    const spaced = asks.locationQuestion(serena, inv({ ...WIN, project: 'C:\\my work\\shop' }), { scope: 'local', ctx: ctxOf('C:\\my work\\shop', 'C:\\Users\\me') });
+    assert.deepStrictEqual(spaced.question.options.map((o) => o.label), ["Your profile's .serena (Recommended)", 'Another space-free folder']);
+    assert.match(spaced.question.options[1].description, /asked next$/);
+    const both = asks.locationQuestion(serena, inv(WIN), { scope: 'user', ctx: ctxOf('C:\\work\\shop', 'C:\\Users\\Jo Doe') });
+    assert.deepStrictEqual(both.question.options.map((o) => o.label), ['A space-free folder (Recommended)', 'Another space-free folder']);
+    const clean = asks.locationQuestion(serena, inv(WIN), { scope: 'local', ctx: ctxOf('C:\\work\\shop', 'C:\\Users\\Jo Doe') });
+    assert.deepStrictEqual([clean.question, clean.only], [null, { side: 'project' }], 'a space-free root: <root>\\<name>, nothing to ask');
+    const home = (base, home, pick = {}) => addStep(plan(inv(base), pickOne('serena', pick), opts(home))).entry.env.SERENA_HOME;
+    assert.strictEqual(home(WIN, 'C:\\Users\\Jo Doe'), 'C:\\work\\shop\\.preferred-tools\\serena');
+    assert.strictEqual(home({ ...WIN, project: 'C:\\my work\\shop' }, 'C:\\Users\\me'), 'C:\\Users\\me\\.serena');
+    assert.strictEqual(home(WIN, 'C:\\Users\\Jo Doe', { scope: 'user' }), 'C:\\serena-home');
+    assert.strictEqual(home(WIN, 'C:\\Users\\me', { scope: 'project' }), '${USERPROFILE}\\.serena');
+    assert.match(plan(inv(WIN), pickOne('serena', { scope: 'project' }), opts('C:\\Users\\Jo Doe')).errors.join(), /USERPROFILE/);
+});
+
+test('alfred-code 2.x data on disk adds \'Carry over alfred-code 2.x data\' beside <root>/<name>', () => {
+    const pw = catalog.byId.get('playwright-chrome');
+    const ctx = (present) => ({ project: '/work/shop', platform: 'darwin', home: '/Users/me', env: {}, exists: (p) => present.includes(p) });
+    const old = asks.locationQuestion(pw, inv(MAC), { scope: 'local', ctx: ctx(['/work/shop/.alfred/chrome-control']) });
+    assert.deepStrictEqual(old.question.options.map((o) => o.label), ["The project root's folder (Recommended)", 'Carry over alfred-code 2.x data']);
+    assert.deepStrictEqual(Object.values(old.answers), [{ side: 'project' }, { side: 'alfred' }]);
+    const none = asks.locationQuestion(pw, inv(MAC), { scope: 'local', ctx: ctx([]) });
+    assert.deepStrictEqual([none.question, none.only], [null, { side: 'project' }]);
+});
+
+test('the three typed values are asked next and no text the walk produces mentions Other', () => {
+    const texts = [];
+    const typed = {};
+    for (const [base, home, alfred] of [[MAC, '/Users/me', false], [MAC, '/Users/me', true], [{ ...WIN, project: 'C:\\my work\\shop' }, 'C:\\Users\\Jo Doe', false], [{ ...WIN, project: 'C:\\my work\\shop' }, 'C:\\Users\\Jo Doe', true]])
+    {
+        const gitignore = base.os === 'win32' ? `${base.project}\\.alfred\\.gitignore` : `${base.project}/.alfred/.gitignore`;
+        const rows = catalog.tools.filter((r) => r.kind === 'mcp' && !(r.platforms && !r.platforms.includes(base.os)));
+        // every MCP row installed once, so each gets a configure target
+        const regs = rows.map((r) => { const s = addStep(plan(inv(base), pickOne(r.id), opts(home, { exists: () => false }))); return s && reg(s.name, s.scope, s.entry, r.id, s.route); }).filter(Boolean);
+        const i = inv(base, { alfredCodeEnabled: alfred, registrations: regs });
+        const env = {};
+        const q = asks.all(i, { rows: catalog.tools.map((r) => r.id), targets: regs.map((r) => `mcp:${r.name}~${r.scope}`) }, catalog, { env, home });
+        const all = [
+            ...Object.values(q.static).flatMap((x) => (x.options ? [x] : [])), ...callsOf(q.pick), ...callsOf(q.change), ...callsOf(q.remove), ...q.roots.questions,
+            ...Object.values(q.tools).flatMap((t) => [...(t.first || []), ...(t.questions || []), ...(t.route ? [t.route] : [])]),
+            ...Object.values(q.targets).flatMap((t) => [...(t.first || []), ...(t.questions || []), ...(t.route ? [t.route] : [])]),
+        ];
+        assert.ok(alfred || base.os !== 'win32' || Object.values(q.tools).some((t) => (t.questions || []).some((x) => x.id === 'location-serena')), 'the spaced Windows root asks serena\'s folder');
+        for (const x of all)
+        {
+            texts.push(x.question, x.header, ...x.options.flatMap((o) => [o.label, o.description]));
+            for (const o of x.options) if (['Another space-free folder', 'A browser binary I name', 'A self-managed host'].includes(o.label.replace(/ \(Recommended\)$/, ''))) typed[o.label] = o.description;
+        }
+    }
+    for (const t of texts.filter(Boolean))
+    {
+        assert.doesNotMatch(t, OTHER_RE, t);
+        assert.doesNotMatch(t, /under Other/, t);
+    }
+    assert.deepStrictEqual(Object.keys(typed).sort(), ['A browser binary I name', 'A self-managed host', 'Another space-free folder']);
+    for (const [label, d] of Object.entries(typed)) assert.match(d, /asked next$/, label);
+});
+
+test('an .alfred project root refuses a registration named after one of alfred-code\'s own entries', () => {
+    const o = opts('/Users/me', { exists: ALFRED });
+    const p = plan(inv(MAC, { alfredCodeEnabled: true }), { picks: { memory: { name: 'state', scope: 'local' } }, roots: ALFRED_ROOT }, o);
+    assert.match(p.errors.join(), /alfred-code's own entries under \.alfred/);
+    assert.strictEqual(p.steps.filter((s) => s.op === 'mcp-add').length, 0);
+    const fileThere = plan(inv(MAC, { alfredCodeEnabled: true }), { picks: { 'playwright-chrome': { name: 'shop-pw' } }, roots: ALFRED_ROOT }, opts('/Users/me', { exists: (x) => ALFRED(x) || x === '/work/shop/.alfred/shop-pw', isDir: () => false }));
+    assert.match(fileThere.errors.join(), /\.alfred\/shop-pw exists and is not a folder/);
+    const elsewhere = plan(inv(MAC, { alfredCodeEnabled: true }), { picks: { memory: { name: 'state', scope: 'local' } }, roots: { project: { id: 'preferred-tools' } } }, o);
+    assert.deepStrictEqual(elsewhere.errors, [], 'another project root takes the name');
 });

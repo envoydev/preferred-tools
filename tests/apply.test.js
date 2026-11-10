@@ -61,8 +61,8 @@ test('a fresh install writes through the CLI at each scope, and every add is rea
         assert.deepStrictEqual(Object.keys(proj), ['serena']);
         assert.deepStrictEqual(Object.keys(accountDoc(w).mcpServers), ['playwright-chrome']);
         assert.deepStrictEqual(mcpJson(w), { mcpServers: { context7: { type: 'http', url: 'https://mcp.context7.com/mcp' } } });
-        // under the project, or on Windows serena's own absolute home, <home>\.serena (serena-windows-home)
-        assert.ok(proj.serena.env.SERENA_HOME.startsWith(process.platform === 'win32' ? path.win32.join(w.home, '.serena') : w.project), 'an absolute path at local scope');
+        // in the project root, absolute at local scope (serena on Windows too, the throwaway path being space-free)
+        assert.ok(proj.serena.env.SERENA_HOME.startsWith(w.project), 'an absolute path at local scope');
         // the argv the CLI saw
         const adds = w.calls().filter((a) => a[1] === 'add-json');
         assert.deepStrictEqual(adds.map((a) => [a[2], a[4], a[5]]), [['serena', '-s', 'local'], ['playwright-chrome', '-s', 'user'], ['context7', '-s', 'project']]);
@@ -76,10 +76,9 @@ test('a fresh install writes through the CLI at each scope, and every add is rea
         assert.deepStrictEqual(job.fetch.map((s) => s.name), ['serena', 'playwright-chrome']);
         assert.deepStrictEqual(job.check, ['serena', 'playwright-chrome', 'context7'], 'every server written, the hosted one too');
         assert.match(r.text, /Restart Claude Code/);
-        // the data folders got a .gitignore holding * (serena's on Windows is <home>\.serena, serena-windows-home)
-        const serenaData = process.platform === 'win32' ? path.win32.join(w.home, '.serena') : path.join(w.project, '.preferred-tools', 'serena');
-        assert.strictEqual(fs.readFileSync(path.join(serenaData, '.gitignore'), 'utf8'), '*\n');
-        assert.strictEqual(fs.readFileSync(path.join(w.project, '.preferred-tools', 'playwright-chrome', '.gitignore'), 'utf8'), '*\n');
+        // the data folders got a .gitignore holding *: local scope in the project root, user scope in the global root
+        assert.strictEqual(fs.readFileSync(path.join(w.project, '.preferred-tools', 'serena', '.gitignore'), 'utf8'), '*\n');
+        assert.strictEqual(fs.readFileSync(path.join(w.home, '.preferred-tools', 'playwright-chrome', '.gitignore'), 'utf8'), '*\n');
         // the project's own .gitignore is never created or edited
         assert.ok(!fs.existsSync(path.join(w.project, '.gitignore')));
     }
@@ -145,7 +144,8 @@ test('a same-name rewrite saves the old JSON first and re-adds it when the add f
     const w = world();
     try
     {
-        walk(w, { picks: { 'playwright-chrome': { scope: 'user' } } });
+        // the data in the project root, so the move to the global root (under the home) is the add that fails
+        walk(w, { picks: { 'playwright-chrome': { scope: 'user', location: { side: 'project' } } } });
         const old = accountDoc(w).mcpServers['playwright-chrome'];
         // the home as the add-json argument spells it: a Windows path's backslashes are escaped in the JSON
         const r = walk(w, { change: { 'mcp:playwright-chrome~user': { location: { side: 'account' } } } }, { fail: JSON.stringify(w.home).slice(1, -1) });
@@ -165,7 +165,7 @@ test('when the re-add also fails the report prints the line that restores it by 
     const w = world();
     try
     {
-        walk(w, { picks: { appium: { scope: 'user' } } });
+        walk(w, { picks: { appium: { scope: 'user', location: { side: 'project' } } } });
         const old = accountDoc(w).mcpServers['appium-mcp'];
         const r = walk(w, { change: { 'mcp:appium-mcp~user': { location: { side: 'account' } } } }, { fail: 'add-json appium-mcp' });
         assert.match(r.report.failed.detail, /RESTORE BY HAND: claude mcp add-json appium-mcp '/);
@@ -233,7 +233,7 @@ test('remove runs one remove per pick at the scope shown and reads the absence b
         assert.deepStrictEqual(accountDoc(w).mcpServers, {});
         assert.deepStrictEqual(Object.keys(mcpJson(w).mcpServers), ['context7'], 'what was not picked stays');
         // the data folder stays: the report does not delete it (on Windows serena's home is <home>\.serena, serena-windows-home)
-        assert.ok(fs.existsSync(process.platform === 'win32' ? path.win32.join(w.home, '.serena') : path.join(w.project, '.preferred-tools', 'serena')));
+        assert.ok(fs.existsSync(path.join(w.home, '.preferred-tools', 'serena')));
     }
     finally { w.clean(); }
 });
@@ -378,7 +378,7 @@ test('a configure move and an in-place replace of an entry with live values writ
         const sentry = { command: 'npx', args: ['-y', '@sentry/mcp-server@0.42.0'], env: { SENTRY_ACCESS_TOKEN: token } };
         register(w, 'sentry-live', sentry);
         // appium with a key the user added to its env; a location change rewrites it in place
-        walk(w, { picks: { appium: { scope: 'user' } } });
+        walk(w, { picks: { appium: { scope: 'user', location: { side: 'project' } } } });
         const appium = accountDoc(w).mcpServers['appium-mcp'];
         cli.run(['mcp', 'remove', 'appium-mcp', '-s', 'user'], { cwd: w.project, env: w.env });
         register(w, 'appium-mcp', { ...appium, env: { ...appium.env, APPIUM_API_KEY: key } }, 'user');

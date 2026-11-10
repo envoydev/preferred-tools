@@ -195,6 +195,33 @@ function rootStrFor(root, scope, ctx)
     return P.relative(ctx.project, root).split(P.sep).join('/') || '.';
 }
 
+// The roots a run uses. `answers`: { project: { id, path? }, global: { id, path? } } - an option id from the root
+// question, `path` the folder typed for 'named'. No answer: the family's recommended root (D2's first option). ->
+// { roots: { project, global, globalNamed }, errors: [reason] }, the roots absolute.
+function resolve(inv, answers, ctx)
+{
+    const out = {};
+    const errors = [];
+    for (const family of ['project', 'global'])
+    {
+        const a = (answers && answers[family]) || null;
+        const opts = options(inv, family, ctx);
+        if (!a || !a.id) { out[family] = opts[0].root; continue; }
+        if (a.id === 'named')
+        {
+            const r = resolveNamed(family, a.path, ctx);
+            if (r.error) errors.push(`roots: ${r.error}`);
+            out[family] = r.root || null;
+            continue;
+        }
+        const o = opts.find((x) => x.id === a.id && x.root);
+        if (!o) { errors.push(`roots: '${a.id}' is not a ${family} root offered here (${opts.filter((x) => x.root).map((x) => x.id).join(', ')}, or named with a path)`); out[family] = null; continue; }
+        out[family] = o.root;
+    }
+    out.globalNamed = Boolean(out.global) && !standard('global', ctx).some((x) => x.root === out.global);
+    return { roots: out, errors };
+}
+
 // ---- the record -----------------------------------------------------------------------------------------------------
 
 // Where the commands look for the record (D6): the mapped root, the two standard folders, then every root a managed
@@ -224,6 +251,6 @@ function readRecord(file)
 }
 
 module.exports = {
-    FILES, GITIGNORE, familyOf, readMap, mapKey, withRoot, inUse, options, resolveNamed, rootStrFor, recordFiles, readRecord,
+    FILES, GITIGNORE, familyOf, readMap, mapKey, withRoot, inUse, options, resolveNamed, resolve, rootStrFor, recordFiles, readRecord,
     helperPathOf, registrationRoots, standard,
 };

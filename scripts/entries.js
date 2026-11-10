@@ -137,7 +137,7 @@ function defaultRoot(row, name, ctx)
 {
     const loc = row.locations;
     if (loc.windowsAbsolute && ctx.platform === 'win32') return serenaWindowsHome(ctx);
-    const out = { root: otherPlace(row, name, loc.defaultSide) };
+    const out = { root: otherPlace(row, name, loc.defaultSide, ctx) };
     const old = alfredRoot(row, ctx);
     if (old) out.alfred = old;
     return out;
@@ -188,41 +188,51 @@ function alfredNameProblem(name, ctx)
     return isDir(at) ? null : `.alfred/${name} exists and is not a folder - pick another name or folder`;
 }
 
-// The location side recommended for a row at a scope (spec D3). `alfredHere`: alfredData(...) for this project.
-// `copy`: an install beside a registration of the same row at another scope.
-function recommendedSide(row, scope, ctx, { alfredHere = false, copy = false } = {})
+// The root of a scope family (spec D2): ctx.roots when the plan or the questions resolved them, else the recommended
+// ones without alfred-code - <project>/.preferred-tools and <home>/.preferred-tools.
+function rootOf(family, ctx)
+{
+    const P = pathFor(ctx.platform);
+    const set = ctx.roots && ctx.roots[family];
+    if (set) return set;
+    return family === 'global' ? P.join(ctx.home, '.preferred-tools') : P.join(ctx.project, '.preferred-tools');
+}
+
+// The location side recommended for a row at a scope (spec D2): the data folder sits in the root of the scope's family -
+// 'project' (the project root) at project and local scope, 'account' (the global root) at global scope. memory keeps one
+// memory for every project: the global root's - at project scope only where the committed file can name it, under the
+// home folder - and a copy beside a registration at another scope gets the project root's. serena on Windows needs an
+// absolute, space-free home: a root with a space gives 'default' (the profile's .serena, else a space-free folder), and
+// project scope always does (${USERPROFILE}\.serena).
+function recommendedSide(row, scope, ctx, { copy = false } = {})
 {
     const loc = row.locations;
     if (loc.windowsAbsolute && ctx.platform === 'win32')
     {
-        if (scope !== 'local' || !alfredHere) return 'default';
-        return validWindowsSerenaHome(path.win32.join(ctx.project, '.alfred', 'serena')) ? 'alfred-data' : 'default';
+        if (scope === 'project') return 'default';
+        const side = scope === 'user' ? 'account' : 'project';
+        return validWindowsSerenaHome(rootOf(side === 'account' ? 'global' : 'project', ctx)) ? side : 'default';
     }
-    if (scope === 'user' && alfredHere) return 'account';
+    if (scope === 'user') return 'account';
     if (scope === 'project' && loc.relative !== true) return 'account';
-    // a row whose data defaults to the account folder gives this project's copy its own data, not the account-wide one's
-    if (copy && loc.defaultSide === 'account') return 'project';
-    if (scope !== 'user' && alfredHere && loc.defaultSide !== 'account') return 'alfred-data';
-    return 'default';
+    if (loc.defaultSide === 'account')
+    {
+        if (copy) return 'project';
+        if (scope === 'project' && logicalRoot(rootOf('global', ctx), ctx).kind === 'abs') return 'project';
+        return 'account';
+    }
+    return 'project';
 }
 
-// The side recommended for a registration name: recommendedSide with `alfredHere` meaning alfred-code is set up here, and
-// never .alfred/<name> for a name alfred-code keeps for itself or one taken by a file there. The question and the plan's
-// default both ask this, so they agree.
-function recommendedSideFor(row, name, scope, ctx, { alfredHere = false, copy = false } = {})
+// A tool's folder in a root, as a logical root: 'account' - the global root's, else the project root's (spec D2).
+function otherPlace(row, name, side, ctx = null)
 {
-    const side = recommendedSide(row, scope, ctx, { alfredHere, copy });
-    if (side === 'alfred-data' && alfredNameProblem(name, ctx)) return recommendedSide(row, scope, ctx, { alfredHere: false, copy });
-    return side;
-}
-
-function otherPlace(row, name, side)
-{
+    if (ctx && ctx.platform && (ctx.roots || ctx.project)) return logicalRoot(pathFor(ctx.platform).join(rootOf(side === 'account' ? 'global' : 'project', ctx), name), ctx);
     return side === 'account' ? { kind: 'home', rel: `.preferred-tools/${name}` } : { kind: 'project', rel: `.preferred-tools/${name}` };
 }
 
 // The other place from 'Locations': the account folder for a project default, the project folder for memory.
-const otherSide = (row, name) => otherPlace(row, name, row.locations.defaultSide === 'account' ? 'project' : 'account');
+const otherSide = (row, name, ctx = null) => otherPlace(row, name, row.locations.defaultSide === 'account' ? 'project' : 'account', ctx);
 
 // The root an installed entry carries, in written form, from the row's first derived key.
 function rootOfEntry(row, entry)
@@ -388,5 +398,5 @@ function fetchOf(name, entry, rowId)
 module.exports = {
     pathFor, slashes, isWindowsArm, pythonRequest, parseRoot, logicalRoot, currentOf, formatRoot, withSub, homeVar, serenaWindowsHome, serenaSpaceFree, validWindowsSerenaHome,
     defaultRoot, alfredRoot, otherSide, otherPlace, rootOfEntry, applyRoot, buildEntry, nameProblem, subst, fetchStep,
-    ALFRED_ENTRIES, alfredData, alfredNameProblem, recommendedSide, recommendedSideFor, machinePath, expandVars,
+    ALFRED_ENTRIES, alfredData, alfredNameProblem, recommendedSide, rootOf, machinePath, expandVars,
 };
