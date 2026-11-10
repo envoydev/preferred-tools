@@ -558,3 +558,33 @@ test('windowsMcpServers: one plugin id installed at two scopes is one server, at
     assert.deepStrictEqual(startsHere([], [at('user', false), at('project', true)]), ['windows-control@envoydev project alfred-code']);
     assert.deepStrictEqual(startsHere([], [at('user', true), at('local', true)]), ['windows-control@envoydev local alfred-code']);
 });
+
+test('the inventory reads trust and the roots map from --data', () => {
+    const w = world();
+    try
+    {
+        const roots = require('../scripts/roots.js');
+        const data = path.join(w.dir, 'data');
+        const named = path.join(w.project, 'tools', 'keys');
+        const g = path.join(w.dir, 'global-keys');
+        for (const d of [data, named, g]) fs.mkdirSync(d, { recursive: true });
+        writeJson(path.join(data, 'roots.json'), { version: 1, global: g, projects: { [roots.mapKey(w.project)]: named } });
+        writeJson(account.accountFile(w.env), { projects: { [accountKey(w.project)]: { hasTrustDialogAccepted: true } } });
+        const i = build(w, { data });
+        assert.strictEqual(i.trusted, true);
+        assert.deepStrictEqual(i.roots.project, { path: named, from: 'map' });
+        assert.deepStrictEqual(i.roots.global, { path: g, from: 'map' });
+        assert.strictEqual(i.roots.map.global, g);
+        const none = build(w);
+        assert.deepStrictEqual([none.roots.project, none.roots.global, none.roots.map.projects], [null, null, {}], 'no --data: no map');
+        writeJson(account.accountFile(w.env), { projects: { [accountKey(w.project)]: { hasTrustDialogAccepted: false } } });
+        assert.strictEqual(build(w, { data }).trusted, false);
+        // the CLI passes --data through
+        const out = path.join(w.dir, 'inv.json');
+        const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'inventory.js'), '--project', w.project, '--json', out, '--data', data], { encoding: 'utf8', env: w.env });
+        assert.strictEqual(r.status, 0, r.stderr);
+        const file = JSON.parse(fs.readFileSync(out, 'utf8'));
+        assert.deepStrictEqual([file.trusted, file.roots.project], [false, { path: named, from: 'map' }]);
+    }
+    finally { w.clean(); }
+});

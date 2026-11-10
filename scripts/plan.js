@@ -4,6 +4,7 @@
 //
 //   node plan.js <inventory.json> <answers.json> [--out <plan.json>]     the plan, printed, and written for apply.js
 //   node plan.js --questions <inventory.json> [<picks.json>]              every ask the walk makes, as data
+//   either takes --data <plugin data dir> after its files: the roots map (spec D2)
 //
 // A fresh add builds its entry from catalog/tools.json. A rename, a move, a route or location change (configure) starts
 // from the registration as read - its pin, its cut-off, the args and env the user added - and changes only what the
@@ -26,6 +27,7 @@ const asks = require('./asks.js');
 const account = require('./account.js');
 const keys = require('./keys.js');
 const kept = require('./kept.js');
+const roots = require('./roots.js');
 const { installedOf, keyOf, targetOf, fromHere, otherWindowsMcp } = require('./inventory.js');
 const { blockingStdio } = require('./json-file.js');
 
@@ -297,7 +299,7 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     if (!cur)
     {
         if (ensure) out.steps.push({ op: 'ensure-dir', path: ensure, why: `${row.id}: data folder, with a .gitignore holding * so the project's own .gitignore is never edited` });
-        out.steps.push({ op: 'mcp-add', name, scope, entry, row: row.id, route: routeId, why: `${row.id}: add (${routeId})` });
+        out.steps.push({ op: 'mcp-add', name, scope, entry, row: row.id, route: routeId, why: `${row.id}: add (${routeId}) at ${scope} scope` });
         if (fetch) out.steps.push(fetch);
         return undefined;
     }
@@ -363,6 +365,33 @@ function planChange(key, pick, inv, ctx, catalog, out)
     return planPlugin(row, { ...answers, target: { scope: t.item.scope } }, inv, ctx, catalog, out);
 }
 
+// ---- the root folders (spec D2) -------------------------------------------------------------------------------------
+// answers.roots: { project: { id, path? }, global: { id, path? } } - an option id from the root question, `path` the
+// folder typed for 'named'. No answer: the family's recommended root (D2's first option). -> { project, global,
+// globalNamed } as absolute paths; a bad answer is a plan error with its reason.
+function resolveRoots(inv, answers, ctx, errors)
+{
+    const out = {};
+    for (const family of ['project', 'global'])
+    {
+        const a = (answers && answers[family]) || null;
+        const opts = roots.options(inv, family, ctx);
+        if (!a || !a.id) { out[family] = opts[0].root; continue; }
+        if (a.id === 'named')
+        {
+            const r = roots.resolveNamed(family, a.path, ctx);
+            if (r.error) errors.push(`roots: ${r.error}`);
+            out[family] = r.root || null;
+            continue;
+        }
+        const o = opts.find((x) => x.id === a.id && x.root);
+        if (!o) { errors.push(`roots: '${a.id}' is not a ${family} root offered here (${opts.filter((x) => x.root).map((x) => x.id).join(', ')}, or named with a path)`); out[family] = null; continue; }
+        out[family] = o.root;
+    }
+    out.globalNamed = Boolean(out.global) && !roots.standard('global', ctx).some((x) => x.root === out.global);
+    return out;
+}
+
 // ---- the plan -------------------------------------------------------------------------------------------------------
 
 function plan(inv, answers, opts = {})
@@ -371,6 +400,8 @@ function plan(inv, answers, opts = {})
     // answers.machine: what prereq.js found (docker: false picks github's binary fallback); an explicit option wins
     const ctx = { ...makeCtx(inv, { ...opts, machine: opts.machine || answers.machine }), changing: new Set(Object.keys(answers.change || {})) };
     const out = { version: 1, project: inv.project, os: inv.os, alfredCodeEnabled: Boolean(inv.alfredCodeEnabled), steps: [], notes: [], errors: [], unchanged: [], tokens: [], oauth: [], dangerous: [], expect: [], hud: null };
+    ctx.roots = resolveRoots(inv, answers.roots, { ...ctx, catalog }, out.errors);
+    out.roots = ctx.roots;
 
     for (const [rowId, pick] of Object.entries(answers.picks || {}))
     {
@@ -444,7 +475,7 @@ function tokenLine(t)
     }
     else
     {
-        parts.push(`Token: ${t.name} (${t.scope}) - the apply writes ${t.variable} into the registration from ${(t.files || []).join(', then ')}; a key in none of them stays \${${t.variable}}. The key is never printed.`);
+        parts.push(`Token: ${t.name} (${t.scope} scope) - the apply writes ${t.variable} into the registration from ${(t.files || []).join(', then ')}; a key in none of them stays \${${t.variable}}. The key is never printed.`);
         parts.push(t.found ? `Found in ${t.found}.` : 'In none of them.');
     }
     if (!t.found && !t.set) for (const n of t.near || []) parts.push(`${n.file} holds ${n.name}, not ${t.variable}: add the key under ${t.variable}.`);
@@ -472,28 +503,62 @@ function render(p)
     if (p.dangerous.length) lines.push('', ...p.dangerous.map((d) => `Code-running tool on '${d.name}': ${d.tools.map((t) => `${t.tool} (${t.why})`).join('; ')}. This plugin adds no guard.`));
     if (p.notes.length) lines.push('', ...p.notes.map((n) => `Note: ${n}`));
     if (p.unchanged.length) lines.push('', ...p.unchanged.map((n) => `Unchanged: ${n}`));
-    return lines.join('\n');
+    return globalWords(lines.join('\n'));
 }
+
+// The prose says Global for user scope (spec D1): 'global (user scope)' the first time, 'global scope' after. The commands
+// keep the value (`-s user`, `--scope user`).
+function globalWords(text)
+{
+    let first = true;
+    return text.replace(/\buser scope\b/g, () => { if (!first) return 'global scope'; first = false; return 'global (user scope)'; });
+}
+
+// The arguments, by flag: `--questions` first or not at all, then at most two files, and the flags anywhere after them.
+// An unknown flag, or a flag without its value, is an error - never read as a file.
+const VALUE_FLAGS = { '--data': 'data', '--connectors': 'connectors', '--out': 'out' };
+function parseArgs(argv)
+{
+    const out = { questions: argv[0] === '--questions', files: [], data: null, connectors: null, out: null, error: null };
+    for (let i = out.questions ? 1 : 0; i < argv.length; i++)
+    {
+        const a = argv[i];
+        if (Object.hasOwn(VALUE_FLAGS, a))
+        {
+            if (i + 1 >= argv.length) return { ...out, error: `${a} needs a value` };
+            out[VALUE_FLAGS[a]] = argv[++i];
+        }
+        else if (a.startsWith('--')) return { ...out, error: `unknown flag '${a}'` };
+        else out.files.push(a);
+    }
+    if (out.files.length > 2) return { ...out, error: `one inventory file and one ${out.questions ? 'picks' : 'answers'} file, not ${out.files.length} files` };
+    return out;
+}
+
+const USAGE = 'usage: plan.js <inventory.json> <answers.json> [--out plan.json] [--data <dir>]\n       plan.js --questions <inventory.json> [<picks.json>] [--data <dir>] [--connectors <Name>,<Name>]';
 
 function main(argv)
 {
     blockingStdio();
     const read = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
-    if (argv[0] === '--questions')
+    const args = parseArgs(argv);
+    if (args.error) { console.error(`plan.js: ${args.error}\n${USAGE}`); return 2; }
+    const [invFile, second] = args.files;
+    if (!invFile || (!args.questions && !second)) { console.error(USAGE); return 2; }
+    const inv = read(invFile);
+    // the roots map is read fresh from the plugin's data folder when one is given
+    if (args.data !== null) inv.roots = { ...(inv.roots || {}), map: roots.readMap(args.data) };
+    if (args.questions)
     {
-        const inv = read(argv[1]);
-        const picks = argv[2] ? read(argv[2]) : null;
-        console.log(JSON.stringify(asks.all(inv, picks, catalogLib.load(), { env: process.env, home: account.homeDir(process.env) }), null, 2));
+        const picks = second ? read(second) : null;
+        console.log(JSON.stringify(asks.all(inv, picks, catalogLib.load(), { env: process.env, home: account.homeDir(process.env), connectors: args.connectors }), null, 2));
         return 0;
     }
-    const [invFile, ansFile] = argv;
-    if (!invFile || !ansFile) { console.error('usage: plan.js <inventory.json> <answers.json> [--out plan.json]'); return 2; }
-    const p = plan(read(invFile), read(ansFile), {});
-    const at = argv.indexOf('--out');
-    if (at >= 0) fs.writeFileSync(argv[at + 1], JSON.stringify(p, null, 2));
+    const p = plan(inv, read(second), {});
+    if (args.out) fs.writeFileSync(args.out, JSON.stringify(p, null, 2));
     console.log(render(p));
     return p.errors.length ? 1 : 0;
 }
 
 if (require.main === module) process.exit(main(process.argv.slice(2)));
-module.exports = { plan, render, argvOf, makeCtx, deepEqual, projectName };
+module.exports = { plan, render, argvOf, makeCtx, deepEqual, projectName, main, parseArgs, resolveRoots, globalWords };

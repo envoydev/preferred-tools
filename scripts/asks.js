@@ -8,6 +8,7 @@ const E = require('./entries.js');
 const { installedOf, keyOf, targetOf, fromHere, otherWindowsMcp } = require('./inventory.js');
 const { pinOf } = require('./table.js');
 const keys = require('./keys.js');
+const roots = require('./roots.js');
 
 const REC = ' (Recommended)';
 // The `remote` route is worded 'hosted' in every ask: alfred-code's stop guard reads a bare 'remote' in an ask as git
@@ -15,10 +16,13 @@ const REC = ' (Recommended)';
 const ROUTE_WORD = { remote: 'hosted', local: 'local' };
 const HEADER = { code: 'Code', docs: 'Docs, forges', browsers: 'Browsers', machine: 'Machine' };
 const SCOPE_TEXT = {
-    local: 'this project, on this machine only (kept in your account file)',
+    local: 'this project, only you (~/.claude.json, under this project)',
     project: "this project, for everyone who opens it (the committed .mcp.json - relative paths and ${VAR} only)",
-    user: 'every project on this machine',
+    user: "every project on this machine (Claude Code's user scope, in ~/.claude.json)",
 };
+// Only words change (spec D1): the value stays user, project or local in picks, answers, the plan and on the CLI.
+const SCOPE_LABEL = { user: 'Global', project: 'Project', local: 'Local' };
+const scopeOfLabel = (label) => Object.keys(SCOPE_LABEL).find((s) => SCOPE_LABEL[s] === String(label).replace(/ \(Recommended\)$/, '')) || null;
 // project scope for a route that runs on this machine: what the committed file then carries
 const PROJECT_LOCAL_TEXT = "the committed .mcp.json - every session in this folder or below it; data folders follow the folder Claude starts in, a subfolder included; it holds this machine's launch (cmd /c on Windows, the x64 Python on Windows ARM64)";
 const scopeText = (s, row, routeId) => (s === 'project' && row.kind === 'mcp' && routeId === 'local' ? PROJECT_LOCAL_TEXT : SCOPE_TEXT[s]);
@@ -208,7 +212,7 @@ function scopeQuestion(row, inv, { route, current = null, copyOf = [], ctx = nul
     return {
         id: `scope-${row.id}`, header: 'Scope', multiSelect: false,
         question: current ? `${row.label}: which scope? Another one moves '${current.name || row.label}' there; /preferred-tools:install adds a second copy instead.` : `${row.label}: which scope?`,
-        options: order.slice(0, 4).map((s, i) => ({ label: `${s}${i === 0 ? REC : ''}`, description: scopeText(s, row, routeId) })),
+        options: order.slice(0, 4).map((s, i) => ({ label: `${SCOPE_LABEL[s]}${i === 0 ? REC : ''}`, description: scopeText(s, row, routeId) })),
     };
 }
 
@@ -452,13 +456,79 @@ const STATIC = {
         { label: 'Skip', description: 'nothing changes' } ] }),
 };
 
+// ---- the root questions (spec D2) ----------------------------------------------------------------------------------
+// One question per scope family a pick or a recorded answer needs, never per tool. 'A folder you name' is asked next, in
+// one plain line.
+const ROOT_HEADER = { project: 'Project root', global: 'Global root' };
+const ROOT_TEXT = {
+    project: "Which folder holds this project's keys, key helper and tool data (project and local scope)?",
+    global: 'Which folder holds the keys, key helper and tool data for every project (global scope)?',
+};
+
+// A pick needs a root when it has a data folder or a key: the key file and the helper live in the root.
+function needsRoot(row, routeId)
+{
+    if (row.kind !== 'mcp') return false;
+    const route = row.routes && row.routes[routeId];
+    return Boolean(row.locations) || Boolean(route && route.tokenVar);
+}
+
+// The families the questions input needs a root for: each pick at its answered (else recommended) scope, and each answer
+// in `existing`, recorded in the project root (a registration at project or local scope, a plugin's server) or the global
+// root (a user registration, a connector).
+function rootFamilies(inv, picks, catalog, ctx)
+{
+    const out = new Set();
+    const routes = (picks && picks.routes) || {};
+    const scopes = (picks && picks.scopes) || {};
+    for (const id of (picks && picks.rows) || [])
+    {
+        const row = catalog.byId.get(id);
+        if (!row) continue;
+        const routeId = routes[id] || row.recommendedRoute;
+        if (!needsRoot(row, routeId)) continue;
+        const scope = scopes[id] || scopeOrder(row, inv, { route: routeId, ctx, copyOf: installedOf(inv, id) })[0];
+        out.add(roots.familyOf(scope));
+    }
+    for (const key of Object.keys((picks && picks.existing) || {}))
+    {
+        const m = /^mcp:.+~(local|project|user)$/.exec(key);
+        if (m) out.add(roots.familyOf(m[1]));
+        else if (key.startsWith('plugin-mcp:')) out.add('project');
+        else if (key.startsWith('connector:')) out.add('global');
+    }
+    return ['project', 'global'].filter((f) => out.has(f));
+}
+
+// -> { question, answers: { <label as shown>: { family, id, root } } }
+function rootQuestion(inv, family, ctx)
+{
+    const opts = roots.options(inv, family, ctx).map((o, i) => ({ ...o, label: `${o.label}${i === 0 ? REC : ''}` }));
+    return {
+        question: { id: `root-${family}`, header: ROOT_HEADER[family], multiSelect: false, question: ROOT_TEXT[family], options: opts.map((o) => ({ label: o.label, description: o.description })) },
+        answers: Object.fromEntries(opts.map((o) => [o.label, { family, id: o.id, root: o.root }])),
+    };
+}
+
+function rootsBlock(inv, picks, catalog, ctx)
+{
+    const out = { questions: [], answers: {} };
+    for (const family of rootFamilies(inv, picks, catalog, ctx))
+    {
+        const r = rootQuestion(inv, family, { ...ctx, catalog });
+        out.questions.push(r.question);
+        out.answers[r.question.id] = r.answers;
+    }
+    return out;
+}
+
 // picks: { rows: [<row id>], routes: { <row id>: route } } for install, { targets: [<key>], routes: { <key>: route } }
 // for configure; both may carry `scopes` ({ <row id or key>: scope }) and `names` ({ <row id or key>: 'keep' | <name> }),
 // the answers to `first`, which place the data folder. A target's questions start from what it has now: its route,
 // scope, name and data folder are 'Keep'. `env` and `home`: what the key state reads (the shell's variables, the home
 // key file). plan.js --questions passes the real ones; a caller that passes none reads neither, so a test never depends
 // on the shell that runs it.
-function all(inv, picks, catalog, { env = {}, home = null } = {})
+function all(inv, picks, catalog, { env = {}, home = null, connectors = null } = {})
 {
     const out = {
         static: { ...STATIC, hud: STATIC.hud(0, 0, 0), prereqMissing: STATIC.prereqMissing('<tool>', '<prerequisite>') },
@@ -489,7 +559,8 @@ function all(inv, picks, catalog, { env = {}, home = null } = {})
             ...toolAsk(row, inv, { route: routes[key], scope: scopes[key], name: names[key], current, ctx, catalog }),
         };
     }
+    out.roots = rootsBlock(inv, picks, catalog, ctx);
     return out;
 }
 
-module.exports = { REC, recommendedScope, keyStateOf, keyToSend, pickQuestions, changeQuestions, routeQuestion, toolQuestions, toolAsk, scopeQuestion, nameQuestion, locationQuestion, removeQuestions, packed, STATIC, all, chunk, scopesFor };
+module.exports = { SCOPE_LABEL, scopeOfLabel, needsRoot, rootFamilies, rootQuestion, REC, recommendedScope, keyStateOf, keyToSend, pickQuestions, changeQuestions, routeQuestion, toolQuestions, toolAsk, scopeQuestion, nameQuestion, locationQuestion, removeQuestions, packed, STATIC, all, chunk, scopesFor };

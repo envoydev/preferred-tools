@@ -2,7 +2,7 @@
 'use strict';
 // THE INVENTORY - what is installed, read-only, no server started.
 //
-//   node inventory.js --project <dir> --json <out>
+//   node inventory.js --project <dir> --json <out> [--data <plugin data dir>]   (--data: the roots map, spec D2)
 //
 // Reads the project's .mcp.json, the account file (user servers, and this project's local servers), the .mcp.json of
 // every folder above (inherited: listed, never changed from here) and `claude plugin list --json`, and matches each
@@ -15,6 +15,7 @@ const catalogLib = require('./catalog.js');
 const account = require('./account.js');
 const cli = require('./claude-cli.js');
 const kept = require('./kept.js');
+const roots = require('./roots.js');
 const { readState } = account;
 const { blockingStdio } = require('./json-file.js');
 
@@ -172,7 +173,7 @@ function pluginRows(listJson, project, env, catalog, alfredCheck)
     return rows;
 }
 
-function buildInventory({ project, env = process.env, platform = process.platform, arch = process.arch, catalog = catalogLib.load(), run = cli.run })
+function buildInventory({ project, env = process.env, platform = process.platform, arch = process.arch, catalog = catalogLib.load(), run = cli.run, data = null })
 {
     const proj = path.resolve(project);
     const out = {
@@ -226,6 +227,13 @@ function buildInventory({ project, env = process.env, platform = process.platfor
         }
         for (const n of Object.keys(servers)) if (!wins.has(n)) wins.set(n, { scope: 'inherited', from: dir });
     }
+
+    // trust, and the root folders (spec D2): the roots map in the plugin's data folder, and the root each family uses now
+    out.trusted = approval.trusted;
+    const rootCtx = { project: proj, home: account.homeDir(env), platform, catalog };
+    out.roots = { map: roots.readMap(data) };
+    out.roots.project = roots.inUse(out, 'project', rootCtx);
+    out.roots.global = roots.inUse(out, 'global', rootCtx);
 
     const version = cli.available({ env, cwd: proj });
     out.cli = version ? { ok: true, version } : { ok: false, version: null };
@@ -313,7 +321,7 @@ function main(argv)
     const val = (flag) => { const i = argv.indexOf(flag); return i >= 0 ? argv[i + 1] : undefined; };
     const project = val('--project') || process.cwd();
     const outFile = val('--json');
-    const inv = buildInventory({ project });
+    const inv = buildInventory({ project, data: val('--data') || null });
     if (!inv.cli.ok)
     {
         console.error('preferred-tools: the claude CLI is not on PATH - install Claude Code, then run this again.');

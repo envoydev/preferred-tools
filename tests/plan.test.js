@@ -194,7 +194,7 @@ test('context7 hosted: set - project with the key; in a key file only - local wi
         // the questions recommend the same: scope first, then 'Use ${CONTEXT7_API_KEY}' when there is a key to send
         const ctx = { project: w.project, platform: 'darwin', home: w.home, env: {} };
         const qs = asks.toolQuestions(catalog.byId.get('context7'), inv({ ...MAC, project: w.project }), { route: 'remote', ctx, catalog });
-        assert.strictEqual(qs.find((q) => q.id === 'scope-context7').options[0].label, 'local (Recommended)');
+        assert.strictEqual(qs.find((q) => q.id === 'scope-context7').options[0].label, 'Local (Recommended)');
         assert.strictEqual(qs.find((q) => q.id === 'token-context7').options[0].label, 'Use ${CONTEXT7_API_KEY} (Recommended)');
     }
     finally { w.clean(); }
@@ -276,7 +276,7 @@ test('at local and user scope the token note names the key files the apply reads
     const local = plan(inv(MAC), pickOne('github', { route: 'remote', scope: 'local' }), opts('/h'));
     const P = (...a) => path.join(...a);
     assert.deepStrictEqual(local.tokens[0].files, [P('/work/shop', '.preferred-tools', '.secrets'), P('/h', '.preferred-tools', '.secrets')]);
-    assert.ok(render(local).includes(`Token: github (local) - the apply writes GITHUB_PERSONAL_ACCESS_TOKEN into the registration from ${P('/work/shop', '.preferred-tools', '.secrets')}, then ${P('/h', '.preferred-tools', '.secrets')}; a key in none of them stays \${GITHUB_PERSONAL_ACCESS_TOKEN}.`));
+    assert.ok(render(local).includes(`Token: github (local scope) - the apply writes GITHUB_PERSONAL_ACCESS_TOKEN into the registration from ${P('/work/shop', '.preferred-tools', '.secrets')}, then ${P('/h', '.preferred-tools', '.secrets')}; a key in none of them stays \${GITHUB_PERSONAL_ACCESS_TOKEN}.`));
     assert.strictEqual(local.steps[0].op, 'ensure-ignore');
     assert.strictEqual(addStep(local).route, 'remote', 'the route id, never the route object');
     assert.ok(!JSON.stringify(local.steps).includes('"auth"'));
@@ -302,7 +302,7 @@ test('scopes: local and user write absolute paths with ~ expanded; project scope
 });
 
 test('every MCP route offers user, project and local: recommended first, then user, project, local', () => {
-    const scopes = (id, route, base = MAC, home = '/Users/me') => asks.scopeQuestion(catalog.byId.get(id), inv(base), { route, ctx: { project: base.project, platform: base.os, home, env: {}, exists: () => false } }).options.map((o) => o.label.replace(' (Recommended)', ''));
+    const scopes = (id, route, base = MAC, home = '/Users/me') => asks.scopeQuestion(catalog.byId.get(id), inv(base), { route, ctx: { project: base.project, platform: base.os, home, env: {}, exists: () => false } }).options.map((o) => asks.scopeOfLabel(o.label));
     assert.deepStrictEqual(scopes('serena', 'local'), ['local', 'user', 'project']);
     assert.deepStrictEqual(scopes('context7', 'remote'), ['project', 'user', 'local']);
     assert.deepStrictEqual(scopes('context7', 'local'), ['local', 'user', 'project']);
@@ -760,12 +760,12 @@ test('install questions for a copy: the taken scope is not offered, and an accou
     const q = asks.all(i, { rows: ['memory', 'typescript-lsp'] }, catalog);
     // memory has a data folder: its scope and name come first, in a call of their own
     assert.deepStrictEqual(q.tools.memory.first.map((x) => x.id), ['scope-memory', 'name-memory']);
-    assert.deepStrictEqual(q.tools.memory.first.find((x) => x.id === 'scope-memory').options.map((o) => o.label), ['local (Recommended)', 'project'], 'the copy\'s user scope is not offered again');
+    assert.deepStrictEqual(q.tools.memory.first.find((x) => x.id === 'scope-memory').options.map((o) => o.label), ['Local (Recommended)', 'Project'], 'the copy\'s user scope is not offered again');
     assert.match(q.tools.memory.first.find((x) => x.id === 'name-memory').options[0].description, /used instead of the copy for every project/);
     const loc = q.tools.memory.questions.find((x) => x.id === 'location-memory');
     assert.strictEqual(loc.options[0].label, "This project's own folder (Recommended)");
     assert.match(loc.options[0].description, /^\/work\/shop\/\.preferred-tools\/memory /);
-    assert.deepStrictEqual(q.tools['typescript-lsp'].questions[0].options.map((o) => o.label), ['project (Recommended)', 'local']);
+    assert.deepStrictEqual(q.tools['typescript-lsp'].questions[0].options.map((o) => o.label), ['Project (Recommended)', 'Local']);
     for (const t of Object.values(q.tools)) [...(t.first || []), ...t.questions].forEach(checkQuestion);
 });
 
@@ -803,13 +803,13 @@ test('configure questions start from what is installed: its route, scope, name, 
     const q = asks.all(i, { targets: ['mcp:pw~local', 'mcp:c7~project', 'mcp:none~user'] }, catalog);
     const first = (key, id) => [...(q.targets[key].first || []), ...q.targets[key].questions].find((x) => x.id.startsWith(id)).options[0].label;
     assert.strictEqual(q.targets['mcp:pw~local'].row, 'playwright-chrome');
-    assert.strictEqual(first('mcp:pw~local', 'scope'), 'local (Recommended)');
+    assert.strictEqual(first('mcp:pw~local', 'scope'), 'Local (Recommended)');
     assert.strictEqual(first('mcp:pw~local', 'name'), 'Keep `pw` (Recommended)');
     assert.strictEqual(first('mcp:pw~local', 'location'), 'The folder it uses now (Recommended)');
     assert.strictEqual(q.targets['mcp:pw~local'].questions.find((x) => x.id.startsWith('location')).options[0].description, '/work/shop/.preferred-tools/pw/profile', 'the folder as registered');
     assert.strictEqual(first('mcp:pw~local', 'browser'), 'Keep `/opt/chrome` (Recommended)');
     assert.strictEqual(q.targets['mcp:c7~project'].route.options[0].label, 'Hosted (Recommended)');
-    assert.strictEqual(first('mcp:c7~project', 'scope'), 'project (Recommended)');
+    assert.strictEqual(first('mcp:c7~project', 'scope'), 'Project (Recommended)');
     assert.match(q.targets['mcp:none~user'].error, /not a catalog tool installed here/);
     const local = asks.all(inv(MAC, { registrations: [reg('c7', 'local', { command: 'npx', args: ['-y', '@upstash/context7-mcp@2.0.0'] }, 'context7', 'local')] }), { targets: ['mcp:c7~local'] }, catalog);
     assert.strictEqual(local.targets['mcp:c7~local'].route.options[0].label, 'Local (Recommended)', 'the route it has now is recommended, not the catalog\'s');
@@ -818,7 +818,7 @@ test('configure questions start from what is installed: its route, scope, name, 
 
 test('the scope question follows the route: its recommended scope first, then user, project, local', () => {
     const i = inv(MAC);
-    const scopes = (id, route) => asks.scopeQuestion(catalog.byId.get(id), i, { route, ctx: { project: '/p', platform: 'darwin', home: '/h', env: {} } }).options.map((o) => o.label.replace(' (Recommended)', ''));
+    const scopes = (id, route) => asks.scopeQuestion(catalog.byId.get(id), i, { route, ctx: { project: '/p', platform: 'darwin', home: '/h', env: {} } }).options.map((o) => asks.scopeOfLabel(o.label));
     assert.deepStrictEqual(scopes('serena', 'local'), ['local', 'user', 'project']);
     assert.deepStrictEqual(scopes('context7', 'remote'), ['project', 'user', 'local']);
     assert.deepStrictEqual(scopes('context7', 'local'), ['local', 'user', 'project']);
@@ -882,7 +882,7 @@ test("hud: 'defer' plans the install and leaves the settings ask for after it; a
 
 test('--questions takes the route answered so far: it decides the recommended scope', () => {
     const i = inv(MAC);
-    const scopes = (route) => asks.all(i, { rows: ['context7'], routes: { context7: route } }, catalog).tools.context7.questions.find((q) => q.id === 'scope-context7').options.map((o) => o.label.replace(/ \(Recommended\)$/, ''));
+    const scopes = (route) => asks.all(i, { rows: ['context7'], routes: { context7: route } }, catalog).tools.context7.questions.find((q) => q.id === 'scope-context7').options.map((o) => asks.scopeOfLabel(o.label));
     assert.deepStrictEqual(scopes('remote'), ['project', 'user', 'local']);
     assert.deepStrictEqual(scopes('local'), ['local', 'user', 'project']);
     assert.strictEqual(asks.all(i, { rows: ['serena'] }, catalog).tools.serena.route, null, 'a one-route row has no route ask');
@@ -1340,4 +1340,76 @@ test("the question's recommended folder and the plan's default write the same en
                             assert.deepStrictEqual(addStep(byDefault) && addStep(byDefault).entry, addStep(byAnswer) && addStep(byAnswer).entry, at);
                         }
                 }
+});
+
+test('scope options read Global, Project and Local, the recommended first; the value stays user, project or local', () => {
+    const q = asks.all(inv(MAC), { rows: ['atlassian'] }, catalog).tools.atlassian.questions.find((x) => x.id === 'scope-atlassian');
+    assert.deepStrictEqual(q.options.map((o) => o.label), ['Project (Recommended)', 'Global', 'Local']);
+    assert.match(q.options[1].description, /every project on this machine \(Claude Code's user scope, in ~\/\.claude\.json\)/);
+    assert.match(q.options[2].description, /this project, only you \(~\/\.claude\.json, under this project\)/);
+    assert.deepStrictEqual(q.options.map((o) => asks.scopeOfLabel(o.label)), ['project', 'user', 'local']);
+    assert.deepStrictEqual(asks.SCOPE_LABEL, { user: 'Global', project: 'Project', local: 'Local' });
+    const step = addStep(plan(inv(MAC), pickOne('atlassian', { scope: 'user' }), opts('/Users/me')));
+    assert.deepStrictEqual(argvOf(step).slice(-2), ['-s', 'user']);
+});
+
+test('the plan output says \'global (user scope)\' once, then \'global\'', () => {
+    const p = plan(inv(MAC), { picks: { atlassian: { scope: 'user' }, gitlab: { scope: 'user' } } }, opts('/Users/me'));
+    assert.deepStrictEqual(p.errors, []);
+    const text = render(p);
+    assert.strictEqual(text.split('global (user scope)').length - 1, 1, text);
+    assert.match(text.slice(text.indexOf('global (user scope)') + 1), /\bglobal\b/);
+    assert.doesNotMatch(text, /\buser scope\b(?!\))/, 'no bare user scope in the prose');
+    assert.match(text, /-s user/, 'the command keeps the value');
+});
+
+test('answers.roots: a named project folder outside the project is a plan error with its reason; none given takes the recommended root', () => {
+    const pick = pickOne('playwright-chrome');
+    const bad = plan(inv(MAC), { ...pick, roots: { project: { id: 'named', path: '../keys' } } }, opts('/Users/me'));
+    assert.match(bad.errors.join(), /root.*\.\./);
+    const none = plan(inv(MAC), pick, opts('/Users/me'));
+    assert.deepStrictEqual(none.errors, []);
+    assert.deepStrictEqual(none.roots, { project: '/work/shop/.preferred-tools', global: '/Users/me/.preferred-tools', globalNamed: false });
+    const named = plan(inv(MAC), { ...pick, roots: { project: { id: 'named', path: 'tools/keys' }, global: { id: 'named', path: '~/keys' } } }, opts('/Users/me'));
+    assert.deepStrictEqual(named.roots, { project: '/work/shop/tools/keys', global: '/Users/me/keys', globalNamed: true });
+    assert.match(plan(inv(MAC), { ...pick, roots: { global: { id: 'nowhere' } } }, opts('/Users/me')).errors.join(), /nowhere/);
+});
+
+test('plan.js --questions takes --data after its files and refuses an unknown flag', () => {
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const roots = require('../scripts/roots.js');
+    const { main } = require('../scripts/plan.js');
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pt-plan-main-')));
+    const out = [];
+    const log = console.log;
+    const err = console.error;
+    try
+    {
+        const project = path.join(dir, 'shop');
+        const named = path.join(project, 'tools', 'keys');
+        const data = path.join(dir, 'data');
+        for (const d of [named, data]) fs.mkdirSync(d, { recursive: true });
+        fs.writeFileSync(path.join(data, 'roots.json'), JSON.stringify({ version: 1, global: null, projects: { [roots.mapKey(project)]: named } }));
+        const invFile = path.join(dir, 'inv.json');
+        const picksFile = path.join(dir, 'picks.json');
+        fs.writeFileSync(invFile, JSON.stringify(inv({ ...MAC, project })));
+        fs.writeFileSync(picksFile, JSON.stringify({ rows: ['playwright-chrome'] }));
+        console.log = (s) => out.push(s);
+        console.error = () => {};
+        assert.strictEqual(main(['--questions', invFile, picksFile, '--data', data]), 0);
+        const q = JSON.parse(out.pop()).roots.questions[0];
+        assert.strictEqual(q.options[0].description.startsWith(named), true, q.options[0].description);
+        assert.strictEqual(main(['--questions', invFile, '--data', data]), 0);
+        const bare = JSON.parse(out.pop());
+        assert.deepStrictEqual([bare.tools, bare.roots.questions], [{}, []], 'no picks file read');
+        assert.strictEqual(main(['--questions', invFile, picksFile, '--bogus']), 2);
+        assert.strictEqual(main(['--questions', invFile, '--data']), 2, 'a flag without its value');
+    }
+    finally
+    {
+        console.log = log;
+        console.error = err;
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
 });
