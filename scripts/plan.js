@@ -312,7 +312,8 @@ function planMcp(row, pick, inv, ctx, catalog, out)
         {
             const word = row.id.toUpperCase().replace(/-/g, '_');
             const seen = keys.presence(ctx.project, scope, [{ name: route.tokenVar, word }], { env: { ...ctx.env, HOME: ctx.home, USERPROFILE: ctx.home }, alfredEnabled: inv.alfredCodeEnabled, home: ctx.home });
-            out.tokens.push({ row: row.id, name, variable: route.tokenVar, scope, set: Boolean(ctx.env[route.tokenVar]), files, found: seen.found[route.tokenVar], near: seen.near[route.tokenVar] });
+            // the line names the files the key was looked for in - with alfred-code's engine, its chain up the parent folders
+            out.tokens.push({ row: row.id, name, variable: route.tokenVar, scope, set: Boolean(ctx.env[route.tokenVar]), files: seen.files, found: seen.found[route.tokenVar], near: seen.near[route.tokenVar] });
         }
         const ignore = path.join(ctx.project, '.preferred-tools');
         if (files.includes(keys.projectFile(ctx.project)) && !(ctx.exists || fs.existsSync)(path.join(ignore, '.gitignore')) && !out.steps.some((s) => s.op === 'ensure-ignore'))
@@ -469,7 +470,7 @@ function tokenLine(t)
         if (t.set) parts.push('A Claude Code started from the dock or an IDE may not have it - the account settings.json "env" reaches every start.');
         else
         {
-            parts.push(t.found ? `Its name is in ${t.found}, which project scope does not read.` : 'It is in none of the key files local scope would read either.');
+            parts.push(t.found ? `Its name is in ${t.found}, which project scope does not read.` : `It is in none of the key files local scope would read either${(t.files || []).length ? `: ${t.files.join(', ')}` : ''}.`);
             parts.push(`Choose local scope, which writes the key in from a key file but serves only this folder (a child that is its own project does not see it - install it there too); or user scope, which serves every project; or set ${t.variable} in the account settings.json "env" and keep one project-scope entry for the whole workspace.`);
         }
     }

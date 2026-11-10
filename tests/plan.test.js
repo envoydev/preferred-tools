@@ -144,7 +144,7 @@ test('routes: context7, github and sentry each build both ways; the others have 
 test('a token route registers the ${VAR} and the plan says whether it is set; no token value is ever in the plan', () => {
     const fake = ['gh', 'p_', 'FAKE0123456789abcdefFAKE0123456789'].join('');
     const p = plan(inv(MAC), pickOne('github', { route: 'remote' }), opts('/h', { env: { GITHUB_PERSONAL_ACCESS_TOKEN: fake } }));
-    assert.deepStrictEqual(p.tokens, [{ row: 'github', name: 'github', variable: 'GITHUB_PERSONAL_ACCESS_TOKEN', scope: 'project', set: true, files: [], found: null, near: [] }]);
+    assert.deepStrictEqual(p.tokens, [{ row: 'github', name: 'github', variable: 'GITHUB_PERSONAL_ACCESS_TOKEN', scope: 'project', set: true, files: [path.join('/work/shop', '.preferred-tools', '.secrets'), path.join('/h', '.preferred-tools', '.secrets')], found: null, near: [] }]);
     assert.ok(!JSON.stringify(p).includes(fake));
     assert.ok(!render(p).includes(fake));
     assert.match(render(p), /GITHUB_PERSONAL_ACCESS_TOKEN\} from the environment Claude Code starts with - set in this shell\. A Claude Code started from the dock/);
@@ -219,6 +219,32 @@ test('the token line names where the name is, the near-miss, the three ways to r
         assert.ok(found.includes(`Its name is in ${store}, which project scope does not read.`), found);
         assert.doesNotMatch(found, /holds ACME_GITHUB_ACCESS_TOKEN/, 'a near-miss is named only while the key is missing');
         assert.ok(!found.includes(fakeValue));
+    }
+    finally { w.clean(); }
+});
+
+test('the token line names the files it looked in: at project scope when the key is in none, at local scope the same walk it found the key by', () => {
+    const fs = require('node:fs');
+    const { world } = require('./helpers.js');
+    const w = world();
+    try
+    {
+        // project scope, the key nowhere: the sentence names the files local scope would read
+        const none = plan(inv(MAC), pickOne('github', { route: 'remote', scope: 'project' }), opts('/h'));
+        const P = (...a) => path.join(...a);
+        assert.ok(render(none).includes(`It is in none of the key files local scope would read either: ${P('/work/shop', '.preferred-tools', '.secrets')}, ${P('/h', '.preferred-tools', '.secrets')}.`), render(none));
+        // a workspace child with alfred-code's engine: the key in the parent's store is found by the walk, and the line
+        // names that walk, never this folder's store alone beside a 'Found in' from another
+        const child = P(w.project, 'api');
+        const engine = P(child, '.claude', 'hooks', 'secret-chain.js');
+        fs.mkdirSync(path.dirname(engine), { recursive: true });
+        fs.writeFileSync(engine, '');
+        const parentStore = putKeys(w.project, ALFRED_STORE, [`${G}=v-not-printed`]);
+        const local = plan(inv({ ...MAC, project: child }, { alfredCodeEnabled: true }), pickOne('github', { route: 'remote', scope: 'local' }), opts(w.home));
+        const t = local.tokens[0];
+        assert.strictEqual(t.found, parentStore);
+        assert.ok(t.files.includes(parentStore), JSON.stringify(t.files));
+        assert.ok(render(local).includes(`from ${P(child, '.alfred', '.secrets')}, then ${parentStore}`), render(local));
     }
     finally { w.clean(); }
 });
