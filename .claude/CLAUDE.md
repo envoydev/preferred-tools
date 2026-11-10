@@ -11,15 +11,18 @@ is listed in the `envoydev` marketplace, which lives in the alfred-code repo
 `main`'s tip, and a version bump merged to `main` is the release with no alfred-code change. So `main` stays
 release-only.
 
-- `/preferred-tools:install` - manual (`disable-model-invocation: true`); adds only tools not installed in this
-  project: pick tools, then route, scope, name and location per tool. A tool installed for every project is offered as
-  this project's own copy beside it; install never changes, moves or removes a registration.
+- `/preferred-tools:install` - manual (`disable-model-invocation: true`); first asks once about each server already set
+  up here that matches a catalog row (a registration, a plugin's server, a claude.ai connector) and records the answer,
+  then adds only tools not installed in this project: pick tools, then route and scope, the root folders, then name,
+  location, the key's name and the settings per tool. A tool installed for every project is offered as this project's
+  own copy beside it; install never changes, moves or removes a registration.
 - `/preferred-tools:configure` - manual; changes or removes what is installed, one registration or plugin at a time
-  (keyed `mcp:<name>~<scope>` / `plugin:<id>~<scope>`), every question recommending what it has now. The user's
+  (keyed `mcp:<name>~<scope>` / `plugin:<id>~<scope>`), a server left on its own, or a root folder (`root:<family>`),
+  every question recommending what it has now. The user's
   ruling (2026-10-27): install is install, configure is configure.
 - `/preferred-tools:fix` - manual; detects known problems and applies the recorded fix.
-- `/preferred-tools:update` - manual; updates installed plugins, pinned catalog servers and language servers that are
-  behind, to releases at least 7 days old. It was the model-invocable `update-tools` skill until the user's ruling
+- `/preferred-tools:update` - manual; updates installed plugins, pinned catalog servers, language servers and key
+  helpers (`mcp-headers.js`) that are behind, to releases at least 7 days old. It was the model-invocable `update-tools` skill until the user's ruling
   (2026-10-27) made it a command; manual like the other three, so the plugin puts no description in every session.
 
 The build brief, with every design decision, its reason and the user's rulings, is `docs/build-prompt.md`. Read it
@@ -46,18 +49,25 @@ private project names, no absolute local paths, no tokens, nothing from a user's
   at install time, and `/preferred-tools:fix` repairs a changed machine.
 - **Identity is the launch, not the name.** A registration is matched to a catalog row by its fingerprint (the package
   in `args`, or the URL host plus path). That is how a custom per-project name works with no ledger. A registration
-  that matches no row is the user's and is never touched.
+  that matches no row is the user's and is never touched. The two exceptions to 'no ledger' (the user's rulings,
+  2026-11-10): the record `<root>/preferred-tools.json` - each answer about a server already set up, so one left on its
+  own is skipped by install, configure, update and fix - and the roots map `${CLAUDE_PLUGIN_DATA}/roots.json`, which
+  finds a named root again. A record entry whose fingerprint changed is dropped and asked again.
 - **A change starts from what is installed.** Only a fresh add builds from `catalog/tools.json`. A rename, a move, a
   fix or a re-run starts from the registration as read (its pin, its cut-off, the args or env the user added), so an
   updated pin is never downgraded.
-- **A key comes from a key file and goes only into its registration** (the user's ruling, 2026-10-29: 'preffered tools
-  must consider alfreds keys files when alfred present, if not then preffered tools files', delivered as 'Write it in at
-  install'). Project scope keeps `${VAR}`; at local and user scope `apply.js` writes the key in from alfred-code's store
-  chain (alfred-code set up in the project) or `.preferred-tools/.secrets`, then `~/.preferred-tools/.secrets` (user: the
-  home file first). `scripts/keys.js` holds the rule. No key in a file a command line names (`scripts/kept.js`), none
-  printed, none asked for. Remote routes prefer OAuth.
-- **Paths by scope.** `project` scope (the committed `.mcp.json`) gets relative paths and `${VAR}` only. `local` and
-  `user` scope get absolute paths, with `~` expanded by the script.
+- **A key lives in `.mcps-secrets` in a root folder** (the user's rulings, 2026-11-10: 'we need to have .mcps-secrets
+  that will be in root of .preferred-tools or .alfred', replacing the key-file rule of 2026-10-29). The user writes
+  every value; the plugin writes names only (`ensure-key-name`). A hosted keyed route reads its key through the header
+  helper `mcp-headers.js` each time Claude Code connects, and its registration holds neither the key nor a `${VAR}` for
+  it. A stdio keyed route is written in by `apply.js` at local and global scope, and is not offered at project scope.
+  The 0.1.x key files (alfred-code's store, `.preferred-tools/.secrets`) are read for names only. `scripts/keys.js` holds
+  the chains. No key in a file a command line names (`scripts/kept.js`), none printed, none asked for. Remote routes
+  with no key prefer OAuth.
+- **Paths by scope.** `project` scope (the committed `.mcp.json`) gets relative paths, and `${VAR}` for machine paths
+  only - never a key. `local` and `user` (Global) scope get absolute paths, with `~` expanded by the script. Every file
+  the plugin writes for a scope family sits in that family's root folder (project root: project and local scope;
+  global root: global scope).
 - **`allowed-tools` pre-approves read-only calls only.** `apply.js`, `fetch.js`, `fix.js --apply`, `update.js --apply` and the
   `hud-statusline.js` writes are never listed, so Claude Code's own prompt guards a change beside the command's written ask. `tests/lint.js`
   enforces it.

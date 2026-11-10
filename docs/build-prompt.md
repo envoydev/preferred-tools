@@ -98,9 +98,13 @@ Why, against the alternatives:
 its fingerprint - the package name in `args` (`serena-agent`, `@playwright/mcp` plus its `--browser` value,
 `mcp-memory-service`, ...) or, for a remote one, its URL host plus path pattern (gitlab: any host whose path is
 `/api/v4/mcp`, so a self-managed GitLab is recognised too). So a tool under a custom name is still recognised by every
-command, with no ledger file to drift. A registration that matches no row is the user's and is never touched.
+command, with no ledger file to drift. A registration that matches no row is the user's and is never touched. Two
+files are the exceptions to 'no ledger' (the user's rulings, 2026-11-10): the record `<root>/preferred-tools.json`,
+which holds each answer about a server already set up (D6), and the roots map `${CLAUDE_PLUGIN_DATA}/roots.json`, which
+finds a named root (D2). Neither names a tool's identity: a record entry whose fingerprint no longer matches is dropped
+and asked again.
 
-**Names.** The default is the row's original name. The user can type another per project (AskUserQuestion's 'Other').
+**Names.** The default is the row's original name. The user can name another per project (asked next, in one plain line).
 A name must match `^[A-Za-z0-9_-]{1,64}$`, must not already belong to a different registration at the same scope, and
 must not be a stack name alfred-code once registered (`alfred-navigation`, `alfred-documentation`, `alfred-memory`,
 `chrome-control`, `msedge-control`, `firefox-control`, `webkit-control`, `windows-control`, `macos-control`,
@@ -121,7 +125,11 @@ location or scope change, a fix or a re-run on an installed row starts from the 
 cut-off and any args or env the user added. It then changes only what the answer names. So an update past the catalog
 pin is never downgraded by a later rename, and a re-run with the same answers sees no difference and makes no call.
 
-**Locations.** A row with data has ONE location root the user sets. Every path argument or env key derives from it,
+**Locations.** Since 0.2.0 a tool's data folder is `<root>/<registration name>` in its scope family's root folder
+(D2, below): the root is asked once a run, not per tool, and the per-tool question survives only for memory (the
+global root's shared folder or this project's own), serena on Windows (a space-free folder), alfred-code 2.x data on
+disk, and configure's 'The folder it uses now'. What follows is how a data folder's paths derive and the 0.1.x
+defaults it replaced. A row with data has ONE location root. Every path argument or env key derives from it,
 listed in the row's `locations` map:
 
 - serena: `SERENA_HOME` = `<root>`;
@@ -172,48 +180,33 @@ plan says so, and fix row `data-folder-ignore` writes the missing `.gitignore` (
 own nor alfred-code's `.alfred/.gitignore` covers it.
 
 **Scopes and paths.** Every route offers user, project and local scope (the user's rulings, 2026-11-10: 'It must give
-options as user/project/local' and 'Allow project, test first'), the recommended scope first, then user, project, local.
-A local route recommends `local`: its paths and Python are this machine's, and project scope commits this machine's
-launch form (`cmd /c` on Windows, the x64 Python on Windows ARM64). A hosted route recommends `project`, except a hosted
-token route (Secrets, below). A `project` registration lands in the committed `.mcp.json`, so it may carry only relative
-paths and `${VAR}` references. A row's data folder is written relative there only when its `locations.relative` is
+options as user/project/local' and 'Allow project, test first'), labelled Global, Project and Local (D1), the
+recommended scope first, then Global, Project, Local - except a stdio route that needs a key, which is not offered at
+project scope (D5: the committed file carries no key). A local route recommends `local`: its paths and Python are this
+machine's, and project scope commits this machine's launch form (`cmd /c` on Windows, the x64 Python on Windows ARM64).
+A hosted route recommends global scope when it will use a key (D5), else `project`. A `project` registration lands in
+the committed `.mcp.json`, so it may carry only relative paths and, for machine paths only, `${VAR}` references. A row's data folder is written relative there only when its `locations.relative` is
 `true`, measured by `tests/probes/relative-root.js` (step 12; `docs/sources.md`, 'Relative data folders - the probe');
 otherwise project scope offers the account folder alone, written `${HOME}/...` (`${USERPROFILE}/...` on Windows). serena
 on Windows is written `${USERPROFILE}\.serena`, and project scope is not offered for it when the profile path has a
 space. Plugins: `claude-hud` recommends `user`, the LSP pair `project`.
 
-**Secrets - key files (the user's ruling, 2026-10-29, replacing 'no token in any file': 'preffered tools must consider
-alfreds keys files when alfred present, if not then preffered tools files', delivered as 'Write it in at install').** A
-remote route prefers OAuth (the user runs `/mcp` once to log in). A token route at `project` scope registers `${VAR}`
-(for example `Authorization: Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN}`), since `.mcp.json` is committed. At `local` and
-`user` scope `apply.js` writes the key into the registration, just before each `claude mcp add-json`, from one source:
-alfred-code's store chain when alfred-code is enabled and set up in the project (its own engine,
-`.claude/hooks/secret-chain.js` `chainOf`, required in-process; no engine: `.alfred/.secrets`, then
-`.alfred/.sensitive-data`), else `<project>/.preferred-tools/.secrets`, then `~/.preferred-tools/.secrets`. A `user`
-registration reads the home file first, and one that already holds a key changes only from it, so a run from another
-project never swaps that project's key into every project's server. A key the source lacks keeps what the registration
-holds and the report names the file; `/preferred-tools:fix` (`token-sync`) writes it in later. A project key file git
-does not ignore is refused and named; a plan that names `.preferred-tools/.secrets` first writes
-`.preferred-tools/.gitignore` holding `*`. A configure move into `project` scope whose entry holds a credential outside
-the route's token field (a header of the user's own, a userinfo URL) is a plan error that names the field: the masked
-plan cannot show it, and `.mcp.json` is committed. Why: a `${VAR}` set in no environment left a token server without its key,
-and alfred-code already keeps keys in its store. The cost: the key travels as the `claude mcp add-json` argument (the CLI
-takes the JSON no other way, docs/sources.md), visible in the process list while that call runs; it never reaches the
-chat or a file a command line names (`scripts/kept.js`).
+**Secrets - `.mcps-secrets` (0.2.0, D3-D5; the user's rulings, 2026-11-10, replacing the key-file rule of 2026-10-29).**
+Every key lives in `.mcps-secrets` in a root folder, written by the user alone; the plugin writes names only. A hosted
+keyed route holds neither the key nor a `${VAR}` for it: its `headersHelper` runs `mcp-headers.js`, which reads the key
+by name each time Claude Code connects. A stdio keyed route at local and global scope holds the value, written in by
+`apply.js` from the root's file just before `claude mcp add-json`; it is not offered at project scope. A remote route
+with no key prefers OAuth (the user runs `/mcp` once to log in). A key is never printed, asked for, or put in a file a
+command line names (`scripts/kept.js`); the cost of the stdio route stays: the key travels as the `claude mcp add-json`
+argument (the CLI takes the JSON no other way, `docs/sources.md`), visible in the process list while that call runs. A
+configure move into `project` scope whose entry holds a credential outside the route's token field (a header of the
+user's own, a userinfo URL) is a plan error naming the field.
 
-Keys at project scope (the user's ruling, 2026-11-10, on a report that a project-scope github sent a bare 'Bearer '
-while its key sat in alfred-code's store under another name: 'Add it to plan and make scoring for plan'). Project scope
-reads a key only from the environment Claude Code starts with, never from a key file, so the plan's token line says
-whether the variable is set in this shell, names the key file that holds its name, and names a near-miss - another key-shaped name
-(ending in TOKEN, KEY or PAT, any case) in those files holding the row's word ('<file> holds ACME_GITHUB_ACCESS_TOKEN, not GITHUB_PERSONAL_ACCESS_TOKEN: add the
-key under GITHUB_PERSONAL_ACCESS_TOKEN') - then the three ways on: local scope, user scope, or the variable in the
-account settings.json "env". `keys.presence` reads names only, from plain dotenv files (alfred-code's stores, walking the
-parent folders only where its engine is there), drops every value in-process, and never runs alfred-code's engine,
-because `plan.js` is pre-approved. A hosted `token` route is recommended at project scope when its variable is set in
-this shell, else local, which writes the key in from its file; an `optional-token` one (context7) at project with the
-key when set, at local with the key when only a key file holds it, else at project with no key. A local token route stays
-recommended at local. No launcher route: it would reverse 'Plain registrations, no launcher' and stop starting once
-alfred-code is gone.
+What 0.1.x did, and why it was replaced: at local and user scope `apply.js` wrote the key in from alfred-code's store
+when alfred-code was set up, else `.preferred-tools/.secrets`, then `~/.preferred-tools/.secrets`; at project scope the
+committed entry kept `${VAR}`, read only from the environment Claude Code starts with. A hosted github then sent a bare
+'Bearer ' while its key sat in a file (2026-11-10). Those files are read for names only now, so a line can say where a
+key still sits and that preferred-tools no longer reads it.
 
 **Per-OS rules, applied at install time** (each also a fix row): uvx servers get the row's `--python` (3.13; 3.14 for
 windows-control) and on Windows ARM64 the x64 build (`cpython-3.13-windows-x86_64-none`) - `../alfred-code/docs/uv-python-pin-evidence.md`
@@ -231,11 +224,76 @@ user's own example is never installed broken:
 Both appear in the plan the user confirms. The user ruled on 2026-10-27, twice, against a launcher: the patch is
 re-applied after install, inside every serena update, and by `/preferred-tools:fix`.
 
+## Roots, keys and servers already set up - 0.2.0
+
+**The user's rulings, 2026-11-10**, quoted in order: 'scope, dfinition must be global/project/local'; 'root folder for
+preferred-tools must be .preferred-tools or .alfred (only when presen) or custom'; 'You must ask user about how he want
+to handle the existing mcps, maybve he want that atlassian should not be the part of plugin and to be on it's own.';
+'this implementation with secrets work and I guess we need to add it there' (the `headersHelper` script a workspace
+session built); 'we need to have .mcps-secrets that will be in root of .preferred-tools or .alfred. It will contain mcps
+data which is sensative and will be used by preferred-tools.'; 'approve' (stdio keyed routes only at local and global
+scope, the 'on its own' choices saved in `<root>/preferred-tools.json`, the old key files pointed to by name and never
+read for a value, the helper as a file); 'During install or configure ask user what token name or and other data env
+will be for plugin or mcp'. They replace the key rule of 2026-10-29, 'Project scope keeps `${VAR}`' for keys, and 'no
+ledger' for the record and the roots map only. 'Plain registrations, no launcher' stands: the helper starts no server.
+Why: a hosted github and context7 sent no key because their `${VAR}` was not in the environment Claude Code started
+with, while the key sat in a file (the user's Windows workspace, 2026-11-10).
+
+- **D1 - Global, Project and Local.** The scope options read Global, Project and Local; the value stays `user`,
+  `project`, `local` on the CLI and in every file. The plan says 'global (user scope)' the first time.
+- **D2 - One root folder per scope family.** The project root serves project and local scope, the global root global
+  scope. A root holds each tool's data folder `<root>/<name>`, the key file `.mcps-secrets`, the helper
+  `mcp-headers.js`, the record `preferred-tools.json` and, unless it is `.alfred`, a `.gitignore` (`*`, `!.gitignore`,
+  `!mcp-headers.js`). Options: project - `.alfred` (recommended where alfred-code is set up), `.preferred-tools`, a
+  folder named inside the project; global - `~/.preferred-tools`, `~/.alfred` when it exists, a folder named. A root in
+  use is listed first. Each root is asked once a run, only when a pick or an answer needs it. The roots map
+  `${CLAUDE_PLUGIN_DATA}/roots.json` (folder paths only) finds a named root again; the commands pass
+  `--data "${CLAUDE_PLUGIN_DATA}"` to every script that reads it.
+- **D3 - The key file, `.mcps-secrets`.** The dotenv grammar; the user writes every value. The apply's
+  `ensure-key-name` appends empty `NAME=` lines only, and refuses when git would not ignore the file. A hosted route's
+  key is read by the helper from the root beside it (at local scope then a named global root), then
+  `~/.preferred-tools/.mcps-secrets`, then `~/.alfred/.mcps-secrets`; a stdio route's by the apply (local: the project
+  root, then the global root; global: the global root). The 0.1.x files (alfred-code's store, `.preferred-tools/.secrets`,
+  `~/.preferred-tools/.secrets`) are read for names only, so a line can say where a key still sits.
+- **D4 - The header helper, `mcp-headers.js`.** `scripts/mcp-headers.js`, Node built-ins only, first line
+  `// preferred-tools mcp-headers <n>`, its SHA-256 pinned per number in `tests/lint.js`. `write-helper` copies it into
+  the root when absent or lower; a higher number is never overwritten. A hosted keyed registration carries
+  `headersHelper: node <path> <NAME> <SCHEME> [<global root>]` and no `Authorization` header; the helper prints
+  `{"Authorization":"<SCHEME> <value>"}`, or `{}` and one stderr line naming the variable and the files when it finds
+  none. Project and local helpers run only after the folder's trust is accepted, and not in a child folder (measured).
+- **D5 - Routes and scopes.** A hosted keyed route (github; context7 and sentry when a key is picked, sentry's scheme
+  `Sentry-Bearer`) uses the helper at every scope and is recommended at global scope. A stdio keyed route (github's
+  Docker, sentry's npm) is written in at local and global scope and not offered at project scope; context7's npm route
+  runs keyless there. `${VAR}` stays for machine paths at project scope only.
+- **D6 - Servers already set up.** Before the picks, install asks once about each server here that matches a catalog
+  row - a registration ('Leave it on its own' or 'Let preferred-tools manage it', the second recommended when a fix
+  detector would repair it), a server an enabled plugin provides, a claude.ai connector the session has loaded ('Leave
+  it with <owner>' or 'Add preferred-tools' own registration as well'). The answer is recorded in the family root's
+  `preferred-tools.json` (names, scopes, fingerprints and choices only), so it is asked once; 'on its own' is honoured
+  by install, configure ('On their own' group), update and fix ('on its own - not checked').
+- **D7 - Fix, update and configure.** Fix rows `key-to-helper`, `helper-missing`, `helper-stale` and `root-ignore`;
+  `token-sync` narrowed to stdio routes; a trust note for a project or local helper. update rewrites a helper copy
+  with a lower number. configure changes a root (each managed registration of the family re-added pointing into the
+  new root; no data and no key value moves), a key's name and a server's settings.
+- **D8 - The walk.** install: servers already set up, the picks, per tool the route then the scope, the roots, then
+  the rest (key, key name, settings, folder, extras); 'Use the recommended settings for all' asks the first only. A
+  typed value is asked next in one plain line; no text tells the user to type into Other (`tests/lint.js`, with
+  alfred-code's `OTHER_RE`). The apply writes the root's `.gitignore`, the helper and the key names first, the records
+  last.
+- **D9 - The key's name and the settings.** 'Which name holds <tool>'s key in .mcps-secrets?' - the catalog's name, up to
+  two near-miss names found in the files, or a name asked next; a name filled in the chain is recommended. The server's
+  own variable keeps its name. A stdio route's settings: keep them, or `NAME=value` pairs asked next; a name that looks
+  like a credential is refused, and a machine path at project scope too.
+
 ## The install command - `commands/install.md`
 
 `disable-model-invocation: true`. Mirror alfred-code's configure walk (`../alfred-code/setup-plugin/references/walk.md`):
 a script renders every table, every question is an ask with one option marked `(Recommended)` and listed first, and
 nothing is applied before one confirmation.
+
+**Since 0.2.0** the install walk runs in D8's order (servers already set up, picks, route and scope, roots, the rest),
+and every typed value - a name, a folder, a browser binary, a host, a key's name, a setting - is asked next in one plain
+line that ends the turn, never through 'Other'; the steps below keep their 0.1.x numbering.
 
 **Since the 2026-10-27 split** (see 'Goal'), the steps below are shared by two commands. `commands/install.md` runs
 1, 2, 4 to 8 over the rows not installed, with no step 3 menu and no `(installed as ...)` labels.
@@ -273,13 +331,13 @@ Two rules hold for every command and the skill:
      options follow from the route just answered (`project` offered only where 'Scopes and paths' allows it), and
      `plan.js` rejects a forbidden route and scope pair, with a test:
    - scope: 'local', 'project', 'user', recommended as in 'Scopes and paths';
-   - name: 'Keep `<original name>` (Recommended)' or 'Use `<project folder name>-<original name>`', 'Other' for any
-     name;
+   - name: 'Keep `<original name>` (Recommended)' or 'Use `<project folder name>-<original name>`'; any other name is
+     asked next;
    - location (only for rows with `locations`): the root - 'Keep `<default>` (Recommended)' or the other place from
-     'Locations' (project or account folder), 'Other' for a typed path; the walk then prints the derived paths;
+     'Locations' (project or account folder); a typed path is asked next; the walk then prints the derived paths;
    - browser rows only, in the same call: 'Default for this engine (Recommended)' - for chrome and msedge, the branded
      browser installed on the machine; for firefox and webkit, Playwright's own build - or 'A browser binary I name'.
-     The second option takes the path through 'Other' or a follow-up ask, and sets `--executable-path`.
+     The second option asks for the path next, in one plain line, and sets `--executable-path`.
 
    `plan.js` emits every question, and its tests assert that each one has 2 to 4 options.
 6. Prerequisites: `node scripts/prereq.js <picks>` checks `uvx`, `npx`, Node 22.22.2+, Docker or the github binary,
@@ -424,7 +482,11 @@ rows - each `source` line is the alfred-code file to read for the detail:
 | playwright-webmcp | page-registered WebMCP tools appear beside Playwright's own | add `--no-webmcp` | `browser-launch.js` header |
 | appium-sdk-env | appium cannot find the Android SDK or a JDK (Claude Code started from the dock or an IDE) | look up `ANDROID_HOME` / `JAVA_HOME` and set them in the registration's `env` | `mobile-launch.js` header |
 | serena-telemetry | serena sends a usage ping at every start | `SERENA_USAGE_REPORTING=false` | `serena-launch.js` |
-| token-sync | a token server at local or user scope lacks the key its key file has, or holds an older one | write the key in from the key file (a user registration holding a key: only from `~/.preferred-tools/.secrets`) | `scripts/keys.js`, D7 |
+| token-sync | a stdio token server at local or global scope lacks the key `.mcps-secrets` has, or holds an older one | write the key in from the root's `.mcps-secrets` (D3's stdio chain); a key held under no name there is blocked: 'pick the key's name with /preferred-tools:configure' | `scripts/keys.js`, D7 |
+| key-to-helper | a hosted server's `Authorization` header holds a `${VAR}` or a key (0.1.x wrote both) | re-add it with `headersHelper` and without the header, once its name is filled in the hosted chain; the root's `.gitignore` and helper are written first | D4, D7 |
+| helper-missing | a registration names a `mcp-headers.js` that is not there (a teammate's clone) - the server connects without its key | write the helper | D4, D7 |
+| helper-stale | the helper copy is older than this plugin's, or was edited by hand | rewrite it; a newer copy is left with a note to update the plugin | D4, D7 |
+| root-ignore | git would commit a root's `.mcps-secrets`, or ignores a project root's `mcp-headers.js` | append the lines the root's `.gitignore` lacks; a gap no appended line closes is blocked and named | D2, D7 |
 | typescript-lsp-ts7 | typescript-lsp shows no diagnostics (TypeScript 7 ships no `tsserver.js`) | `npm install -g typescript-language-server typescript@6` | alfred-code `meta/stack-manifest.json`, the typescript-lsp row |
 | windows-mcp-one-per-desktop | windows-desktop shows connected in `/mcp` but its desktop tools stay unavailable: windows-mcp 0.8.8 makes one missed overlay confirmation permanent for the process, and a second windows-mcp on the same desktop is the likely cause | advice only (`advice: true`, `fix: null`): two or more windows-mcp servers starting here are reported, each with how its owner drops it; nothing is changed, and a stuck one recovers in a new session | `docs/sources.md` 'windows-mcp 0.8.8 - the sticky overlay failure' |
 | npx-cache-entry | an npx server fails at every start with `ENOENT` reading `<npm cache>/_npx/<hash>/package.json`: two first installs of one package at once (a session started while `fetch.js` runs) left the folder without it, and npx never repairs it. The cache is the machine's, so a server this folder inherits from a parent's `.mcp.json` is checked too | remove that one folder, then `fetch.js` fills it again (a parent's server read from the parent's file, started here) | measured on npm 10.9.2 and 11.6.1 (`docs/sources.md`) |
@@ -449,6 +511,9 @@ and the plugin now puts no skill description in every session. It runs `node scr
   day, under the same name and scope, then read back. A serena bump on Windows includes the shim patch in the same
   run, as part of the confirmed update: pre-warm the new pin, apply `serena-windows-ts-shim`, then read it back. A
   remote route has no pin and is skipped with a line.
+- Key helpers (D7): each `mcp-headers.js` copy a managed registration names, or a root in use holds, with a lower number
+  than the plugin's is offered ('Key helpers'); an edited or newer copy is named and left to fix. A server left on its
+  own (D6) is listed as 'on its own - not checked'. Every call passes `--data "${CLAUDE_PLUGIN_DATA}"`.
 - Language servers on PATH: reported (`typescript-language-server --version`, `csharp-ls --version`), updated only on
   the user's yes.
 - Nothing behind: one line, `preferred-tools: everything current`.

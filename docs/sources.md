@@ -163,6 +163,14 @@ unchanged (every newer release is under 7 days old).
   flags `--access-token`, `--host` (hostname only), `--insecure-http`, `--skills`, `--disable-skills`; env
   `SENTRY_ACCESS_TOKEN`, `SENTRY_HOST` (names from a page summary, not a direct quote). The catalog registers
   `npx -y @sentry/mcp-server@0.42.0` with `SENTRY_ACCESS_TOKEN=${SENTRY_ACCESS_TOKEN}`.
+- The hosted key - read 2026-11-10, https://github.com/getsentry/sentry-mcp (README): the hosted server takes
+  `"Authorization": "Sentry-Bearer ${SENTRY_ACCESS_TOKEN}"` beside OAuth - 'Sentry-Bearer is intentionally separate from
+  Bearer: Bearer is reserved for MCP OAuth access tokens'. So the hosted route's helper block uses the scheme
+  `Sentry-Bearer` (0.2.0, D5), and 'Sign in with OAuth' stays its no-key choice. The hosted URL takes `?skills=` and
+  `?disable-skills=` queries.
+- The stdio variable - same README, same date: the stdio server now reads `SENTRY_AUTH_TOKEN`; `--access-token` /
+  `SENTRY_ACCESS_TOKEN` 'still work but are deprecated'. The catalog's pin 0.42.0 keeps `SENTRY_ACCESS_TOKEN`, the
+  server's contract at that version (D9: the server's own variable keeps its name); revisit on a pin bump.
 
 ## Context7 - upstash/context7
 
@@ -888,6 +896,79 @@ RESULT appium child fail - no device
   (`stack/hooks/layout.js:978`); `state` and `statistics` (`:41-42`); `workspace`, the workspace link file (`:328`); and
   `flow`, a 2.x folder its migration still reads (`:113`). The registration name rule allows no leading dot, so
   `.secrets` and `.variables` cannot collide.
-- A key in its store reaches a registration only at local and user scope (apply.js, through its engine); no MCP server
+- In 0.1.x a key in its store reached a registration only at local and user scope (apply.js, through its engine); 0.2.0
+  reads that store for names only ('alfred-code 3.9.2 - the secret guard and the stop hook', below). No MCP server
   reads the store itself (the key report of 2026-11-10: a project-scope `${GITHUB_PERSONAL_ACCESS_TOKEN}` unset in the
   environment sent a bare 'Bearer ', and GitHub answered 400).
+
+## Claude Code - headersHelper (read 2026-11-10, https://code.claude.com/docs/en/mcp; Claude Code 2.1.322)
+
+What 0.2.0's `mcp-headers.js` (D4) and the fix rows `key-to-helper`, `helper-missing`, `helper-stale` and
+`root-ignore` rest on.
+
+- From the docs: `headersHelper` applies to `http`, `sse` and `ws` servers; stdio is not listed. The command must write
+  a JSON object of string pairs to stdout; Claude Code runs it in a shell and gives up after 10 seconds; its headers
+  override static `headers` of the same name. It runs on each connection, at session start and on reconnect, and again
+  after a 401 or 403 before one retry; the server is marked as needing authentication only if that retry fails too. An
+  `Authorization` header from it is the server's credential, with no OAuth fallback.
+- Working directory, from the docs: a project `.mcp.json` or a local-scope server - 'the project directory the server
+  is declared in'; user scope - the configuration directory, `~/.claude` unless `CLAUDE_CONFIG_DIR` is set. Before
+  v2.1.238 the helpers of user-scope, managed and claude.ai connector servers ran from the directory Claude Code
+  started in. The docs give no first release for `headersHelper` itself.
+- Environment, from the docs: the helper gets `CLAUDE_CODE_MCP_SERVER_NAME` and `CLAUDE_CODE_MCP_SERVER_URL`. For a
+  server in a project `.mcp.json` Claude Code removes every variable whose name looks like a credential (`TOKEN`,
+  `SECRET`, `PASSWORD`, `KEY`, `AUTH`) - 'have the script read its credential from a file or a credential store'. That
+  is why the helper reads `.mcps-secrets` and D9 refuses a setting with such a name.
+- Trust, from the docs: for a project `.mcp.json` or local-scope server the helper runs only after the trust dialog is
+  accepted for the project directory the server is declared in; a parent folder's trust does not count; until then the
+  server connects with its static `headers` alone. `projects["<path>"].hasTrustDialogAccepted` in the account file is
+  that trust - `fix.js` notes it (`trusted` in the inventory).
+- Measured by `tests/probes/headers-helper.js` (Claude Code 2.1.322, macOS arm64, a throwaway HOME and
+  `CLAUDE_CONFIG_DIR`, a stub HTTP MCP server recording whether each request's `Authorization` equals a fake value):
+  `claude mcp add-json` stores `headersHelper` unchanged at project, local and user scope; `claude mcp get` ran the helper
+  and the header reached the server for all three; the helper ran in the declaring project folder for project and local
+  scope, and in the configuration folder for user scope; a helper path that does not exist, and an untrusted folder,
+  left the server connecting without the header; a session started in a child folder of the declaring folder connected
+  without the header and did not run the helper - with the root trusted, with the child trusted too, and with the root
+  a git repository. Not measured: an interactive session in that child.
+
+## Claude Code - the plugin's data folder and its install folder (2026-11-10)
+
+- `${CLAUDE_PLUGIN_DATA}` - read 2026-11-10, https://code.claude.com/docs/en/plugins-reference: it is
+  `~/.claude/plugins/data/<id>/`, 'created on first reference and kept across plugin updates', substituted 'anywhere in
+  the Markdown body' of command content, not present in the Bash tool's environment, and deleted when the plugin is
+  uninstalled from the last place it is installed (unless `--keep-data`). So the four commands write
+  `--data "${CLAUDE_PLUGIN_DATA}"` on each script call (lint-checked), and the roots map `roots.json` lives there; lost
+  on uninstall, the commands fall back to the standard roots and those a managed registration points into (D6).
+- `installPath` in `claude plugin list --json` - measured 2026-11-10, Claude Code 2.1.322, a throwaway HOME and
+  `CLAUDE_CONFIG_DIR` with a local marketplace of one plugin holding an `.mcp.json`: each row carries `installPath`, the
+  versioned cache folder `<config>/plugins/cache/<marketplace>/<plugin>/<version>`, which holds the plugin's `.mcp.json`;
+  the row also lists the plugin's `mcpServers` and, for a directory source, `readFromFolder`. `scripts/inventory.js`
+  reads the servers from `installPath` (its `.mcp.json` and the manifest's `mcpServers`); the inventory on that
+  throwaway found the plugin's hosted server and matched it to the context7 row.
+
+## Claude Code - claude.ai connectors as tool names (seen 2026-11-10)
+
+- A claude.ai connector the session has loaded shows as tools named `mcp__claude_ai_<Name>__<tool>`, spaces in the
+  name written as `_` (a session here listed `Context7`, `Notion`, `Microsoft_Learn` and `Claude_Docs`). install passes
+  those names as `plan.js --questions --connectors <Name>,<Name>` (D6). Not seen: the names claude.ai gives the GitHub,
+  GitLab, Atlassian and Sentry connectors, so a name matches a row when, lower-cased with all but letters and digits
+  removed, it starts with the row id ('Atlassian_Rovo' matches atlassian). A connector this session has not loaded is
+  not seen; the first question says so.
+
+## alfred-code 3.9.2 - the secret guard and the stop hook (read 2026-11-10, `../alfred-code`)
+
+- The secret guard hard-blocks a command that names `.secrets` or `.sensitive-data` under its data root
+  (`stack/hooks/guard-secret-value.js:237`); other files with credential-shaped names are shown masked.
+  `.mcps-secrets` is not in that list, so the plugin's own key file is not guarded by it - which is why no command
+  line names a key file and `mcp-headers.js` reads the file in its own process. Revisit when alfred-code adds
+  `.mcps-secrets` to its list.
+- The stop hook rejects a question whose text tells the user to type into Other (`stack/hooks/guard-stop-contract.js:1530`,
+  `OTHER_RE` = `\b(?:in|into|via|through|using) (?:the )?['‘’]?Other\b|\btype (?:it|them|\w+) (?:in|into)\b[^.]{0,20}\bOther\b`)
+  and one without exactly one '(Recommended)' option; 'a typed value is asked in plain prose that ends the turn'.
+  `tests/ask-texts.js` copies the pattern and `tests/lint.js` holds every question the walk can put, and every line of
+  a command, to it and to the phrase 'under Other', which it does not match.
+- `.alfred/.gitignore` ignores everything in `.alfred` but itself and a few named files
+  (`stack/mcp/data-root.js:122-185`), so a file this plugin puts in an `.alfred` root - the key file, the helper, the
+  record - is never committed, and the plugin writes no `.gitignore` there. A teammate's clone then lacks the helper a
+  project-scope server names; fix row `helper-missing` writes it.
