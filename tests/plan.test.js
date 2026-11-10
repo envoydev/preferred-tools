@@ -10,14 +10,17 @@ const { MARKER } = require('../scripts/kept.js');
 
 const catalog = catalogLib.load();
 const clone = () => JSON.parse(JSON.stringify({ ...catalog, reserved: [...catalog.reserved], byId: undefined }));
-// a catalog where the named rows are proven to resolve a relative data folder against the folder they start in
-// (tests/probes/relative-root.js measures that per row)
-function withRelative(...ids)
+// a catalog where the named rows are proven (or not) to resolve a relative data folder against the folder they start in
+// (tests/probes/relative-root.js measures that per row; the shipped flags come from it, and tests/catalog.test.js pins
+// them) - so a test of the rule names its flag rather than lean on the shipped one
+function relativeAs(value, ids)
 {
     const raw = clone();
-    for (const t of raw.tools) if (ids.includes(t.id)) t.locations.relative = true;
+    for (const t of raw.tools) if (ids.includes(t.id)) t.locations.relative = value;
     return { ...raw, reserved: new Set(raw.reserved), byId: new Map(raw.tools.map((r) => [r.id, r])) };
 }
+const withRelative = (...ids) => relativeAs(true, ids);
+const withoutRelative = (...ids) => relativeAs(false, ids);
 const flag = (e, f) => e.args[e.args.indexOf(f) + 1];
 
 const MAC = { os: 'darwin', arch: 'arm64', project: '/work/shop' };
@@ -242,9 +245,11 @@ test('scopes: local and user write absolute paths with ~ expanded; project scope
     assert.strictEqual(typed.args[typed.args.indexOf('--output-dir') + 1], '/Users/me/pw/chrome/output');
     const rel = addStep(plan(inv(MAC), pickOne('playwright-chrome', { location: { side: 'path', path: 'tools/pw' } }), opts('/Users/me'))).entry;
     assert.strictEqual(rel.args[rel.args.indexOf('--user-data-dir') + 1], '/work/shop/tools/pw');
-    const p = plan(inv(MAC), pickOne('serena', { scope: 'project' }), opts('/Users/me'));
+    const p = plan(inv(MAC), pickOne('serena', { scope: 'project' }), opts('/Users/me', { catalog: withoutRelative('serena') }));
     assert.deepStrictEqual(p.errors, []);
     assert.strictEqual(addStep(p).entry.env.SERENA_HOME, '${HOME}/.preferred-tools/serena');
+    // the shipped row, proven relative by the probe
+    assert.strictEqual(addStep(plan(inv(MAC), pickOne('serena', { scope: 'project' }), opts('/Users/me'))).entry.env.SERENA_HOME, '.preferred-tools/serena');
 });
 
 test('every MCP route offers user, project and local: recommended first, then user, project, local', () => {
@@ -259,9 +264,10 @@ test('every MCP route offers user, project and local: recommended first, then us
 });
 
 test('project scope for a local route: the account folder until the row is proven relative, then relative', () => {
-    const plain = addStep(plan(inv(MAC), pickOne('playwright-chrome', { scope: 'project' }), opts('/Users/me'))).entry;
+    const unproven = withoutRelative('playwright-chrome');
+    const plain = addStep(plan(inv(MAC), pickOne('playwright-chrome', { scope: 'project' }), opts('/Users/me', { catalog: unproven }))).entry;
     assert.strictEqual(flag(plain, '--user-data-dir'), '${HOME}/.preferred-tools/playwright-chrome');
-    const typed = plan(inv(MAC), pickOne('playwright-chrome', { scope: 'project', location: { side: 'project' } }), opts('/Users/me'));
+    const typed = plan(inv(MAC), pickOne('playwright-chrome', { scope: 'project', location: { side: 'project' } }), opts('/Users/me', { catalog: unproven }));
     assert.match(typed.errors.join(), /locations\.relative/);
     const proven = addStep(plan(inv(MAC), pickOne('playwright-chrome', { scope: 'project' }), opts('/Users/me', { catalog: withRelative('playwright-chrome') }))).entry;
     assert.strictEqual(flag(proven, '--user-data-dir'), '.preferred-tools/playwright-chrome');
@@ -978,7 +984,7 @@ test('with alfred-code installed: .alfred/<name> at project and local, the accou
     const at = (id, scope, cat) => addStep(plan(inv(MAC, { alfredCodeEnabled: true }), pickOne(id, { scope }), opts('/Users/me', { exists: ALFRED, catalog: cat }))).entry;
     assert.strictEqual(flag(at('playwright-chrome', 'local'), '--user-data-dir'), '/work/shop/.alfred/playwright-chrome');
     assert.strictEqual(flag(at('playwright-chrome', 'project', withRelative('playwright-chrome')), '--user-data-dir'), '.alfred/playwright-chrome');
-    assert.strictEqual(flag(at('playwright-chrome', 'project'), '--user-data-dir'), '${HOME}/.preferred-tools/playwright-chrome', 'not proven relative: the account folder');
+    assert.strictEqual(flag(at('playwright-chrome', 'project', withoutRelative('playwright-chrome')), '--user-data-dir'), '${HOME}/.preferred-tools/playwright-chrome', 'not proven relative: the account folder');
     assert.strictEqual(flag(at('playwright-chrome', 'user'), '--user-data-dir'), '/Users/me/.preferred-tools/playwright-chrome');
     assert.strictEqual(at('memory', 'local').env.MCP_MEMORY_SQLITE_PATH, '/Users/me/.preferred-tools/memory/memory.db');
     assert.strictEqual(at('serena', 'local').env.SERENA_HOME, '/work/shop/.alfred/serena');
@@ -1047,7 +1053,7 @@ test('configure: a local .alfred folder moved to project scope is written relati
     const proven = plan(i, changeOf(local, { scope: 'project' }), opts('/Users/me', { exists: ALFRED, catalog: withRelative('playwright-chrome') }));
     assert.deepStrictEqual(proven.errors, []);
     assert.strictEqual(flag(proven.steps.find((s) => s.op === 'mcp-move').entry, '--user-data-dir'), '.alfred/playwright-chrome');
-    const unproven = plan(i, changeOf(local, { scope: 'project' }), opts('/Users/me', { exists: ALFRED }));
+    const unproven = plan(i, changeOf(local, { scope: 'project' }), opts('/Users/me', { exists: ALFRED, catalog: withoutRelative('playwright-chrome') }));
     assert.match(unproven.errors.join(' '), /not proven to follow \(locations\.relative\) - pick the account folder/);
     assert.strictEqual(unproven.steps.length, 0);
 });
@@ -1066,7 +1072,7 @@ test('location labels name the place; descriptions give the exact folder; the an
     assert.deepStrictEqual(project.question.options.map((o) => o.label), ['.alfred in the folder Claude starts in (Recommended)', '.preferred-tools in the folder Claude starts in', 'Your account folder']);
     assert.match(project.question.options[0].description, /^`\.alfred\/playwright-chrome` - from C:\\work\\shop: C:\\work\\shop\\\.alfred\\playwright-chrome; from a child or a subfolder: its own - kept out of git/);
     assert.match(project.question.options[2].description, /^`\$\{USERPROFILE\}\/\.preferred-tools\/playwright-chrome` - on this machine C:\\Users\\mac\\\.preferred-tools\\playwright-chrome/);
-    const unproven = q('project', true);
+    const unproven = q('project', true, withoutRelative('playwright-chrome'));
     assert.strictEqual(unproven.question, null);
     assert.deepStrictEqual(unproven.only, { side: 'account' });
     // no alfred-code: the plugin's folder is recommended at local and user scope, as today
@@ -1150,6 +1156,6 @@ test('project scope with a relative folder: the plan notes the other folders Cla
     assert.deepStrictEqual(p.errors, []);
     assert.match(render(p), /Note: playwright-chrome: a session started in another folder - a child or a subfolder - creates \.preferred-tools\/playwright-chrome there; run \/preferred-tools:fix once in each such folder where alfred-code's \.alfred\/\.gitignore does not cover it/);
     // the account folder, and local scope: an absolute folder, no note
-    assert.doesNotMatch(render(plan(inv(MAC), pickOne('playwright-chrome', { scope: 'project' }), opts('/Users/me'))), /a session started in another folder/);
+    assert.doesNotMatch(render(plan(inv(MAC), pickOne('playwright-chrome', { scope: 'project' }), opts('/Users/me', { catalog: withoutRelative('playwright-chrome') }))), /a session started in another folder/);
     assert.doesNotMatch(render(plan(inv(MAC), pickOne('playwright-chrome'), opts('/Users/me', { catalog: withRelative('playwright-chrome') }))), /a session started in another folder/);
 });

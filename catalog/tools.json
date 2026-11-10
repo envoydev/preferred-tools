@@ -81,7 +81,7 @@
       },
       "locations": {
         "defaultSide": "project",
-        "relative": false,
+        "relative": true,
         "alfred": ".alfred/serena/home",
         "windowsAbsolute": true,
         "derived": [
@@ -139,7 +139,7 @@
       },
       "locations": {
         "defaultSide": "account",
-        "relative": false,
+        "relative": true,
         "alfred": "~/.alfred-memory",
         "derived": [
           {
@@ -436,7 +436,7 @@
       },
       "locations": {
         "defaultSide": "project",
-        "relative": false,
+        "relative": true,
         "alfred": ".alfred/chrome-control",
         "derived": [
           {
@@ -507,7 +507,7 @@
       },
       "locations": {
         "defaultSide": "project",
-        "relative": false,
+        "relative": true,
         "alfred": ".alfred/msedge-control",
         "derived": [
           {
@@ -577,7 +577,7 @@
       },
       "locations": {
         "defaultSide": "project",
-        "relative": false,
+        "relative": true,
         "alfred": ".alfred/firefox-control",
         "derived": [
           {
@@ -647,7 +647,7 @@
       },
       "locations": {
         "defaultSide": "project",
-        "relative": false,
+        "relative": true,
         "alfred": ".alfred/webkit-control",
         "derived": [
           {
@@ -712,7 +712,7 @@
       },
       "locations": {
         "defaultSide": "project",
-        "relative": false,
+        "relative": true,
         "alfred": ".alfred/mobile-control",
         "derived": [
           {

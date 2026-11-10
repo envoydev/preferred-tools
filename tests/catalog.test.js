@@ -107,6 +107,12 @@ test('every location root derives its paths from one root, in the row\'s locatio
         assert.ok(loc.derived.length >= 1 && loc.derived[0].sub !== undefined, row.id);
         for (const d of loc.derived) assert.ok(['arg', 'env'].includes(d.in) && d.key, row.id);
     }
+    // the flags as measured (docs/sources.md 'Relative data folders - the probe'): serena, memory and the Playwright engine
+    // passed from a root and a child; appium-mcp from a read of its pinned source (O3). A pin bump of any of these runs
+    // the probe again before this list changes.
+    assert.deepStrictEqual(cat.tools.filter((r) => r.locations).map((r) => [r.id, r.locations.relative]), [
+        ['serena', true], ['memory', true], ['playwright-chrome', true], ['playwright-msedge', true], ['playwright-firefox', true],
+        ['playwright-webkit', true], ['appium', true]]);
     const loc = (id) => cat.byId.get(id).locations.derived.map((d) => `${d.in}:${d.key}:${d.sub}`);
     assert.deepStrictEqual(loc('serena'), ['env:SERENA_HOME:']);
     assert.deepStrictEqual(loc('memory'), ['env:MCP_MEMORY_SQLITE_PATH:memory.db']);

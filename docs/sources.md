@@ -756,3 +756,39 @@ fail, 7 skip; `npm run matrix` 63: 56 pass, 0 fail, 7 NOT RUN (the macos-control
 interactive desktop; sentry's key; github's docker; the two LSP binaries) - the same NOT RUN set as 0.1.4, by name.
 Linux NOT RUN (the 0.1.4 ruling carried over: the change is path joins and JSON reads, OS-independent). A2 (a pending
 project server beside a same-name user or parent server) NOT RUN: no catalog route writes a project-scope windows-mcp.
+
+## Relative data folders - the probe (measured 2026-11-10, macOS arm64)
+
+`tests/probes/relative-root.js` (node 24.11.0, darwin arm64): each row launched as `plan.js` builds it at project scope,
+its data folder `.preferred-tools/<name>`, over stdio, from a throwaway folder `R` and then from `R/child`, under a
+throwaway HOME. The pins: serena-agent 2.1.0 (uvx, Python 3.13, cut-off 2026-10-20), mcp-memory-service[sqlite] 12.4.0
+(cut-off 2026-11-04), @playwright/mcp 0.0.83 with Google Chrome (`--headless` added for the run), appium-mcp 1.99.1.
+
+```text
+RESULT serena root pass R/.preferred-tools/serena/serena_config.yml
+RESULT serena child pass R/child/.preferred-tools/serena/serena_config.yml
+RESULT memory root pass R/.preferred-tools/memory/memory.db
+RESULT memory child pass R/child/.preferred-tools/memory/memory.db
+RESULT playwright-chrome root pass R/.preferred-tools/playwright-chrome/Local State
+RESULT playwright-chrome child pass R/child/.preferred-tools/playwright-chrome/Local State
+RESULT appium root fail - no device
+RESULT appium child fail - no device
+```
+
+- serena writes `serena_config.yml` into `SERENA_HOME` at start, memory creates `memory.db` at start, and Playwright
+  writes the profile's `Local State` once `browser_navigate` opens the browser. A pass means the file landed under
+  `<the folder it started in>/.preferred-tools/<name>` and no other new copy appeared under HOME or `R`. The four
+  Playwright rows share the package and its `path.resolve`, so the Chrome run stands for msedge, firefox and webkit.
+- appium-mcp 1.99.1 writes nothing without a device (`appium_screenshot` answers an error with no session), so its flag
+  rests on its source, read and not run (O3): `dist/utils/paths.js:12-21`, `resolveScreenshotDir()`, joins a relative
+  `SCREENSHOTS_DIR` with `process.cwd()`; `dist/tools/interactions/page-source-file.js:12` resolves `PAGE_SOURCES_DIR`
+  with `path.resolve`, against the cwd. Its README says the same (the env table, and 'relative paths are resolved from
+  the current working directory'). Read from the npm tarball `appium-mcp@1.99.1`
+  (https://www.npmjs.com/package/appium-mcp/v/1.99.1; repository https://github.com/appium/appium-mcp) on 2026-11-10.
+- Set from it in `catalog/tools.json`: `locations.relative: true` for serena, memory, the four Playwright rows and appium,
+  pinned in `tests/catalog.test.js`. A pin bump of any of them runs the probe again (`--list` prints the tool names the
+  calls rely on).
+- Windows: NOT RUN (the user's Windows VM). Linux: NOT RUN. serena on Windows is unaffected: at project scope its home is
+  written `${USERPROFILE}\.serena`, never relative.
+- A data folder written relative lands in each folder Claude starts in, a child or a subfolder included (the M1 and M4
+  measurements above); fix row `data-folder-ignore` keeps such a folder out of git where nothing else does.
