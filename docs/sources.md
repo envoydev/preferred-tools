@@ -133,8 +133,18 @@ unchanged (every newer release is under 7 days old).
 - Endpoint `https://<host>/api/v4/mcp` (gitlab.com or a self-managed host) - CONFIRMED.
   https://docs.gitlab.com/user/model_context_protocol/mcp_server/ (the older `/user/gitlab_duo/...` path redirects).
 - OAuth 2.0 Dynamic Client Registration - CONFIRMED; an admin can turn DCR off, then a pre-registered OAuth app is
-  needed. A fine-grained PAT with the MCP resource and Execute permission also works (legacy tokens are rejected). The
-  exact PAT header form is not on the page, so the catalog offers OAuth only.
+  needed. A fine-grained PAT with the MCP resource and Execute permission also works (legacy tokens are rejected).
+- The token header - read 2026-11-11, https://docs.gitlab.com/user/gitlab_duo/model_context_protocol/mcp_server/: the
+  server accepts an OAuth token with the `mcp` scope, or 'A fine-grained personal access token with the MCP tool
+  resource and the Execute permission'; legacy, project and group access tokens get `403 insufficient_scope`. The page
+  does not state the header form.
+  - Reported from a user's session, 2026-11-11, on a self-managed GitLab 19.5.3: `Authorization: Bearer <fine-grained
+    token>` got HTTP 200 from 'Official GitLab MCP Server'; an unauthenticated call got 401 with
+    `WWW-Authenticate: Bearer scope="mcp"`.
+  - MEASURED 2026-11-11 on gitlab.com, `POST /api/v4/mcp` with no token: `HTTP/2 401` and `www-authenticate: Bearer
+    realm="GitLab", scope="mcp", resource_metadata="https://gitlab.com/.well-known/oauth-protected-resource/api/v4/mcp"`.
+  - So the catalog's remote route takes a key, `Bearer` with a fine-grained token, through the helper (0.3.0), with
+    OAuth as the second way in.
 - Version and tier: HTTP transport from GitLab 18.6; generally available in 19.5; Free tier since 19.2. A self-managed
   instance needs an administrator to allow MCP access at instance level. No feature flag.
 - Claude Code form documented: `claude mcp add -s user --transport http GitLab https://<host>/api/v4/mcp`. The page warns
@@ -150,8 +160,12 @@ unchanged (every newer release is under 7 days old).
   Catalog: `https://mcp.atlassian.com/v2/mcp`.
 - Claude Code form (both pages): `claude mcp add --transport http atlassian https://mcp.atlassian.com/v2/mcp`, then
   `/mcp` for OAuth. CONFIRMED (OAuth route).
-- API-token alternative exists (`Authorization: Basic <base64(email:token)>` or `Bearer <service account key>`) and an
-  org admin must enable it; vendor and community reports disagree on the Bearer form, so the catalog offers OAuth only.
+- API token - read 2026-11-11,
+  https://support.atlassian.com/atlassian-rovo-mcp-server/docs/configuring-authentication-via-api-token: the endpoint
+  `https://mcp.atlassian.com/v2/mcp` serves both methods; a personal API token is sent as `Authorization: Basic
+  <base64(email:api_token)>`, a service-account key as `Bearer <api_key>`; an org admin must enable API-token
+  authentication; 'Some MCP tools may not be available when you use authentication via API token.' So the catalog's
+  remote route takes a key, `Basic` with the value `email:api_token` (0.3.0), with OAuth as the second way in.
 - The Claude Code MCP page has no Atlassian example.
 
 ## Sentry
@@ -417,6 +431,9 @@ Docs: https://code.claude.com/docs/en/plugins/cli-reference.md and https://code.
   `path.isAbsolute(p) ? p : path.resolve(p)` and `--output-dir` is `path.resolve(...)`, so a relative value resolves
   against the MCP process's cwd, not against the MCP roots. A relative root is safe only if the server starts in the
   project directory; step 12 measures that per row.
+- Persistent profile - read 2026-11-11, https://github.com/microsoft/playwright-mcp: 'A persistent profile can only be
+  used by one browser instance at a time'. With an absolute `--user-data-dir` (0.3.0), every session under the project
+  folder opens the same profile, so a second session at once cannot launch its browser.
 
 ## appium-mcp
 
@@ -938,6 +955,11 @@ What 0.2.0's `mcp-headers.js` (D4) and the fix rows `key-to-helper`, `helper-mis
   left the server connecting without the header; a session started in a child folder of the declaring folder connected
   without the header and did not run the helper - with the root trusted, with the child trusted too, and with the root
   a git repository. Not measured: an interactive session in that child.
+- M1 - MEASURED 2026-11-11 by the probe case `child-root-absolute` (Claude Code 2.1.322, macOS arm64): a project
+  registration whose `headersHelper` names the helper by absolute path, in a session started in a child folder of the
+  declaring folder (the root trusted), connected without the header and did not run the helper - the same as the
+  relative form. So `asks.PARENT_HELPER_IN_CHILD` is `false`: an absolute path does not carry a parent's key into a
+  child session.
 
 ## Claude Code - the plugin's data folder and its install folder (2026-11-10)
 

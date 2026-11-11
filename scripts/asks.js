@@ -29,6 +29,10 @@ const scopeText = (s, row, routeId) => (s === 'project' && row.kind === 'mcp' &&
 // every scope question lists the recommended scope first, then the others in this order (the user's ruling, 2026-11-10)
 const SCOPE_ORDER = ['user', 'project', 'local'];
 
+// M1 (docs/sources.md 'Claude Code - headersHelper', 2026-11-11, Claude Code 2.1.322): does a parent folder's helper,
+// named by absolute path, run in a session started in a child folder? Measured: no.
+const PARENT_HELPER_IN_CHILD = false;
+
 // Where a route's key is, by name only (spec D3, D9): { variable, kind, scope, files, found } - or null for a route that
 // takes no key. `variable` is the catalog's default name; `kind` 'helper' for a hosted route (mcp-headers.js reads the
 // hosted chain when Claude Code connects), 'stdio' for a local one (the apply reads the stdio chain); `files` that chain
@@ -749,4 +753,4 @@ function all(inv, picks, catalog, { env = {}, home = null, connectors = null } =
     return out;
 }
 
-module.exports = { keyNameQuestion, settingsQuestion, liveReader, heldKey, SCOPE_LABEL, scopeOfLabel, needsRoot, rootFamilies, rootQuestion, REC, recommendedScope, keyStateOf, keyToSend, pickQuestions, changeQuestions, routeQuestion, toolQuestions, toolAsk, scopeQuestion, nameQuestion, locationQuestion, removeQuestions, packed, STATIC, all, chunk, scopesFor };
+module.exports = { PARENT_HELPER_IN_CHILD, keyNameQuestion, settingsQuestion, liveReader, heldKey, SCOPE_LABEL, scopeOfLabel, needsRoot, rootFamilies, rootQuestion, REC, recommendedScope, keyStateOf, keyToSend, pickQuestions, changeQuestions, routeQuestion, toolQuestions, toolAsk, scopeQuestion, nameQuestion, locationQuestion, removeQuestions, packed, STATIC, all, chunk, scopesFor };

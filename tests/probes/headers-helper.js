@@ -17,6 +17,7 @@
 //   missing-helper              a helper path that does not exist: the server connects without the header
 //   untrusted                   a folder whose trust is not accepted: the helper does not run, no header
 //   child-root-trusted          a session in a child folder of the declaring folder: the helper does not run, no header
+//   child-root-absolute         the same with the helper named by absolute path (M1, measured 2026-11-11): no run, no header
 //   child-both-trusted          the same with the child trusted too
 //   child-root-git              the same with the declaring folder a git repository
 // One line per case: RESULT <case> <pass|fail> <what was seen>. Exit 1 when a case differs from the measured list.
@@ -111,6 +112,7 @@ async function main()
         { cwd: proj, name: 'hh-local', scope: 'local', entry: { type: 'http', url: url('l'), headersHelper: `node ${quoted} PROBE_VALUE Bearer` } },
         { cwd: proj, name: 'hh-user', scope: 'user', entry: { type: 'http', url: url('u'), headersHelper: `node ${quoted} PROBE_VALUE Bearer` } },
         { cwd: proj, name: 'hh-missing', scope: 'local', entry: { type: 'http', url: url('m'), headersHelper: 'node /nonexistent-probe-dir/mcp-headers.js PROBE_VALUE Bearer' } },
+        { cwd: proj, name: 'hh-project-abs', scope: 'project', entry: { type: 'http', url: url('a'), headersHelper: `node ${quoted} PROBE_VALUE Bearer` } },
         { cwd: proj2, name: 'hh-untrusted', scope: 'project', entry: { type: 'http', url: url('n'), headersHelper: 'node .preferred-tools/mcp-headers.js PROBE_VALUE Bearer' } },
     ];
     const results = [];
@@ -165,6 +167,9 @@ async function main()
             report(id, g.auth !== 'expected' && g.runs.length === 0, `initialize auth: ${g.auth}; helper runs: ${g.runs.length}`);
         };
         await childCase('child-root-trusted');
+        // M1: the same session, the project registration naming its helper by absolute path
+        const ga = await get(child, 'hh-project-abs', proj);
+        report('child-root-absolute', ga.auth !== 'expected' && ga.runs.length === 0, `initialize auth: ${ga.auth}; helper runs: ${ga.runs.length}`);
         setTrust(child, true);
         await childCase('child-both-trusted');
         setTrust(child, false);
