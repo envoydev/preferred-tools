@@ -359,6 +359,52 @@ binary's `${VAR}`-only form, and `appium-sdk-env` leaving the SDK homes to the e
 and a binary path land in the committed `.mcp.json` too, and 0.2.x's `appium-sdk-env` would propose removing them after
 a rollback. Optional 4 (Playwright's `--isolated`) was not taken.
 
+## The URL bridge - 0.4.0
+
+The plan is `docs/superpowers/plans/2026-11-11-mcp-bridge-0.4.0.md` (machine-local); no spec was written, since the
+user's request and rulings settled the design. The request (2026-11-11): the Sentry server should follow `SENTRY_SLUG`
+in `.mcps-secrets`, so a change plus a restart is enough - 'I want to have generic approach for future mcps like for
+sentry case, also if it would be hossible to combine with headers js it would be greate as well, but only it by
+architecture approach it will be okay.' **The user's rulings, 2026-11-11:**
+
+1. 'A bridge in the root' - a generic `mcp-bridge.js` beside `mcp-headers.js` fills the URL from `.mcps-secrets` at
+   every start and runs a pinned mcp-remote. It is an exception to 'Plain registrations, no launcher'.
+2. 'Beside the helper, sharing its reader' - `mcp-bridge.js` requires `mcp-headers.js` for the `.mcps-secrets` chain
+   and the header value. The helper stays a header printer.
+3. 'After 0.3.0, as 0.4.0', with its own field check.
+
+Why (`docs/sources.md`): Sentry's hosted server scopes an organization and a project only by path - `/mcp/<org>` and
+`/mcp/<org>/<project>`, no header names them (F1). Claude Code's `${VAR}` reads the environment Claude Code starts with,
+not a file, and `headersHelper` changes headers only (F2). A stdio server from a parent folder's `.mcp.json` starts in
+the session's folder, and the bridge named by absolute path reads the `.mcps-secrets` beside itself, so it serves a
+child folder (F3) - the case a project-scope helper cannot. mcp-remote 0.16.0 takes `--header Authorization:${VAR}`,
+expanded from its own environment and never logged, takes plain http on 127.0.0.1 and localhost only, and opens a
+browser sign-in on a 401 (F4). The default names are sentry-cli's, `SENTRY_ORG` and `SENTRY_PROJECT` (F5).
+
+The registration: `node <root>/mcp-bridge.js <template> <KEY> <SCHEME> mcp-remote@<pin> [<global root>]`, with
+`npm_config_before` set to the pin's cut-off. The template's `{NAME}` segments (the last may be `{NAME?}`, left out
+when empty) are filled at each start from the chain the helper reads; a value must be a plain name
+(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`), a template name that is the key's or reads as a credential is refused before any file
+is read, and a missing key exits 1 before npx starts - so mcp-remote never sends a request without Authorization, the
+one that would open its OAuth sign-in. The key reaches mcp-remote as `PT_BRIDGE_AUTH` in its environment only. The
+bridge checks no key itself: Sentry accepts any `Sentry-Bearer` value at connect and answers a wrong one at the first
+tool call (F6), so a check would add a request and prove nothing. The root also gets `package.json`,
+`{"type":"commonjs"}`, when absent, so a project whose own `package.json` says `"type": "module"` still loads both files.
+
+The alternatives, and why each fails:
+- `${VAR}` in the URL - Claude Code fills it from the environment it starts with, so a change to `.mcps-secrets`
+  never reaches it, and a slug must then live in a shell profile.
+- `headersHelper` - it changes headers only; nothing a helper prints can change a URL.
+- A launcher in the plugin cache - `${CLAUDE_PLUGIN_ROOT}` changes on every update, so a registration pointing into it
+  breaks at the next update; the bridge is copied into the root like the helper, and `/preferred-tools:update` and
+  `/preferred-tools:fix` (`helper-missing`, `helper-stale`) keep it current.
+
+What 0.4.0 adds around it: sentry's third route 'Bridge', recommended at Project scope since it holds names only; the
+walk's 'URL name' questions beside the key name (`answers.urlNames`); configure rewrites only the template and the key
+argument of the registration as read, keeping the pin; update offers a lower `mcp-bridge.js` beside the helper and moves
+the mcp-remote pin; fix writes a missing bridge and the helper it requires, and `npx-cache-entry` covers mcp-remote's
+cache folder. The matrix starts it for real (`tests/matrix/bridge.test.js`).
+
 ## The install command - `commands/install.md`
 
 `disable-model-invocation: true`. Mirror alfred-code's configure walk (`../alfred-code/setup-plugin/references/walk.md`):

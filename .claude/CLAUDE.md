@@ -48,7 +48,10 @@ private project names, no absolute local paths, no tokens, nothing from a user's
   `scripts/mcp-order.js` rewrites `.mcp.json` with the same servers and values in `catalog.order`, the user's own after
   them, checks that nothing but the order changed, and writes through a temporary file.
 - **Plain registrations, no launcher** (the user's ruling, 2026-10-27, made twice). Per-machine values are resolved
-  at install time, and `/preferred-tools:fix` repairs a changed machine.
+  at install time, and `/preferred-tools:fix` repairs a changed machine. The one exception is the URL bridge (the
+  user's ruling, 2026-11-11): a route whose URL holds a value from `.mcps-secrets` runs `node <root>/mcp-bridge.js`,
+  which fills the URL at each start and runs a pinned mcp-remote; it is copied into the root like the helper, never run
+  from the plugin cache.
 - **Identity is the launch, not the name.** A registration is matched to a catalog row by its fingerprint (the package
   in `args`, or the URL host plus path). That is how a custom per-project name works with no ledger. A registration
   that matches no row is the user's and is never touched. The two exceptions to 'no ledger' (the user's rulings,
@@ -67,7 +70,8 @@ private project names, no absolute local paths, no tokens, nothing from a user's
   The 0.1.x key files (alfred-code's store, `.preferred-tools/.secrets`) are read for names only. `scripts/keys.js` holds
   the chains. No key in a file a command line names (`scripts/kept.js`), none printed, none asked for. A key is the
   recommended way into every hosted route (2026-11-11), recommended at Global scope, since Claude Code runs no parent
-  folder's helper in a child folder; with no key, a route that has OAuth uses it.
+  folder's helper in a child folder; with no key, a route that has OAuth uses it. The bridge (0.4.0) reads the key and
+  the URL's names through the helper's reader, and passes the key to mcp-remote in its environment only.
 - **Paths absolute at every scope** (the user's ruling, 2026-11-11, 'Absolute, always'), `project` included, with `~`
   expanded by the script: one data folder whatever folder Claude starts in, at the cost that the committed `.mcp.json`
   names this machine's path. Never a key in `.mcp.json`. Every file the plugin writes for a scope family sits in that
