@@ -106,6 +106,7 @@ const HELPER_SHA256 = {
     1: '958abe0bf59ab7ef2551573e3105ab7766036c31fc21d19bb0fcf58675e87719', // 0.2.0
     2: '184d9162cd9d506266eb989704a743fd3608728b0601e8f21a398bbc8b8566de', // prints only when Claude Code runs it
     3: '388dc7ad5ad0093e2340ccadde11ca8b92929f6c3598a306dbebda5b60b798ac', // Basic: email:api_token sent base64-encoded
+    4: '6376dc81ff5b192a8e75de1f350e75a766dc9ad01cd950d58fd6733700469017', // exports its reader for mcp-bridge.js
 };
 {
     const rel = path.join('scripts', 'mcp-headers.js');
@@ -122,6 +123,31 @@ const HELPER_SHA256 = {
     }
     for (const m of text.matchAll(/\brequire\(\s*(['"])([^'"]+)\1\s*\)/g))
         need(m[2].startsWith('node:'), `${rel}: require('${m[2]}') - the helper runs outside the plugin, so node: modules only`);
+}
+
+// mcp-bridge.js is copied into a root folder the same way (0.4.0): the same first-line and digest rule, node: modules and
+// ./mcp-headers.js only, and its CREDENTIAL is keys.js credentialName's test.
+const BRIDGE_SHA256 = {
+    1: '54ad80ac13270e71bd813206046e6dbce7a90c2a2acfc6abfc0ce26d319499a0', // 0.4.0
+};
+{
+    const rel = path.join('scripts', 'mcp-bridge.js');
+    const text = fs.readFileSync(path.join(root, rel), 'utf8');
+    const bridge = require(path.join(root, rel));
+    const first = /^\/\/ preferred-tools mcp-bridge (\d+)\r?$/m.exec(text.split('\n')[0]);
+    need(first, `${rel}: the first line must be '// preferred-tools mcp-bridge <version>'`);
+    if (first)
+    {
+        const version = Number(first[1]);
+        need(version === bridge.BRIDGE_VERSION, `${rel}: the first line says version ${version}, BRIDGE_VERSION is ${bridge.BRIDGE_VERSION}`);
+        const digest = require(path.join(root, 'scripts', 'mcp-headers.js')).digestOf(text);
+        need(digest === BRIDGE_SHA256[version], `${rel}: SHA-256 ${digest} is not BRIDGE_SHA256[${version}] in tests/lint.js - a changed bridge bumps its version`);
+    }
+    for (const m of text.matchAll(/\brequire\(\s*(['"])([^'"]+)\1\s*\)/g))
+        need(m[2].startsWith('node:') || m[2] === './mcp-headers.js', `${rel}: require('${m[2]}') - the bridge runs outside the plugin, so node: modules and ./mcp-headers.js only`);
+    const keysSrc = fs.readFileSync(path.join(root, 'scripts', 'keys.js'), 'utf8');
+    const pattern = /const credentialName = \(n\) => (\/[^/]+\/[a-z]*)\.test/.exec(keysSrc);
+    need(pattern && String(bridge.CREDENTIAL) === pattern[1], `${rel}: CREDENTIAL is not keys.js credentialName's pattern`);
 }
 
 // Public repo: no absolute local path and no home directory in anything shipped.

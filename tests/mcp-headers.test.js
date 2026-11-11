@@ -200,3 +200,40 @@ const schemeRun = (value, scheme) =>
 test('Basic with email:token prints the base64 form', () => assert.deepStrictEqual(schemeRun('a@b:t', 'Basic'), { Authorization: 'Basic YUBiOnQ=' }));
 test('Basic with an encoded value passes it through', () => assert.deepStrictEqual(schemeRun('YUBiOnQ=', 'Basic'), { Authorization: 'Basic YUBiOnQ=' }));
 test('Bearer sends a value with a colon as it is', () => assert.deepStrictEqual(schemeRun('x:y', 'Bearer'), { Authorization: 'Bearer x:y' }));
+
+// ---- helper 4: the reader the bridge shares (0.4.0) -------------------------------------------------------------------
+
+test('valueIn takes the first non-empty value in chain order and names its file', () => {
+    const helper = require(SOURCE);
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pt-valueof-')));
+    try
+    {
+        const [a, b, c] = ['a', 'b', 'c'].map((d) => sec(path.join(dir, d)));
+        put(a, 'K=\n');
+        put(b, 'K=v1\n');
+        put(c, 'K=v2\n');
+        assert.deepStrictEqual(helper.valueIn('K', [a, b, c]), { value: 'v1', file: b });
+        assert.deepStrictEqual(helper.valueIn('K', [c, b]), { value: 'v2', file: c });
+        assert.strictEqual(helper.valueIn('NONE', [a, b, c]), null, 'a name in no file');
+        assert.strictEqual(helper.valueIn('K', [path.join(dir, 'missing', '.mcps-secrets')]), null, 'a file that is not there');
+    }
+    finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('authValue is the scheme and the value, with the Basic base64 rule', () => {
+    const helper = require(SOURCE);
+    assert.strictEqual(helper.authValue('Bearer', 'x:y'), 'Bearer x:y');
+    assert.strictEqual(helper.authValue('Sentry-Bearer', 'pt-key'), 'Sentry-Bearer pt-key');
+    assert.strictEqual(helper.authValue('Basic', 'a@b:t'), 'Basic YUBiOnQ=');
+    assert.strictEqual(helper.authValue('Basic', 'YUBiOnQ='), 'Basic YUBiOnQ=');
+});
+
+test('helper 4 prints the same headers as helper 3, and exports its reader', () => {
+    const helper = require(SOURCE);
+    assert.strictEqual(helper.HELPER_VERSION, 4);
+    assert.match(fs.readFileSync(SOURCE, 'utf8').split('\n')[0], /^\/\/ preferred-tools mcp-headers 4$/);
+    for (const k of ['chainOf', 'digestOf', 'readDotenv', 'valueIn', 'authValue']) assert.strictEqual(typeof helper[k], 'function', k);
+    assert.deepStrictEqual(schemeRun('fake-1', 'Bearer'), { Authorization: 'Bearer fake-1' });
+    assert.deepStrictEqual(schemeRun('fake-1', 'Sentry-Bearer'), { Authorization: 'Sentry-Bearer fake-1' });
+    assert.deepStrictEqual(schemeRun('a@b:t', 'Basic'), { Authorization: 'Basic YUBiOnQ=' });
+});

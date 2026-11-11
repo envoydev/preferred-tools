@@ -1,4 +1,4 @@
-// preferred-tools mcp-headers 3
+// preferred-tools mcp-headers 4
 'use strict';
 // The header helper a hosted registration names as `headersHelper` (spec D4): `node <root>/mcp-headers.js <NAME> <SCHEME>
 // [<global root>]`. Claude Code runs it before it connects and sends the JSON it prints as request headers, so the key stays
@@ -8,7 +8,7 @@
 // ~/.alfred - the first non-empty value wins - and prints {"Authorization":"<SCHEME> <value>"}. With no value it prints {}
 // and one stderr line naming <NAME> and the files it read, never a value. It always exits 0 with JSON on stdout.
 // For `Basic`, a value holding `:` is `email:api_token` as the user wrote it and is sent base64-encoded; any other value
-// is sent as it is.
+// is sent as it is. mcp-bridge.js requires this file for its reader; it prints nothing itself.
 //
 // It prints a header only when Claude Code runs it: Claude Code sets CLAUDE_CODE_MCP_SERVER_NAME for a headersHelper
 // (2.1.85+). Run by hand - a terminal, or an agent's shell tool - it reads no key file and prints {} and one stderr
@@ -22,7 +22,7 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
-const HELPER_VERSION = 3;
+const HELPER_VERSION = 4;
 const SECRETS = '.mcps-secrets';
 const NAME_RULE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const SCHEME_RULE = /^[!-~]+$/;
@@ -65,6 +65,20 @@ function chainOf(dir, extraRoot, home)
 // same helper.
 const digestOf = (text) => crypto.createHash('sha256').update(String(text).replace(/\r\n/g, '\n')).digest('hex');
 
+// The first non-empty value of <name> in `files` order, and the file it came from. -> { value, file } | null
+function valueIn(name, files)
+{
+    for (const file of files)
+    {
+        const value = (readDotenv(file) || {})[name];
+        if (value) return { value, file };
+    }
+    return null;
+}
+
+// The Authorization value: `<scheme> <value>`; for Basic, a value holding `:` is email:api_token, sent base64-encoded.
+const authValue = (scheme, value) => `${scheme} ${scheme === 'Basic' && value.includes(':') ? Buffer.from(value, 'utf8').toString('base64') : value}`;
+
 function headers(argv, env)
 {
     if (!env.CLAUDE_CODE_MCP_SERVER_NAME)
@@ -74,11 +88,8 @@ function headers(argv, env)
         return { out: {}, note: 'mcp-headers: usage: node mcp-headers.js <NAME> <SCHEME> [<root>]' };
     const home = env.HOME || env.USERPROFILE || os.homedir();
     const files = chainOf(__dirname, extraRoot ? path.resolve(extraRoot) : null, home);
-    for (const file of files)
-    {
-        const value = (readDotenv(file) || {})[name];
-        if (value) return { out: { Authorization: `${scheme} ${scheme === 'Basic' && value.includes(':') ? Buffer.from(value, 'utf8').toString('base64') : value}` }, note: null };
-    }
+    const found = valueIn(name, files);
+    if (found) return { out: { Authorization: authValue(scheme, found.value) }, note: null };
     return { out: {}, note: `mcp-headers: no value for ${name} in ${files.join(', ')}` };
 }
 
@@ -93,4 +104,4 @@ function main()
 
 if (require.main === module) main();
 
-module.exports = { HELPER_VERSION, chainOf, digestOf };
+module.exports = { HELPER_VERSION, chainOf, digestOf, readDotenv, valueIn, authValue };
