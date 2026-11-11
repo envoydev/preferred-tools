@@ -377,9 +377,10 @@ const strandedScope = (row, routeId, current, ctx) => (current && current.scope 
 const STRANDED_TEXT = 'the scope it has now - it reads its key from the environment Claude Code starts with; a keyed local route is not offered here any more, as the committed .mcp.json carries no key';
 
 // The scope question, or null when one scope is left.
-// A hosted keyed route at project scope: a session started in a child folder runs no parent folder's helper (M1)
+// A hosted keyed route at project scope: a session started in a child folder runs no parent folder's helper (M1). The
+// bridge has a helper block too, but its own process reads the key, so it connects there (F3)
 const CHILD_NO_KEY = PARENT_HELPER_IN_CHILD ? '' : "; a session started in a child folder connects without the key - Claude Code does not run a parent folder's helper there";
-const hostedKeyed = (row, routeId) => Boolean(row.routes && row.routes[routeId] && row.routes[routeId].helper);
+const hostedKeyed = (row, routeId) => Boolean(row.routes && row.routes[routeId] && row.routes[routeId].helper && row.routes[routeId].runtime !== 'bridge');
 
 function scopeQuestion(row, inv, { route, current = null, copyOf = [], ctx = null } = {})
 {

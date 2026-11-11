@@ -2351,9 +2351,10 @@ test('no note says a session in another folder creates the data folder there; a 
 test('every scope question words Project as the folder\'s .mcp.json that names this machine\'s paths', () => {
     const want = "the .mcp.json in this folder - every session started here or below it; it names this machine's paths, so a teammate's clone points at yours, and never holds a key";
     assert.strictEqual(asks.SCOPE_TEXT.project, want);
-    // a hosted keyed route adds why a child folder's session has no key (docs/sources.md M1)
+    // a hosted keyed route adds why a child folder's session has no key (docs/sources.md M1); the bridge connects there
+    // (F3), so its Project option says nothing of the kind
     const child = asks.PARENT_HELPER_IN_CHILD ? '' : "; a session started in a child folder connects without the key - Claude Code does not run a parent folder's helper there";
-    for (const [id, route, tail] of [['memory', 'local', ''], ['context7', 'remote', child], ['context7', 'local', '']])
+    for (const [id, route, tail] of [['memory', 'local', ''], ['context7', 'remote', child], ['context7', 'local', ''], ['sentry', 'bridge', '']])
     {
         const q = asks.scopeQuestion(catalog.byId.get(id), inv(MAC), { route, ctx: { project: '/work/shop', platform: 'darwin', home: '/Users/me', env: {}, exists: () => false } });
         assert.strictEqual(q.options.find((o) => o.label.startsWith('Project')).description, `${want}${tail}`, `${id}/${route}`);
