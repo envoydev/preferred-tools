@@ -28,9 +28,11 @@ const { blockingStdio } = require('./json-file.js');
 const fetchLib = require('./fetch.js');
 const F = require('./fixes/index.js');
 const { realMachine, clone } = require('./fixes/common.js');
-const { deepEqual, useRoots, fileSteps } = require('./plan.js');
+const { deepEqual, useRoots, fileSteps, reconnectLine } = require('./plan.js');
 const E = require('./entries.js');
 const mcpOrder = require('./mcp-order.js');
+const keys = require('./keys.js');
+const roots = require('./roots.js');
 
 function makeCtx({ inv, catalog = catalogLib.load(), env = process.env, machine, platform, arch, data = null })
 {
@@ -39,6 +41,20 @@ function makeCtx({ inv, catalog = catalogLib.load(), env = process.env, machine,
 }
 
 const matches = (f, only) => !only || [f.id, f.row, f.name].includes(only);
+
+// Each rewritten hosted registration that sends a key through the helper: its name, and whether the hosted chain at its
+// scope fills it (spec F3) - the same reconnect line the plan prints.
+function reconnectOf(ctx, steps)
+{
+    const r = roots.resolve(ctx.inv, null, { project: ctx.inv.project, home: ctx.home, platform: ctx.platform, catalog: ctx.catalog }).roots;
+    return steps.filter((s) => s.entry && s.entry.headersHelper && E.helperNameOf(s.entry.headersHelper)).map((s) =>
+    {
+        const variable = E.helperNameOf(s.entry.headersHelper);
+        const route = ctx.catalog.byId.get(s.row).routes[s.route] || {};
+        const files = keys.hostedChain({ scope: s.scope, projectRoot: r.project, globalRoot: r.global, globalNamed: r.globalNamed, home: ctx.home });
+        return { name: s.name, variable, file: files[0], filled: keys.filledNames(files).some((f) => f.names.includes(variable)), anonymous: route.authMode === 'optional-token' && !route.keyless };
+    });
+}
 
 // A project or local helper runs only once its declaring folder's trust dialog is accepted (spec D4): until then the server
 // connects without its key. Not a fix - nothing here can accept it. -> [line]
@@ -181,6 +197,8 @@ function applyFixes(ctx, ids, { only, input = {}, tmp, log = console.log, runCli
         const report = apply(plan, { env: ctx.env, tmp: res.tmp, runCli, log });
         res.fetchFile = report.fetchFile;
         if (report.failed) { res.failed = report.failed.detail; return res; }
+        const lines = reconnectOf(ctx, steps).map(reconnectLine);
+        if (lines.length) log('', ...lines);
     }
 
     // machine fixes; one that says `restart: false` (a .gitignore written) changes nothing a session has started, and one

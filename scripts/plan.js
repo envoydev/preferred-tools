@@ -317,9 +317,14 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     {
         const once = (text) => { if (!out.notes.includes(text)) out.notes.push(text); };
         if (scope !== 'user' && inv.trusted === false) once(`accept the trust dialog the next time Claude Code starts in ${ctx.project} - until then the server connects without its key`);
-        if (scope === 'project') out.notes.push(`${row.id}: a session started in a subfolder or a child project does not get this key - install it there too, or at global scope`);
+        // docs/sources.md M1: a parent folder's helper does not run in a child folder's session, named relative or absolute
+        if (scope === 'project' && !asks.PARENT_HELPER_IN_CHILD) out.notes.push(`${row.id}: a session started in a child folder connects without this key - Claude Code does not run a parent folder's helper there; pick Global, or install it in that folder too`);
         once('node must be on the PATH Claude Code starts with - mcp-headers.js runs under it, as this plugin\'s commands do');
     }
+    // how a hosted keyed server connects once written (spec F3): its reconnect line, printed by render and repeated by the apply
+    const reconnect = keyed && keyed.kind === 'helper' && entry.headersHelper
+        ? { row: row.id, name, variable: keyName, file: keyed.files[0], filled: keys.filledNames(keyed.files).some((f) => f.names.includes(keyName)), anonymous: route.authMode === 'optional-token' && !route.keyless, hint: route.helper.hint || null, untrusted: scope !== 'user' && inv.trusted === false }
+        : null;
     if (route.authMode === 'oauth' || (route.keyless === 'oauth' && !wantToken)) out.oauth.push({ row: row.id, name, scope });
     if (row.dangerous && row.dangerous.length) out.dangerous.push({ row: row.id, name, tools: row.dangerous });
     out.expect.push({ kind: 'mcp', row: row.id, name, scope, route: routeId });
@@ -330,6 +335,7 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     const uses = { helper: Boolean(entry.headersHelper), keyFile, keyName, data: dataAbs };
     if (!cur)
     {
+        if (reconnect) out.reconnect.push(reconnect);
         useRoots(ctx, scope, uses);
         if (ensure) out.steps.push({ op: 'ensure-dir', path: ensure, why: `${row.id}: data folder, with a .gitignore holding * so the project's own .gitignore is never edited` });
         out.steps.push({ op: 'mcp-add', name, scope, entry, row: row.id, route: routeId, ...withKey, why: `${row.id}: add (${routeId}) at ${scope} scope` });
@@ -339,6 +345,7 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     const moved = cur.name !== name || cur.scope !== scope;
     const edited = !deepEqual(entry, cur.entry);
     if (!moved && !edited && !fresh && !staleKey) return out.unchanged.push(`${row.id}: '${name}' at ${scope} scope already as answered`);
+    if (reconnect) out.reconnect.push(reconnect);
     useRoots(ctx, scope, uses);
     if (row.locations && cur.rootStr && rootStr !== cur.rootStr && E.formatRoot(E.logicalRoot(cur.rootStr, ctx), 'local', ctx).value !== ensure)
         out.notes.push(`${row.id}: the old data stays at ${cur.rootStr}; moving a location moves no data`);
@@ -557,7 +564,7 @@ function plan(inv, answers, opts = {})
     const catalog = opts.catalog || catalogLib.load();
     // answers.machine: what prereq.js found (docker: false picks github's binary fallback); an explicit option wins
     const ctx = { ...makeCtx(inv, { ...opts, machine: opts.machine || answers.machine }), changing: new Set(Object.keys(answers.change || {})), uses: [] };
-    const out = { version: 1, project: inv.project, os: inv.os, alfredCodeEnabled: Boolean(inv.alfredCodeEnabled), steps: [], notes: [], errors: [], unchanged: [], keys: [], oauth: [], dangerous: [], expect: [], hud: null };
+    const out = { version: 1, project: inv.project, os: inv.os, alfredCodeEnabled: Boolean(inv.alfredCodeEnabled), steps: [], notes: [], errors: [], unchanged: [], keys: [], reconnect: [], oauth: [], dangerous: [], expect: [], hud: null };
     // the root folders (spec D2): every data folder, key file and helper of a family sits in its root
     const resolved = roots.resolve(inv, answers.roots, { ...ctx, catalog });
     out.errors.push(...resolved.errors);
@@ -726,6 +733,14 @@ function keyLine(k)
     return parts.join(' ');
 }
 
+// How a hosted keyed server connects once written (spec F3). The line makes no claim about what /mcp's Authenticate does
+// for a server whose helper printed {}: nothing has measured it.
+function reconnectLine({ name, variable, file, filled, anonymous })
+{
+    if (filled) return `${name}: connects with its key at the next session start; in a session already running, /mcp -> ${name} -> Reconnect`;
+    return `${name}: fill ${variable} in ${file}, then Reconnect it in /mcp - until then ${anonymous ? 'it runs without the key, at lower rate limits' : 'it connects without the key, and /mcp shows needs authentication'}`;
+}
+
 function render(p)
 {
     const lines = [];
@@ -750,6 +765,7 @@ function render(p)
         else if (s.op === 'hud') lines.push(`   node scripts/hud-statusline.js ${s.mode === 'replace' ? '--replace' : s.mode === 'skip' ? '--statusline-only' : ''}`.trimEnd());
     });
     if (p.keys.length) lines.push('', ...p.keys.map(keyLine));
+    if ((p.reconnect || []).length) lines.push('', ...p.reconnect.map(reconnectLine));
     if (p.oauth.length) lines.push('', `OAuth: run /mcp once in a session to log in to ${p.oauth.map((o) => o.name).join(', ')}.`);
     if (p.dangerous.length) lines.push('', ...p.dangerous.map((d) => `Code-running tool on '${d.name}': ${d.tools.map((t) => `${t.tool} (${t.why})`).join('; ')}. This plugin adds no guard.`));
     if (p.notes.length) lines.push('', ...p.notes.map((n) => `Note: ${n}`));
@@ -818,4 +834,4 @@ function main(argv)
 }
 
 if (require.main === module) process.exit(main(process.argv.slice(2)));
-module.exports = { plan, render, argvOf, makeCtx, deepEqual, projectName, main, parseArgs, globalWords, useRoots, fileSteps };
+module.exports = { plan, render, reconnectLine, argvOf, makeCtx, deepEqual, projectName, main, parseArgs, globalWords, useRoots, fileSteps };

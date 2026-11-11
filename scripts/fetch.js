@@ -128,7 +128,8 @@ function status(names, { cwd, env, runCli = cli.run, log = console.log })
         const lines = `${g.stdout || ''}${g.stderr || ''}`.trim().split('\n').map((l) => l.trim()).filter(Boolean);
         const out = lines.find((l) => /^Status:/i.test(l)) || lines.slice(-1)[0] || '(no output)';
         log(`  ${name}: ${out}`);
-        return { name, out };
+        // the CLI's reason for a failed connection (2.1.322): matched by apply.js REFUSED, never printed - it may quote a body
+        return { name, out, issue: lines.find((l) => /^Issue:/i.test(l)) || null };
     });
 }
 

@@ -1616,11 +1616,11 @@ test('the plan notes an untrusted folder, a project-scope helper\'s child folder
     const p = plan(inv(MAC, { trusted: false }), { picks: { github: { route: 'remote', scope: 'project' }, context7: { route: 'remote', scope: 'local', token: true } } }, opts('/Users/me'));
     const count = (re) => p.notes.filter((n) => re.test(n)).length;
     assert.strictEqual(count(/accept the trust dialog the next time Claude Code starts in \/work\/shop - until then the server connects without its key/), 1);
-    assert.strictEqual(count(/a session started in a subfolder or a child project does not get this key - install it there too, or at global scope/), 1);
-    assert.match(p.notes.find((n) => /subfolder or a child project/.test(n)), /^github:/);
+    assert.strictEqual(count(/a session started in a child folder connects without this key/), asks.PARENT_HELPER_IN_CHILD ? 0 : 1);
+    if (!asks.PARENT_HELPER_IN_CHILD) assert.match(p.notes.find((n) => /child folder connects without/.test(n)), /^github:/);
     assert.strictEqual(count(/node must be on the PATH Claude Code starts with/), 1);
     const trusted = plan(inv(MAC, { trusted: true }), pickOne('github', { route: 'remote', scope: 'user' }), opts('/Users/me'));
-    assert.ok(!trusted.notes.some((n) => /trust dialog|child project/.test(n)), trusted.notes.join('\n'));
+    assert.ok(!trusted.notes.some((n) => /trust dialog|child folder/.test(n)), trusted.notes.join('\n'));
     assert.strictEqual(plan(inv(MAC, { trusted: false }), pickOne('github', { route: 'remote', scope: 'user' }), opts('/Users/me')).notes.filter((n) => /trust dialog/.test(n)).length, 0, 'a global helper needs no folder trust');
 });
 
@@ -2351,9 +2351,52 @@ test('no note says a session in another folder creates the data folder there; a 
 test('every scope question words Project as the folder\'s .mcp.json that names this machine\'s paths', () => {
     const want = "the .mcp.json in this folder - every session started here or below it; it names this machine's paths, so a teammate's clone points at yours, and never holds a key";
     assert.strictEqual(asks.SCOPE_TEXT.project, want);
-    for (const [id, route] of [['memory', 'local'], ['context7', 'remote'], ['context7', 'local']])
+    // a hosted keyed route adds why a child folder's session has no key (docs/sources.md M1)
+    const child = asks.PARENT_HELPER_IN_CHILD ? '' : "; a session started in a child folder connects without the key - Claude Code does not run a parent folder's helper there";
+    for (const [id, route, tail] of [['memory', 'local', ''], ['context7', 'remote', child], ['context7', 'local', '']])
     {
         const q = asks.scopeQuestion(catalog.byId.get(id), inv(MAC), { route, ctx: { project: '/work/shop', platform: 'darwin', home: '/Users/me', env: {}, exists: () => false } });
-        assert.strictEqual(q.options.find((o) => o.label.startsWith('Project')).description, want, `${id}/${route}`);
+        assert.strictEqual(q.options.find((o) => o.label.startsWith('Project')).description, `${want}${tail}`, `${id}/${route}`);
     }
+});
+
+// ---- 0.3.0: 'needs authentication' explained (F3) ---------------------------------------------------------------------
+
+test('a hosted keyed registration gets its reconnect line in the plan: filled, unfilled, unfilled anonymous', () => {
+    const { reconnectLine } = require('../scripts/plan.js');
+    const { world } = require('./helpers.js');
+    const w = world();
+    try
+    {
+        const file = putKeys(w.home, ['.preferred-tools', '.mcps-secrets'], ['ATLASSIAN_API_TOKEN=a@b.example:not-printed']);
+        const at = (picks, extra = {}) => plan(inv({ ...MAC, os: process.platform, project: w.project }, extra), { picks }, { home: w.home, env: {} });
+        const p = at({ atlassian: { scope: 'user', token: true }, sentry: { route: 'remote', scope: 'user', token: true }, github: { route: 'remote', scope: 'user' }, context7: { route: 'remote', scope: 'user', token: true } });
+        assert.deepStrictEqual(p.errors, []);
+        const hint = catalog.byId.get('atlassian').routes.remote.helper.hint;
+        assert.deepStrictEqual(p.reconnect.find((r) => r.row === 'atlassian'), { row: 'atlassian', name: catalog.byId.get('atlassian').name, variable: 'ATLASSIAN_API_TOKEN', file, filled: true, anonymous: false, hint, untrusted: false });
+        assert.deepStrictEqual(p.reconnect.map((r) => [r.row, r.filled, r.anonymous]), [['atlassian', true, false], ['github', false, false], ['context7', false, true], ['sentry', false, false]].sort((a, b) => p.reconnect.findIndex((r) => r.row === a[0]) - p.reconnect.findIndex((r) => r.row === b[0])));
+        const text = render(p);
+        const needs = (name, v) => `${name}: fill ${v} in ${file}, then Reconnect it in /mcp - until then it connects without the key, and /mcp shows needs authentication`;
+        const a = catalog.byId.get('atlassian').name;
+        for (const line of [`${a}: connects with its key at the next session start; in a session already running, /mcp -> ${a} -> Reconnect`, needs('sentry', 'SENTRY_ACCESS_TOKEN'), needs('github', 'GITHUB_PERSONAL_ACCESS_TOKEN'),
+            `context7: fill CONTEXT7_API_KEY in ${file}, then Reconnect it in /mcp - until then it runs without the key, at lower rate limits`])
+            assert.ok(text.includes(line), `${line}\n---\n${text}`);
+        assert.strictEqual(reconnectLine({ name: 'x', variable: 'V', file: '/f', filled: false, anonymous: true }), 'x: fill V in /f, then Reconnect it in /mcp - until then it runs without the key, at lower rate limits');
+        assert.ok(!text.includes('not-printed') && !JSON.stringify(p).includes('not-printed'));
+        // a keyless pick has no line, and an untrusted folder marks a local one
+        assert.deepStrictEqual(at({ sentry: { route: 'remote', scope: 'user', token: false } }).reconnect, []);
+        assert.strictEqual(at({ atlassian: { scope: 'local', token: true } }, { trusted: false }).reconnect[0].untrusted, true);
+        assert.strictEqual(at({ atlassian: { scope: 'user', token: true } }, { trusted: false }).reconnect[0].untrusted, false);
+    }
+    finally { w.clean(); }
+});
+
+test('the project-scope helper note says why, once', () => {
+    const p = plan(inv(MAC, { trusted: true }), { picks: { github: { route: 'remote', scope: 'project' }, context7: { route: 'remote', scope: 'project', token: true } } }, opts('/Users/me'));
+    const why = "a session started in a child folder connects without this key - Claude Code does not run a parent folder's helper there; pick Global, or install it in that folder too";
+    const child = p.notes.filter((n) => /child (folder|project)/.test(n));
+    if (asks.PARENT_HELPER_IN_CHILD) return assert.deepStrictEqual(child, []);
+    assert.deepStrictEqual(child.sort(), [`context7: ${why}`, `github: ${why}`]);
+    const q = asks.scopeQuestion(catalog.byId.get('github'), inv(MAC), { route: 'remote', ctx: { project: '/work/shop', platform: 'darwin', home: '/Users/me', env: {}, exists: () => false } });
+    assert.match(q.options.find((o) => o.label.startsWith('Project')).description, /; a session started in a child folder connects without the key - Claude Code does not run a parent folder's helper there$/);
 });

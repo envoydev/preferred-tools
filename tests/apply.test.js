@@ -1124,3 +1124,52 @@ test('a re-run after a failed add writes no file again', () => {
     }
     finally { w.clean(); }
 });
+
+// ---- 0.3.0: 'needs authentication' explained (F3) ---------------------------------------------------------------------
+
+test('the apply repeats the reconnect lines after the read-back, and names a refused key with the row\'s hint', () => {
+    const { REFUSED, refusedLine } = require('../scripts/apply.js');
+    // what claude mcp get printed for a 401 to a helper's key (tests/matrix/field-fixes.test.js X7, docs/sources.md)
+    const ISSUE = 'Issue: Server rejected the Authorization header minted by the configured headersHelper (HTTP 401). Check that the helper command returns a valid credential for this MCP endpoint — OAuth fallback is disabled when the helper supplies Authorization. Error detail: Error POSTing to endpoint:';
+    assert.match(ISSUE, REFUSED);
+    for (const other of ['Issue: ECONNREFUSED: Unable to connect. Is the computer able to access the url?', 'Issue: HTTP 500: Error POSTing to endpoint:', 'Issue: Dynamic Client Registration rejected (HTTP 401):']) assert.doesNotMatch(other, REFUSED);
+    assert.strictEqual(refusedLine({ name: 'x', variable: 'V' }), 'x: the server refused the key in V - check the value');
+    const w = world();
+    try
+    {
+        const file = path.join(w.home, '.preferred-tools', '.mcps-secrets');
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, 'ATLASSIAN_API_TOKEN=a@b.example:x-not-printed\nSENTRY_ACCESS_TOKEN=s-not-printed\n');
+        const gets = [];
+        const runCli = (argv, o) =>
+        {
+            if (argv[0] !== 'mcp' || argv[1] !== 'get') return cli.run(argv, o);
+            gets.push(argv[2]);
+            return { status: 0, stdout: `${argv[2]}:\n  Status: ✘ Failed to connect\n  ${ISSUE}\n`, stderr: '' };
+        };
+        const run = (answers, extra = {}) =>
+        {
+            const p = plan({ ...inventory.buildInventory({ project: w.project, env: w.env }), ...extra }, answers, { home: w.home, env: w.env });
+            assert.deepStrictEqual(p.errors, []);
+            const lines = [];
+            const report = apply(p, { env: w.env, tmp: path.join(w.dir, 'tmp'), runCli, log: (...a) => lines.push(a.join(' ')) });
+            assert.strictEqual(report.failed, null, lines.join('\n'));
+            return { p, report, text: lines.join('\n') };
+        };
+        const a = require('../scripts/catalog.js').load().byId.get('atlassian');
+        const r = run({ picks: { atlassian: { scope: 'user', token: true }, sentry: { route: 'remote', scope: 'user', token: true }, serena: { scope: 'local' } } });
+        const tail = r.text.slice(r.text.indexOf('Read back:'));
+        assert.ok(tail.includes(`${a.name}: connects with its key at the next session start; in a session already running, /mcp -> ${a.name} -> Reconnect`), r.text);
+        assert.ok(tail.includes(`${a.name}: the server refused the key in ATLASSIAN_API_TOKEN - ${a.routes.remote.helper.hint}`), r.text);
+        assert.ok(tail.includes('sentry: the server refused the key in SENTRY_ACCESS_TOKEN - check the value'), r.text);
+        // the hosted names are asked now; serena's package goes to the fetch job, which checks only it
+        assert.deepStrictEqual(gets.sort(), [a.name, 'sentry'].sort());
+        assert.deepStrictEqual(r.report.fetch.check, ['serena']);
+        assert.ok(!r.text.includes('not-printed'));
+        // an untrusted folder: the key never left the file, so the line is the trust one
+        const u = run({ picks: { atlassian: { scope: 'local', token: true } } }, { trusted: false });
+        assert.ok(!/refused the key/.test(u.text), u.text);
+        assert.ok(u.text.includes(`accept the trust dialog the next time Claude Code starts in ${w.project} - until then the server connects without its key`), u.text);
+    }
+    finally { w.clean(); }
+});

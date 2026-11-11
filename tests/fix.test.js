@@ -1382,3 +1382,24 @@ test('data-folder-ignore: after the paths are absolute, a 0.2.0 copy in a child 
     }
     finally { w.clean(); }
 });
+
+test('fix prints the reconnect line for each hosted keyed registration it rewrote', () =>
+{
+    const w = world();
+    try
+    {
+        // key-to-helper on github at local scope, its key filled: the Reconnect line
+        seed(w, 'github', 'local', HOSTED_GH('Bearer ${ACME_GH}'));
+        secretsAt(ptRoot(w), { ACME_GH: hexv('gh') });
+        const l = logged();
+        assert.strictEqual(fix.applyFixes(ctxOf(w), ['key-to-helper'], { tmp: path.join(w.dir, 'tmp'), log: l.log }).failed, null, l.text());
+        assert.ok(l.text().includes('github: connects with its key at the next session start; in a session already running, /mcp -> github -> Reconnect'), l.text());
+        // project-relative-path on context7's 0.2.0 helper at project scope, its key not filled: the fill line
+        seed(w, 'context7', 'project', { ...C7, headersHelper: 'node .preferred-tools/mcp-headers.js CONTEXT7_API_KEY Bearer' });
+        const m = logged();
+        assert.strictEqual(fix.applyFixes(ctxOf(w), ['project-relative-path'], { tmp: path.join(w.dir, 'tmp2'), log: m.log }).failed, null, m.text());
+        assert.ok(m.text().includes(`context7: fill CONTEXT7_API_KEY in ${path.join(ptRoot(w), '.mcps-secrets')}, then Reconnect it in /mcp - until then it runs without the key, at lower rate limits`), m.text());
+        assert.ok(!/github: connects/.test(m.text()), 'only what this run rewrote');
+    }
+    finally { w.clean(); }
+});

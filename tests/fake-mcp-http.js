@@ -9,8 +9,10 @@ const account = require('../scripts/account.js');
 const catalogLib = require('../scripts/catalog.js');
 
 // -> Promise<{ server, port, seen: [{ path, rpc, auth: 'none' | 'expected' | 'other' }], close }>. `expected`: the whole
-// header value a request must carry to count as 'expected'.
-function stub({ expected })
+// header value a request must carry to count as 'expected'. `status`: 401 answers every POST with 401 and
+// `WWW-Authenticate: Bearer` (a key the server refused), 403 with 403 (gitlab's answer to a legacy token), any other
+// status with that status.
+function stub({ expected, status = null })
 {
     const seen = [];
     const server = http.createServer((req, res) =>
@@ -25,6 +27,7 @@ function stub({ expected })
             const a = req.headers.authorization;
             seen.push({ path: req.url, rpc: m.method || null, auth: a === undefined ? 'none' : a === expected ? 'expected' : 'other' });
             if (req.method !== 'POST') { res.writeHead(404); return res.end(); }
+            if (status) { res.writeHead(status, status === 401 ? { 'www-authenticate': 'Bearer' } : {}); return res.end(); }
             if (m.method && m.id === undefined) { res.writeHead(202); return res.end(); }
             let result = {};
             if (m.method === 'initialize') result = { protocolVersion: (m.params && m.params.protocolVersion) || '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'probe', version: '0.0.1' } };

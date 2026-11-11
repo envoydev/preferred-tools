@@ -334,6 +334,10 @@ const strandedScope = (row, routeId, current, ctx) => (current && current.scope 
 const STRANDED_TEXT = 'the scope it has now - it reads its key from the environment Claude Code starts with; a keyed local route is not offered here any more, as the committed .mcp.json carries no key';
 
 // The scope question, or null when one scope is left.
+// A hosted keyed route at project scope: a session started in a child folder runs no parent folder's helper (M1)
+const CHILD_NO_KEY = PARENT_HELPER_IN_CHILD ? '' : "; a session started in a child folder connects without the key - Claude Code does not run a parent folder's helper there";
+const hostedKeyed = (row, routeId) => Boolean(row.routes && row.routes[routeId] && row.routes[routeId].helper);
+
 function scopeQuestion(row, inv, { route, current = null, copyOf = [], ctx = null } = {})
 {
     const routeId = route || (current && current.route) || row.recommendedRoute;
@@ -342,7 +346,7 @@ function scopeQuestion(row, inv, { route, current = null, copyOf = [], ctx = nul
     return {
         id: `scope-${row.id}`, header: 'Scope', multiSelect: false,
         question: current ? `${row.label}: which scope? Another one moves '${current.name || row.label}' there; /preferred-tools:install adds a second copy instead.` : `${row.label}: which scope?`,
-        options: order.slice(0, 4).map((s, i) => ({ label: `${SCOPE_LABEL[s]}${i === 0 ? REC : ''}`, description: s === strandedScope(row, routeId, current, ctx) ? STRANDED_TEXT : scopeText(s) })),
+        options: order.slice(0, 4).map((s, i) => ({ label: `${SCOPE_LABEL[s]}${i === 0 ? REC : ''}`, description: s === strandedScope(row, routeId, current, ctx) ? STRANDED_TEXT : `${scopeText(s)}${s === 'project' && hostedKeyed(row, routeId) ? CHILD_NO_KEY : ''}` })),
     };
 }
 

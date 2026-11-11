@@ -961,6 +961,29 @@ What 0.2.0's `mcp-headers.js` (D4) and the fix rows `key-to-helper`, `helper-mis
   relative form. So `asks.PARENT_HELPER_IN_CHILD` is `false`: an absolute path does not carry a parent's key into a
   child session.
 
+## Claude Code - a refused key (measured 2026-11-11, Claude Code 2.1.322, macOS arm64)
+
+- Measured by `tests/matrix/field-fixes.test.js` X7 and a scratch probe beside it: a throwaway HOME and
+  `CLAUDE_CONFIG_DIR`, github's hosted route registered at local scope against the stub in `tests/fake-mcp-http.js`, the
+  folder trusted, the key filled in `.preferred-tools/.mcps-secrets`, then `claude mcp get github` and `claude mcp list`.
+- The helper's header reached the stub in every keyed case. What `claude mcp get` printed:
+  - the stub answering 401 with `WWW-Authenticate: Bearer`: `Status: ✘ Failed to connect` and `Issue: Server rejected
+    the Authorization header minted by the configured headersHelper (HTTP 401). Check that the helper command returns a
+    valid credential for this MCP endpoint — OAuth fallback is disabled when the helper supplies Authorization. Error
+    detail: ...`;
+  - 403: the same, with `(HTTP 403)`;
+  - 500: `Issue: HTTP 500: Error POSTing to endpoint:`;
+  - the stub closed: `Issue: ECONNREFUSED: Unable to connect. Is the computer able to access the url?`;
+  - no key filled, so the helper printed `{}`, and a 401 from a stub with no OAuth metadata: `Issue: Dynamic Client
+    Registration rejected (HTTP 401):`. What a real server that offers OAuth shows there is not measured; the
+    reconnect line's 'needs authentication' rests on the docs (`docs/sources.md` 'Claude Code - headersHelper').
+- The `Status:` line is `✘ Failed to connect` in every failing case, so it cannot name a refused key; the `Issue:` line
+  can. `apply.REFUSED` matches 'Server rejected the Authorization header minted by the configured headersHelper (HTTP
+  401)' or '(HTTP 403)' and nothing else. `claude mcp list` prints the same reason after an em dash.
+- Once in six keyed runs, the first `claude mcp get` in a fresh world printed the `Status:` line with no `Issue:` line,
+  and `claude mcp list` no line for the server; X7 asks a second time when the first answer has no reason. A read-back
+  that meets that answer prints the reconnect line and no refused line.
+
 ## Claude Code - the plugin's data folder and its install folder (2026-11-10)
 
 - `${CLAUDE_PLUGIN_DATA}` - read 2026-11-10, https://code.claude.com/docs/en/plugins-reference: it is

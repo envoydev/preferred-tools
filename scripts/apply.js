@@ -26,7 +26,7 @@ const cli = require('./claude-cli.js');
 const account = require('./account.js');
 const inventory = require('./inventory.js');
 const fetchLib = require('./fetch.js');
-const { argvOf, deepEqual } = require('./plan.js');
+const { argvOf, deepEqual, reconnectLine } = require('./plan.js');
 const { blockingStdio } = require('./json-file.js');
 const kept = require('./kept.js');
 const keys = require('./keys.js');
@@ -407,15 +407,45 @@ function apply(plan, { env = process.env, tmp, runCli = cli.run, log = console.l
     const written = plan.steps.filter((s, i) => done.has(i + 1) && ['mcp-add', 'mcp-replace', 'mcp-move'].includes(s.op)).map((s) => s.to || { name: s.name, scope: s.scope });
     const fresh = written.map((w) => w.name);
     const scopeOf = new Map(written.map((w) => [w.name, w.scope]));
-    report.fetch = fetchLib.job(project, report.toFetch.filter((s) => scopeOf.has(s.name)).map((s) => ({ ...s, scope: scopeOf.get(s.name) })), fresh);
-    if (!report.fetch.fetch.length) fetchLib.status(fresh, { cwd: project, env, runCli, log });
-    else if (fetchFile !== false)
+    // a hosted keyed server fetches nothing: its status is asked now, so a refused key is named here (spec F3)
+    const reconnect = (plan.reconnect || []).filter((r) => scopeOf.has(r.name));
+    const now = new Set(reconnect.map((r) => r.name));
+    const toFetch = report.toFetch.filter((s) => scopeOf.has(s.name)).map((s) => ({ ...s, scope: scopeOf.get(s.name) }));
+    report.fetch = fetchLib.job(project, toFetch, toFetch.length ? fresh.filter((n) => !now.has(n)) : fresh);
+    let statuses = [];
+    if (!report.fetch.fetch.length) statuses = fetchLib.status(fresh, { cwd: project, env, runCli, log });
+    else
     {
-        report.fetchFile = fetchLib.writeJob(fetchFile || path.join(ctx.tmp, 'fetch.json'), report.fetch);
-        log('', ...fetchLib.nextLines(report.fetchFile, report.fetch));
+        if (now.size) statuses = fetchLib.status([...now], { cwd: project, env, runCli, log });
+        if (fetchFile !== false)
+        {
+            report.fetchFile = fetchLib.writeJob(fetchFile || path.join(ctx.tmp, 'fetch.json'), report.fetch);
+            log('', ...fetchLib.nextLines(report.fetchFile, report.fetch));
+        }
     }
+    if (reconnect.length) log('', ...reconnectLines(reconnect, statuses, project));
     if (!report.failed) log('', `Restart Claude Code (or run /reload-plugins for plugins) so the new registrations load${report.fetchFile ? ' - after the fetch reports, so a session start does not download the same package beside it' : ''}; a project-scope server also needs the trust prompt on the next session start.`);
     return report;
+}
+
+// The CLI's reason when the server answered 401 or 403 to the key the helper sent (claude 2.1.322, measured by
+// tests/matrix/field-fixes.test.js X7, docs/sources.md 'Claude Code - a refused key'): a server that is down, errs or
+// asks for OAuth gives another reason.
+const REFUSED = /Server rejected the Authorization header minted by the configured headersHelper \(HTTP 40[13]\)/;
+const refusedLine = ({ name, variable, hint }) => `${name}: the server refused the key in ${variable} - ${hint || 'check the value'}`;
+
+// After the read-back: each hosted keyed server's reconnect line, then a refused key named - or, in a folder whose trust
+// is not accepted, the trust line, since the helper never ran and the key never left the file.
+function reconnectLines(reconnect, statuses, project)
+{
+    const lines = reconnect.map(reconnectLine);
+    for (const r of reconnect.filter((x) => x.filled))
+    {
+        const st = statuses.find((x) => x.name === r.name);
+        if (!st || !REFUSED.test(st.issue || '')) continue;
+        lines.push(r.untrusted ? `${r.name}: accept the trust dialog the next time Claude Code starts in ${project} - until then the server connects without its key` : refusedLine(r));
+    }
+    return lines;
 }
 
 function main(argv)
@@ -434,4 +464,4 @@ function main(argv)
 }
 
 if (require.main === module) process.exit(main(process.argv.slice(2)));
-module.exports = { apply, runStep, restoreStep, fillStep, readRegistration, restoreLine, rootIgnore, rootIgnoreLines, writeHelper, ensureKeyName };
+module.exports = { REFUSED, refusedLine, reconnectLines, apply, runStep, restoreStep, fillStep, readRegistration, restoreLine, rootIgnore, rootIgnoreLines, writeHelper, ensureKeyName };
