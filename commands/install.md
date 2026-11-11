@@ -119,9 +119,16 @@ The key name is `next.answers.<question id>.<label>`: a name goes to `"keyNames"
 was 'No key - lower rate limits' or 'Sign in with OAuth'. Settings 'Keep these settings' or 'No settings' write nothing;
 'Change or add a setting' asks next for `NAME=value` pairs, written to `"settings": {<id>: {"<NAME>": "<value>"}}`.
 
+A bridge route (sentry's 'Bridge') asks one 'URL name' question per value its URL takes from `.mcps-secrets`, beside the
+key name: which name holds the organization slug, and the project slug. The answer is
+`next.answers.<question id>.<label>`, a name written to `"urlNames": {<id>: {"<VAR>": "<NAME>"}}` at the top of
+`answers.json`, where `<VAR>` ends the question id (`urlname-<id>-<VAR>`); `named` - 'A name you choose' - is asked
+next, checked against `^[A-Za-z_][A-Za-z0-9_]*$` as for the key name. A URL value is a plain name the user writes in `.mcps-secrets`, never a key: the plan
+refuses a URL name that is the key's name or reads as a credential.
+
 | Answer | Entry |
 |---|---|
-| route 'Hosted' / 'Local' | `"route": "remote"` / `"local"` |
+| route 'Hosted' / 'Local' / 'Bridge' | `"route": "remote"` / `"local"` / `"bridge"` |
 | scope 'Global' / 'Project' / 'Local' | `"scope": "user"` / `"project"` / `"local"` |
 | name 'Keep ...' | `"name": "keep"` |
 | name 'Use `x`', or a name typed | `"name": "x"` |
@@ -131,6 +138,7 @@ was 'No key - lower rate limits' or 'Sign in with OAuth'. Settings 'Keep these s
 | API key 'Use a key from .mcps-secrets' / 'No key - lower rate limits' or 'Sign in with OAuth' | `"token": true` / `"token": false`, for every answer |
 | host 'A self-managed host', asked next | `"params": {"host": "<typed>"}` |
 | key name, a name or one asked next | top-level `"keyNames": {<id>: "<NAME>"}` |
+| URL name, a name or one asked next | top-level `"urlNames": {<id>: {"<VAR>": "<NAME>"}}` |
 | settings, pairs asked next | top-level `"settings": {<id>: {"<NAME>": "<value>"}}` |
 | root, an option or a folder asked next | top-level `"roots": {<family>: {"id": <id>}}`, or `{"id": "named", "path": "<typed>"}` |
 
@@ -226,7 +234,8 @@ value). After the read-back the apply prints one line per hosted server that tak
   `email:api_token`). The user fixes the value in the file and reconnects; nothing here reads it.
 
 A Project- or Local-scope server with a key helper connects with its key only once the trust prompt is accepted - say
-so. Close with one line: a later rename, move, route, location, key name, settings or root folder change, or a remove,
+so. A bridge reads its key and URL names each time the server starts: repeat the plan's 'fill ... in ...' note, and say
+that after a change to them the user restarts Claude Code or reconnects the server in `/mcp`. Close with one line: a later rename, move, route, location, key name, settings or root folder change, or a remove,
 is `/preferred-tools:configure`.
 
 ## 8. Fetch

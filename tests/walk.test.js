@@ -205,3 +205,75 @@ test('the recommended scope for a hosted key follows M1', () => {
         assert.strictEqual(asks.recommendedScope(catalog.byId.get(id), 'remote'), asks.PARENT_HELPER_IN_CHILD ? 'project' : 'user', id);
     assert.strictEqual(asks.recommendedScope(catalog.byId.get('serena'), 'local'), 'local');
 });
+
+// ---- the bridge (0.4.0) ---------------------------------------------------------------------------------------------
+
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+test('sentry offers three routes, Hosted first, and the bridge recommends Project', () => {
+    const sentry = catalog.byId.get('sentry');
+    const q = asks.routeQuestion(sentry);
+    assert.strictEqual(q.question, 'sentry: which route?');
+    assert.deepStrictEqual(q.options.map((o) => o.label), ['Hosted (Recommended)', 'Local', 'Bridge']);
+    assert.strictEqual(asks.recommendedScope(sentry, 'bridge'), 'project');
+    assert.strictEqual(asks.settingsQuestion(sentry, 'bridge'), null);
+    assert.ok(asks.scopesFor(sentry, 'bridge').includes('project'));
+});
+
+// a real project folder: the URL-name questions read the .mcps-secrets chain from disk
+const bridgeWalk = (base, { secrets = null } = {}) =>
+{
+    const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pt-bwalk-')));
+    const project = path.join(d, 'shop');
+    const home = path.join(d, 'home');
+    fs.mkdirSync(project, { recursive: true });
+    fs.mkdirSync(home, { recursive: true });
+    if (secrets) { fs.mkdirSync(path.join(project, '.preferred-tools')); fs.writeFileSync(path.join(project, '.preferred-tools', '.mcps-secrets'), secrets); }
+    const i = inv({ ...base, project });
+    const steps = [];
+    const picks = { rows: ['sentry'], walk: 'each', done: ['settings'], routes: { sentry: 'bridge' } };
+    try
+    {
+        for (let n = 0; n < 20; n++)
+        {
+            const s = asks.next(i, picks, catalog, { env: {}, home });
+            if (s.id === 'done') break;
+            steps.push(s);
+            record(picks, s);
+            picks.routes = { sentry: 'bridge' };
+        }
+    }
+    finally { fs.rmSync(d, { recursive: true, force: true }); }
+    return steps;
+};
+
+test('the bridge keys step asks the key name and each URL name, a filled SENTRY_SLUG first for the org', () => {
+    const steps = bridgeWalk(MAC, { secrets: 'SENTRY_SLUG=x\n' });
+    const keys = steps.find((s) => s.id === 'sentry:keys');
+    assert.deepStrictEqual(keys.call.map((q) => q.id), ['keyname-sentry', 'urlname-sentry-SENTRY_ORG', 'urlname-sentry-SENTRY_PROJECT']);
+    const org = keys.call[1];
+    assert.strictEqual(org.header, 'URL name');
+    assert.strictEqual(org.question, "Which name holds sentry's organization slug in .mcps-secrets?");
+    assert.strictEqual(org.options[0].label, 'SENTRY_SLUG (Recommended)');
+    assert.ok(org.options.some((o) => o.label === 'SENTRY_ORG'), 'the catalog name is offered');
+    assert.ok(!org.options.some((o) => /SENTRY_ACCESS_TOKEN/.test(o.label)), 'never the key');
+    assert.strictEqual(org.options[org.options.length - 1].label, 'A name you choose');
+    assert.strictEqual(keys.answers[org.id]['SENTRY_SLUG (Recommended)'], 'SENTRY_SLUG');
+    assert.strictEqual(keys.answers[org.id]['A name you choose'], 'named');
+    // the project question does not recommend the name the org question already took
+    assert.strictEqual(keys.call[2].options[0].label, 'SENTRY_PROJECT (Recommended)');
+    // with nothing filled, the catalog's names are recommended
+    const plain = bridgeWalk(MAC).find((s) => s.id === 'sentry:keys');
+    assert.strictEqual(plain.call[1].options[0].label, 'SENTRY_ORG (Recommended)');
+});
+
+test('every bridge step asks at most four questions with two to four options', () => {
+    for (const base of [MAC, LINUX, WIN])
+        for (const s of bridgeWalk(base, { secrets: 'SENTRY_SLUG=x\nSENTRY_ORG_NAME=y\nSENTRY_TEAM=z\n' }))
+        {
+            assert.ok(s.call.length >= 1 && s.call.length <= 4, `${base.os} ${s.id}: ${s.call.length}`);
+            for (const q of s.call) assert.ok(q.options.length >= 2 && q.options.length <= 4, `${base.os} ${q.id}: ${q.options.length}`);
+        }
+});

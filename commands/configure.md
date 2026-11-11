@@ -138,12 +138,19 @@ another name goes to `"keyNames": {<key>: "<NAME>"}` at the top of `answers.json
 the API key answer is now 'No key - lower rate limits' or 'Sign in with OAuth'. 'Change or add a setting' asks next for
 `NAME=value` pairs, written to `"settings": {<key>: {"<NAME>": "<value>"}}`; 'Keep these settings' writes nothing.
 
+A bridge route (sentry's 'Bridge') adds one 'URL name' question per value its URL takes from `.mcps-secrets` - the name
+it uses now first. Another name goes to `"urlNames": {<key>: {"<VAR>": "<NAME>"}}` at the top of `answers.json`, where
+`<VAR>` ends the question id (`urlname-<id>-<VAR>`); 'A name you choose' is asked next, checked against
+`^[A-Za-z_][A-Za-z0-9_]*$`. The plan rewrites only the URL template and the key argument of the registration as read,
+keeping its pin, and refuses a URL name that is the key's name or reads as a credential. A change takes effect when the
+server starts again: say to restart Claude Code or reconnect it in `/mcp`.
+
 Write the answers into `<tmp>/answers.json` as `{"change": {<key>: {"row": <targets.<key>.row>, ...}}}`, mapped as
 below, and leave out every answer that keeps what the tool has now - the plan reads a missing key as 'keep':
 
 | Answer | Entry |
 |---|---|
-| route 'Hosted' / 'Local', when it is not `current.route` | `"route": "remote"` / `"local"` |
+| route 'Hosted' / 'Local' / 'Bridge', when it is not `current.route` | `"route": "remote"` / `"local"` / `"bridge"` |
 | scope 'Global' / 'Project' / 'Local', when it is not `current.scope` | `"scope": "user"` / `"project"` / `"local"` |
 | name 'Keep ...' | nothing |
 | name 'Use `x`', or a name typed | `"name": "x"` |
@@ -155,6 +162,7 @@ below, and leave out every answer that keeps what the tool has now - the plan re
 | API key 'Use a key from .mcps-secrets' / 'No key - lower rate limits' or 'Sign in with OAuth', when it is not first | `"token": true` / `"token": false` |
 | host 'A self-managed host' asked next, or the hosted host when it is not first | `"params": {"host": "<that host>"}` |
 | key name, when it is not first | top-level `"keyNames": {<key>: "<NAME>"}` |
+| URL name, when it is not first | top-level `"urlNames": {<key>: {"<VAR>": "<NAME>"}}` |
 | settings, pairs asked next | top-level `"settings": {<key>: {"<NAME>": "<value>"}}` |
 
 A name must match `^[A-Za-z_][A-Za-z0-9_]*$`, and a setting whose name looks like a credential is refused by the plan - a

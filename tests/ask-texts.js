@@ -22,7 +22,8 @@ const callsOf = (x) => (Array.isArray(x) ? x : (x && x.calls) || []).flat();
 const qOf = (x) => (x && x.question ? [x.question] : []);
 
 // -> [{ where, question }] over the four fixtures: the static asks, the picks, configure's groups and removes, every tool's
-// and every target's questions, the roots, the key names, the settings, the servers already set up and those on their own.
+// and every target's questions, the roots, the key names, the settings, a bridge's URL names, the servers already set up
+// and those on their own.
 function walkQuestions()
 {
     const catalog = catalogLib.load();
@@ -42,11 +43,16 @@ function walkQuestions()
         const i = inv(base, { alfredCodeEnabled: alfred, registrations: regs, pluginServers });
         const q = asks.all(i, { rows: catalog.tools.map((r) => r.id), targets: regs.map((r) => `mcp:${r.name}~${r.scope}`) }, catalog, { env: {}, home });
         const items = existing.items(i, CONNECTORS, catalog, { home, exists: () => false });
+        // every bridge route (0.4.0): its tool questions and its URL-name questions
+        const bridged = rows.filter((r) => Object.values(r.routes).some((x) => x.runtime === 'bridge'));
+        const qb = asks.all(i, { rows: bridged.map((r) => r.id), routes: Object.fromEntries(bridged.map((r) => [r.id, Object.keys(r.routes).find((k) => r.routes[k].runtime === 'bridge')])) }, catalog, { env: {}, home });
         const list = [
             ...Object.values(q.static).filter((x) => x.options), ...callsOf(q.pick), ...callsOf(q.change), ...callsOf(q.remove), ...q.roots.questions,
             ...Object.values(q.tools).flatMap((t) => [...(t.first || []), ...(t.questions || []), ...(t.route ? [t.route] : [])]),
             ...Object.values(q.targets).flatMap((t) => [...(t.first || []), ...(t.questions || []), ...(t.route ? [t.route] : [])]),
             ...Object.values(q.keyNames).flatMap(qOf), ...Object.values(q.settings).flatMap(qOf),
+            ...Object.values(qb.tools).flatMap((t) => [...(t.first || []), ...(t.questions || [])]), ...Object.values(qb.keyNames).flatMap(qOf),
+            ...Object.values(qb.urlNames).flatMap((m) => Object.values(m).flatMap(qOf)),
             ...items.flatMap((it) => qOf(existing.ownQuestion(it))),
             // the walk's own question for each registration target (spec F4)
             ...regs.map((r) => asks.ownStep({ key: `mcp:${r.name}~${r.scope}`, name: r.name, scope: r.scope }, `${base.project}${base.os === 'win32' ? '\\' : '/'}.preferred-tools`).question),

@@ -89,12 +89,52 @@ function keyNameQuestion(row, routeId, scope, ctx, { current = null } = {})
     };
 }
 
+// 0.4.0: which names fill a bridge route's URL, one question per catalog URL variable. Options: the recommended name, the
+// catalog's, one other name found, 'A name you choose' (asked next). Recommended: `current[VAR]` (configure), else a name
+// found, else the catalog's. A name found is filled in the hosted chain, holds the row word (SENTRY for sentry), and is
+// not a credential, the key's name, or a name an earlier question recommends. -> [{ var, question, answers }] ([] for
+// another route)
+function urlNameQuestions(row, routeId, scope, ctx, { current = null, keyName = null } = {})
+{
+    const route = row.routes && row.routes[routeId];
+    if (!route || route.runtime !== 'bridge' || !ctx) return [];
+    const ks = keyStateOf(row, routeId, ctx, null, scope);
+    const word = row.id.toUpperCase().replace(/-/g, '_');
+    const key = keyName || route.helper.var;
+    const catalogNames = new Set((route.urlVars || []).map((v) => v.var));
+    const found = [];
+    for (const { file, names } of keys.filledNames(ks ? ks.files : []))
+        for (const name of names)
+            if (name.includes(word) && !keys.credentialName(name) && name !== key && !catalogNames.has(name) && !found.some((n) => n.name === name)) found.push({ name, file });
+    const taken = new Set();
+    return (route.urlVars || []).map((v) =>
+    {
+        const desc = new Map();
+        const free = found.filter((n) => !taken.has(n.name));
+        for (const n of free) desc.set(n.name, `filled in ${n.file}`);
+        const filledHere = ks ? keys.filledNames(ks.files).find((f) => f.names.includes(v.var)) : null;
+        desc.set(v.var, filledHere ? `the catalog's name - filled in ${filledHere.file}` : `the catalog's name - add it to ${ks ? ks.files[0] : '.mcps-secrets'}`);
+        const rec = (current && current[v.var]) || (free[0] ? free[0].name : v.var);
+        if (!desc.has(rec)) desc.set(rec, 'the name it uses now');
+        taken.add(rec);
+        const other = free.map((n) => n.name).find((n) => n !== rec && n !== v.var);
+        const order = [rec, ...[v.var, other].filter((n) => n && n !== rec)].slice(0, 3);
+        const opts = [...order.map((n, i) => ({ label: `${n}${i === 0 ? REC : ''}`, description: desc.get(n), value: n })), { label: 'A name you choose', description: 'a name of yours, asked next - its value goes in .mcps-secrets', value: 'named' }];
+        return {
+            var: v.var,
+            question: { id: `urlname-${row.id}-${v.var}`, header: 'URL name', multiSelect: false, question: `Which name holds ${row.label}'s ${v.label} in .mcps-secrets?`, options: opts.map(({ label, description }) => ({ label, description })) },
+            answers: Object.fromEntries(opts.map((o) => [o.label, o.value])),
+        };
+    });
+}
+
 // D9: a stdio route's settings - 'Keep these settings' listing NAME=value, or 'No settings' for an empty env, then
 // 'Change or add a setting', after which the walk asks for NAME=value pairs. `entry`: the registration as read
 // (configure), else the catalog's env. -> { question, answers: { <label>: 'keep' | 'change' } } | null for a hosted route.
 function settingsQuestion(row, routeId, { entry = null } = {})
 {
-    if (routeId === 'remote' || !row.routes[routeId]) return null;
+    // a hosted route, and a bridge (0.4.0), take no settings
+    if (routeId === 'remote' || !row.routes[routeId] || row.routes[routeId].runtime === 'bridge') return null;
     const pairs = E.settingsOf(row, routeId, entry);
     const keep = pairs.length ? { label: `Keep these settings${REC}`, description: pairs.map(([k, v]) => `${k}=${v}`).join(', ') } : { label: `No settings${REC}`, description: "the server's own defaults" };
     const change = { label: 'Change or add a setting', description: 'NAME=value pairs, asked next - a key goes in .mcps-secrets, never here' };
@@ -123,6 +163,8 @@ function heldKey(entry, route)
 function recommendedScope(row, routeId)
 {
     if (row.kind === 'plugin') return row.recommendedScope;
+    // a bridge holds names only and connects in a child folder too (0.4.0 Ruling 6): this project's own server
+    if (row.routes[routeId] && row.routes[routeId].runtime === 'bridge') return 'project';
     if (routeId !== 'remote') return 'local';
     const route = row.routes[routeId];
     if (!route || !route.helper) return 'project';
@@ -711,6 +753,9 @@ function all(inv, picks, catalog, { env = {}, home = null, connectors = null } =
     // D9, asked after the tool's questions: the key's name for each route that can use one, the settings of each stdio one
     out.keyNames = {};
     out.settings = {};
+    // a bridge's URL names (0.4.0): { <row id or target key>: { <VAR>: { question, answers } } }
+    out.urlNames = {};
+    const urlBlock = (list) => Object.fromEntries(list.map((u) => [u.var, { question: u.question, answers: u.answers }]));
     const live = liveReader(inv.project, env);
     for (const id of (picks && picks.rows) || [])
     {
@@ -721,6 +766,8 @@ function all(inv, picks, catalog, { env = {}, home = null, connectors = null } =
         const scope = scopes[id] || scopeOrder(row, inv, { route: routeId, ctx, copyOf: installedOf(inv, id) })[0];
         const k = keyNameQuestion(row, routeId, scope, ctx);
         if (k) out.keyNames[id] = k;
+        const u = urlNameQuestions(row, routeId, scope, ctx);
+        if (u.length) out.urlNames[id] = urlBlock(u);
         const st = settingsQuestion(row, routeId);
         if (st) out.settings[id] = st;
     }
@@ -747,6 +794,8 @@ function all(inv, picks, catalog, { env = {}, home = null, connectors = null } =
         }
         const k = keyNameQuestion(row, routeId, scope, ctx, { current: name });
         if (k) out.keyNames[key] = k;
+        const u = urlNameQuestions(row, routeId, scope, ctx, { current: same ? current.urlNames : null, keyName: name });
+        if (u.length) out.urlNames[key] = urlBlock(u);
         const st = settingsQuestion(row, routeId, { entry: same ? t.item.entry : null });
         if (st) out.settings[key] = st;
     }
@@ -805,7 +854,8 @@ function next(inv, picks, catalog, opts = {}, built = null)
     {
         const k = tokens[t] === false ? null : b.keyNames[t];
         const st = b.settings[t];
-        add(`${t}:keys`, t, [k && k.question, st && st.question], { ...(k ? { [k.question.id]: k.answers } : {}), ...(st ? { [st.question.id]: st.answers } : {}) });
+        const us = Object.values((b.urlNames || {})[t] || {});
+        add(`${t}:keys`, t, [k && k.question, ...us.map((u) => u.question), st && st.question], { ...(k ? { [k.question.id]: k.answers } : {}), ...Object.fromEntries(us.map((u) => [u.question.id, u.answers])), ...(st ? { [st.question.id]: st.answers } : {}) });
     };
     const located = (t) => (t.first !== null && t.first !== undefined);
     const toolSteps = (t, id, rootStep) =>
@@ -871,4 +921,4 @@ function next(inv, picks, catalog, opts = {}, built = null)
     return steps.find((s) => !done.has(s.id)) || { id: 'done' };
 }
 
-module.exports = { PARENT_HELPER_IN_CHILD, ownStep, next, SCOPE_TEXT, keyNameQuestion, settingsQuestion, liveReader, heldKey, SCOPE_LABEL, scopeOfLabel, needsRoot, rootFamilies, rootQuestion, REC, recommendedScope, keyStateOf, keyToSend, alsoProvided, pickQuestions, changeQuestions, routeQuestion, toolQuestions, toolAsk, scopeQuestion, nameQuestion, locationQuestion, removeQuestions, packed, STATIC, all, chunk, scopesFor };
+module.exports = { PARENT_HELPER_IN_CHILD, ownStep, next, SCOPE_TEXT, keyNameQuestion, urlNameQuestions, settingsQuestion, liveReader, heldKey, SCOPE_LABEL, scopeOfLabel, needsRoot, rootFamilies, rootQuestion, REC, recommendedScope, keyStateOf, keyToSend, alsoProvided, pickQuestions, changeQuestions, routeQuestion, toolQuestions, toolAsk, scopeQuestion, nameQuestion, locationQuestion, removeQuestions, packed, STATIC, all, chunk, scopesFor };

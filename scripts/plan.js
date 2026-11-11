@@ -209,12 +209,27 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     const ks = usesKey ? asks.keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled, scope) : null;
     const sameRoute = Boolean(cur) && cur.route === routeId;
     const liveKey = sameRoute && ks && ks.kind === 'stdio' ? asks.heldKey(ctx.readLive(cur.name, cur.scope) || {}, route) : null;
-    const keyName = pick.keyName || (sameRoute && route.helper ? cur.keyName : null) || (liveKey ? keys.nameOfValue(ks.files, liveKey) : null) || keyVar;
+    // a switch between the hosted route and the bridge keeps the name: both read it from the hosted chain (0.4.0)
+    const keyName = pick.keyName || (route.helper && cur && cur.keyName ? cur.keyName : null) || (liveKey ? keys.nameOfValue(ks.files, liveKey) : null) || keyVar;
     // a stdio optional key whose name is filled nowhere in the chain (spec F2): written with no key argument, never as an
     // empty one - a stdio key is read only when the registration is written. A registration that holds its key keeps it.
     const unfilledStdio = Boolean(ks) && ks.kind === 'stdio' && route.authMode === 'optional-token' && scope !== 'project'
         && !(sameRoute && cur.token) && !keys.filledNames(ks.files).some((f) => f.names.includes(keyName));
     const sendNow = wantToken && !unfilledStdio;
+    // a bridge's URL names (0.4.0): answered, else the registration's (by position), else the catalog's. A name that is
+    // the key's or reads as a credential is refused, typed or read (Ruling 3): a key never goes in a URL.
+    const urlNames = {};
+    if (route.runtime === 'bridge')
+    {
+        const held = (cur && cur.route === routeId && cur.urlNames) || {};
+        for (const v of route.urlVars || [])
+        {
+            const n = (pick.urlNames && pick.urlNames[v.var]) || held[v.var] || v.var;
+            if (!keys.NAME_RULE.test(String(n))) return out.errors.push(`${row.id}: '${n}' is not a name - a name matches ${keys.NAME_RULE.source}`);
+            if (n === keyName || keys.credentialName(n)) return out.errors.push(`${row.id}: ${n} holds a key - a key never goes in a URL; pick another name for the ${v.label}`);
+            urlNames[v.var] = n;
+        }
+    }
     if (unfilledStdio) out.notes.push(`${row.id}: fill ${keyName} in ${ks.files[0]}, then /preferred-tools:configure -> Use a key from .mcps-secrets writes it in`);
     // the server's settings (spec D9): pairs merged into a stdio route's env - never a key, and no machine path in the
     // committed file
@@ -248,7 +263,7 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     let entry;
     let fresh = !cur || cur.route !== routeId;
     if (fresh)
-        entry = E.buildEntry(row, routeId, { rootStr, scope, executablePath: wantExec, token: sendNow, keyName, params, urlNames: pick.urlNames }, ctx, catalog.rules);
+        entry = E.buildEntry(row, routeId, { rootStr, scope, executablePath: wantExec, token: sendNow, keyName, params, urlNames }, ctx, catalog.rules);
     else
     {
         entry = JSON.parse(JSON.stringify(cur.entry));
@@ -261,7 +276,18 @@ function planMcp(row, pick, inv, ctx, catalog, out)
             if (wantExec) args.push('--executable-path', wantExec);
             entry.args = args;
         }
-        if (routeId === 'remote' && route.helper)
+        if (route.runtime === 'bridge')
+        {
+            // from the registration as read (0.4.0): its path follows the scope, its template the URL names and its key
+            // argument the key's name; the scheme, the pin and the cut-off stay
+            const parts = E.bridgeParts(entry);
+            const at = entry.args.findIndex((a) => String(a) === parts.path);
+            const held = cur.urlNames || {};
+            const rename = Object.fromEntries((route.urlVars || []).map((v) => [held[v.var] || v.var, urlNames[v.var]]));
+            const globalRoot = E.helperGlobalRoot(scope, ctx);
+            entry.args = [...entry.args.slice(0, at), E.bridgePathFor(scope, ctx), E.renameTemplate(parts.template, rename), keyName, ...entry.args.slice(at + 3, at + 5), ...(globalRoot ? [globalRoot] : []), ...entry.args.slice(at + 6)];
+        }
+        else if (routeId === 'remote' && route.helper)
         {
             // the helper follows the scope and its root, under the name it passes now; an Authorization header of the
             // 0.1.x kind is fix's to move (key-to-helper, spec D7), never dropped here while a key is wanted
@@ -614,6 +640,8 @@ function plan(inv, answers, opts = {})
     // the key's name and the settings (spec D9, R4): top-level maps keyed by row id (install) or target key (configure)
     const keyNames = answers.keyNames || {};
     const settings = answers.settings || {};
+    // a bridge's URL names (0.4.0): { <row id or target key>: { <VAR>: <NAME> } }
+    const urlNamesOf = answers.urlNames || {};
     const connectors = opts.connectors === undefined ? null : opts.connectors;
     for (const [rowId, pick] of Object.entries(answers.picks || {}))
     {
@@ -621,7 +649,7 @@ function plan(inv, answers, opts = {})
         if (!row) { out.errors.push(`unknown tool '${rowId}'`); continue; }
         if (row.kind === 'mcp')
         {
-            planMcp(row, { ...(pick || {}), keyName: keyNames[rowId], settings: settings[rowId] }, inv, ctx, catalog, out);
+            planMcp(row, { ...(pick || {}), keyName: keyNames[rowId], settings: settings[rowId], urlNames: urlNamesOf[rowId] || (pick || {}).urlNames }, inv, ctx, catalog, out);
             // a claude.ai connector or an enabled plugin's server provides it too (spec F4)
             for (const a of asks.alsoProvided(inv, rowId, connectors)) out.notes.push(existing.twoServers(row.label, a.owner));
         }
@@ -632,7 +660,7 @@ function plan(inv, answers, opts = {})
     for (const [key, pick] of Object.entries(answers.change || {}))
     {
         if (leftNow.has(key)) { out.unchanged.push(`${key}: left on its own`); continue; }
-        planChange(key, { ...(pick || {}), keyName: keyNames[key], settings: settings[key] }, inv, ctx, catalog, out);
+        planChange(key, { ...(pick || {}), keyName: keyNames[key], settings: settings[key], urlNames: urlNamesOf[key] || (pick || {}).urlNames }, inv, ctx, catalog, out);
     }
     for (const r of answers.remove || []) planRemove(r, inv, catalog, out);
     planExisting(answers, inv, ctx, catalog, out, connectors);

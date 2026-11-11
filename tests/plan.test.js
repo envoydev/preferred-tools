@@ -2510,3 +2510,98 @@ test("sentry's local route is still refused at project scope", () => {
     const p = plan(inv(MAC), pickOne('sentry', { route: 'local', scope: 'project' }), opts('/h'));
     assert.match(p.errors.join(), /its local route needs a key written into the registration, so it is not offered at project scope/);
 });
+
+// ---- the bridge in the walk and configure (0.4.0 Task 5) -----------------------------------------------------------
+
+const bridgeArgs = (root, { template = 'https://mcp.sentry.dev/mcp/{SENTRY_ORG}/{SENTRY_PROJECT?}', key = 'SENTRY_ACCESS_TOKEN', pin = '0.16.0' } = {}) =>
+    [path.join(root, 'mcp-bridge.js'), template, key, 'Sentry-Bearer', `mcp-remote@${pin}`];
+const bridgeReg = (b, scope, o = {}) => reg('sentry', scope, { command: 'node', args: bridgeArgs(scope === 'user' ? b.groot : b.proot, o), env: { npm_config_before: '2026-11-11T23:59:59Z' } }, 'sentry', 'bridge');
+const bridgeAnswers = (b, regs, answers) => plan(inv({ ...MAC, project: b.project }, { registrations: regs }), answers, { home: b.home, env: {}, machine: { docker: true } });
+const changedStep = (p) => p.steps.find((s) => s.op === 'mcp-replace' || s.op === 'mcp-move');
+
+test('answers.json urlNames reaches the registration at install and at configure', () => {
+    const b = bridgeWorld();
+    try
+    {
+        const p = bridgeAnswers(b, [], { picks: { sentry: { route: 'bridge', scope: 'project' } }, urlNames: { sentry: { SENTRY_ORG: 'SENTRY_SLUG' } } });
+        assert.deepStrictEqual(p.errors, []);
+        assert.strictEqual(addStep(p).entry.args[1], 'https://mcp.sentry.dev/mcp/{SENTRY_SLUG}/{SENTRY_PROJECT?}');
+        const r = bridgeReg(b, 'project', { template: 'https://mcp.sentry.dev/mcp/{SENTRY_SLUG}/{SENTRY_PROJECT?}' });
+        const c = bridgeAnswers(b, [r], { change: { 'mcp:sentry~project': {} }, urlNames: { 'mcp:sentry~project': { SENTRY_PROJECT: 'MY_SENTRY_PROJ' } } });
+        assert.deepStrictEqual(c.errors, []);
+        assert.strictEqual(changedStep(c).entry.args[1], 'https://mcp.sentry.dev/mcp/{SENTRY_SLUG}/{MY_SENTRY_PROJ?}', 'the org name as the registration had it');
+        // no urlNames answer: nothing to change
+        assert.strictEqual(changedStep(bridgeAnswers(b, [r], { change: { 'mcp:sentry~project': {} } })), undefined);
+    }
+    finally { b.clean(); }
+});
+
+test('configure: renaming the org name rewrites the template only, and keeps a newer pin', () => {
+    const b = bridgeWorld();
+    try
+    {
+        const r = bridgeReg(b, 'project', { pin: '0.16.4' });
+        const c = bridgeAnswers(b, [r], { change: { 'mcp:sentry~project': {} }, urlNames: { 'mcp:sentry~project': { SENTRY_ORG: 'SENTRY_SLUG' } } });
+        assert.deepStrictEqual(c.errors, []);
+        const steps = c.steps.filter((s) => ['mcp-replace', 'mcp-move', 'mcp-add'].includes(s.op));
+        assert.strictEqual(steps.length, 1);
+        const e = steps[0].entry;
+        assert.strictEqual(e.args[1], 'https://mcp.sentry.dev/mcp/{SENTRY_SLUG}/{SENTRY_PROJECT?}');
+        assert.deepStrictEqual([e.args[0], e.args[2], e.args[3], e.args[4]], [r.entry.args[0], r.entry.args[2], r.entry.args[3], 'mcp-remote@0.16.4']);
+        assert.deepStrictEqual(e.env, r.entry.env);
+    }
+    finally { b.clean(); }
+});
+
+test('configure: global to project moves the bridge path, keeps the names and the pin', () => {
+    const b = bridgeWorld();
+    try
+    {
+        const r = bridgeReg(b, 'user', { template: 'https://mcp.sentry.dev/mcp/{SENTRY_SLUG}', key: 'MY_SENTRY_KEY', pin: '0.16.4' });
+        const c = bridgeAnswers(b, [r], { change: { 'mcp:sentry~user': { scope: 'project' } } });
+        assert.deepStrictEqual(c.errors, []);
+        const s = changedStep(c);
+        assert.strictEqual(s.op, 'mcp-move');
+        assert.deepStrictEqual(s.entry.args, [path.join(b.proot, 'mcp-bridge.js'), 'https://mcp.sentry.dev/mcp/{SENTRY_SLUG}', 'MY_SENTRY_KEY', 'Sentry-Bearer', 'mcp-remote@0.16.4']);
+        assert.ok(c.steps.some((x) => x.op === 'write-bridge' && x.path === b.proot), 'the new root gets the bridge');
+    }
+    finally { b.clean(); }
+});
+
+test('configure: bridge to hosted keeps the key name in the helper; hosted to bridge keeps it in args[2]', () => {
+    const b = bridgeWorld();
+    try
+    {
+        const r = bridgeReg(b, 'project', { key: 'MY_SENTRY_KEY' });
+        const hosted = changedStep(bridgeAnswers(b, [r], { change: { 'mcp:sentry~project': { route: 'remote' } } }));
+        assert.strictEqual(hosted.entry.url, catalog.byId.get('sentry').routes.remote.url);
+        assert.match(hosted.entry.headersHelper, / MY_SENTRY_KEY Sentry-Bearer$/);
+        const remote = reg('sentry', 'project', hosted.entry, 'sentry', 'remote');
+        const back = changedStep(bridgeAnswers(b, [remote], { change: { 'mcp:sentry~project': { route: 'bridge' } } }));
+        assert.strictEqual(back.entry.args[2], 'MY_SENTRY_KEY');
+        assert.strictEqual(back.entry.args[1], 'https://mcp.sentry.dev/mcp/{SENTRY_ORG}/{SENTRY_PROJECT?}', "the catalog's URL names");
+    }
+    finally { b.clean(); }
+});
+
+test('a URL name that is the key or a credential name is refused, and nothing is written (Review Focus 1)', () => {
+    const b = bridgeWorld();
+    try
+    {
+        const refused = (answers, regs = []) =>
+        {
+            const p = bridgeAnswers(b, regs, answers);
+            assert.ok(!p.steps.some((s) => ['mcp-add', 'mcp-replace', 'mcp-move'].includes(s.op)), JSON.stringify(p.steps.map((s) => s.op)));
+            return p.errors.join('\n');
+        };
+        const install = (urlNames, extra = {}) => ({ picks: { sentry: { route: 'bridge', scope: 'project' } }, urlNames: { sentry: urlNames }, ...extra });
+        assert.strictEqual(refused(install({ SENTRY_ORG: 'SENTRY_ACCESS_TOKEN' })), 'sentry: SENTRY_ACCESS_TOKEN holds a key - a key never goes in a URL; pick another name for the organization slug');
+        assert.strictEqual(refused(install({ SENTRY_PROJECT: 'MY_API_KEY' })), 'sentry: MY_API_KEY holds a key - a key never goes in a URL; pick another name for the project slug');
+        assert.strictEqual(refused(install({ SENTRY_ORG: 'ORG_NAME' }, { keyNames: { sentry: 'ORG_NAME' } })), 'sentry: ORG_NAME holds a key - a key never goes in a URL; pick another name for the organization slug');
+        assert.match(refused(install({ SENTRY_ORG: 'bad name' })), /^sentry: 'bad name' is not a name - a name matches /);
+        // read from a registration: a template naming a credential is refused at configure too
+        const r = bridgeReg(b, 'project', { template: 'https://mcp.sentry.dev/mcp/{MY_TOKEN}' });
+        assert.strictEqual(refused({ change: { 'mcp:sentry~project': { scope: 'local' } } }, [r]), 'sentry: MY_TOKEN holds a key - a key never goes in a URL; pick another name for the organization slug');
+    }
+    finally { b.clean(); }
+});
