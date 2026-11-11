@@ -289,7 +289,8 @@ with, while the key sat in a file (the user's Windows workspace, 2026-11-10).
   scope. Since 0.3.0 a key is the recommended answer for every hosted route, and Project scope's description says a
   session started in a child folder connects without the key (M1). A stdio keyed route (github's
   Docker, sentry's npm) is written in at local and global scope and not offered at project scope; context7's npm route
-  runs keyless there. `${VAR}` stays for machine paths at project scope only.
+  runs keyless there. Since 0.3.0 (Optional 3) a machine path at project scope is written absolute like every other
+  path: a setting, the browser binary and appium's SDK homes included; a move into project scope keeps them.
 - **D6 - Servers already set up.** Replaced in 0.3.0 (the user's ruling, 2026-11-11, 'Managed by default'): install asks
   nothing about a server already set up - one it recognises is managed - and a claude.ai connector or another plugin's
   server shows in the pick list as `(also connected through claude.ai)` / `(also provided by the <plugin> plugin)`.
@@ -311,7 +312,7 @@ with, while the key sat in a file (the user's Windows workspace, 2026-11-10).
   key's name and a server's settings.
 - **D8 - The walk.** Since 0.3.0 the walk is script-driven and asks one tool's questions at a time: the picks, then
   'Use the recommended settings' or the tool's route, scope and name, its root, location, key and key name, settings
-  and extras, before the next tool's (`plan.js --walk`, its `next` loop). 0.2.0's order was: servers already set up,
+  and extras, before the next tool's (`plan.js --questions`, its `next` field). 0.2.0's order was: servers already set up,
   the picks, per tool the route then the scope, the roots, then the rest; 'Use the recommended settings for all' asked
   the first only. A
   typed value is asked next in one plain line; no text tells the user to type into Other (`tests/lint.js`, with
@@ -322,7 +323,7 @@ with, while the key sat in a file (the user's Windows workspace, 2026-11-10).
   two near-miss names found in the files, or a name asked next; a name filled in the chain is recommended. The server's
   own variable keeps its name; a held key is matched by value against `.mcps-secrets` only, never the 0.1.x files. A
   stdio route's settings: keep them, or `NAME=value` pairs asked next; a name or a value that looks like a credential
-  is refused, and a machine path at project scope too.
+  is refused. A machine path in a setting is allowed at every scope since 0.3.0 (Optional 3).
 
 ## Field fixes - 0.3.0
 
@@ -346,9 +347,17 @@ The spec is `docs/superpowers/specs/2026-11-11-field-fixes-0.3.0-design.md` (mac
   entries; record and order, own servers after the catalog's, version 0.3.0.
 
 What else 0.3.0 does: a hosted keyed install or fix prints how the server connects once its key is filled ('/mcp ->
-<name> -> Reconnect'), and names a key the server refused (the `Issue:` line of `claude mcp get`, measured in
+<name> -> Reconnect'), and an unfilled one names what the key must be (the route's hint: atlassian's `email:api_token`,
+gitlab's fine-grained token); it names a key the server refused (the `Issue:` line of `claude mcp get`, measured in
 `docs/sources.md`); fix gains `project-relative-path`, `mcp-order` and `helper-child-folder`, and `data-folder-ignore`
 covers a 0.2.0 copy in a child folder.
+
+The spec's three Optional items were taken under the auto-run approval of the plan (plan Ruling 1, 2026-11-11): the
+refused-key line (Optional 1), the '(also provided by the <plugin> plugin)' pick-list label (Optional 2), and the end of
+three 'no machine path at project scope' rules (Optional 3) - D9's refusal of a machine path in a setting, the browser
+binary's `${VAR}`-only form, and `appium-sdk-env` leaving the SDK homes to the environment. Their cost: the SDK homes
+and a binary path land in the committed `.mcp.json` too, and 0.2.x's `appium-sdk-env` would propose removing them after
+a rollback. Optional 4 (Playwright's `--isolated`) was not taken.
 
 ## The install command - `commands/install.md`
 

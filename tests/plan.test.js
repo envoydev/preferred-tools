@@ -2605,3 +2605,29 @@ test('a URL name that is the key or a credential name is refused, and nothing is
     }
     finally { b.clean(); }
 });
+
+// ---- 0.3.0 review, Important 1: the key's format reaches the user on the recommended path ---------------------------
+
+test('an unfilled reconnect line names what the key must be: atlassian email:api_token, gitlab a fine-grained token', () => {
+    const { reconnectLine } = require('../scripts/plan.js');
+    const { world } = require('./helpers.js');
+    const w = world();
+    try
+    {
+        const p = plan(inv({ ...MAC, os: process.platform, project: w.project }), { picks: { atlassian: {}, gitlab: {} } }, { home: w.home, env: {} });
+        assert.deepStrictEqual(p.errors, []);
+        const text = render(p);
+        for (const id of ['atlassian', 'gitlab'])
+        {
+            const r = p.reconnect.find((x) => x.row === id);
+            assert.ok(r && !r.filled, id);
+            assert.ok(text.includes(`${r.name}: fill ${r.variable} in ${r.file} (${catalog.byId.get(id).routes.remote.helper.hint}), then Reconnect it in /mcp`), `${id}\n---\n${text}`);
+        }
+        assert.match(text, /the value is email:api_token/);
+        assert.match(text, /a legacy token is refused \(403\)/);
+        // filled, or a route with no hint: as before
+        assert.strictEqual(reconnectLine({ name: 'x', variable: 'V', file: '/f', filled: false, anonymous: false, hint: null }), 'x: fill V in /f, then Reconnect it in /mcp - until then it connects without the key, and /mcp shows needs authentication');
+        assert.strictEqual(reconnectLine({ name: 'x', variable: 'V', file: '/f', filled: true, anonymous: false, hint: 'h' }), 'x: connects with its key at the next session start; in a session already running, /mcp -> x -> Reconnect');
+    }
+    finally { w.clean(); }
+});

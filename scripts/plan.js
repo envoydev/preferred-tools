@@ -802,11 +802,13 @@ function keyLine(k)
 }
 
 // How a hosted keyed server connects once written (spec F3). The line makes no claim about what /mcp's Authenticate does
-// for a server whose helper printed {}: nothing has measured it.
-function reconnectLine({ name, variable, file, filled, anonymous })
+// for a server whose helper printed {}: nothing has measured it. An unfilled one names what the key must be - the
+// route's hint (atlassian's email:api_token, gitlab's fine-grained token) - since the recommended path asks nothing
+// that would show it (0.3.0 review, Important 1).
+function reconnectLine({ name, variable, file, filled, anonymous, hint = null })
 {
     if (filled) return `${name}: connects with its key at the next session start; in a session already running, /mcp -> ${name} -> Reconnect`;
-    return `${name}: fill ${variable} in ${file}, then Reconnect it in /mcp - until then ${anonymous ? 'it runs without the key, at lower rate limits' : 'it connects without the key, and /mcp shows needs authentication'}`;
+    return `${name}: fill ${variable} in ${file}${hint ? ` (${hint})` : ''}, then Reconnect it in /mcp - until then ${anonymous ? 'it runs without the key, at lower rate limits' : 'it connects without the key, and /mcp shows needs authentication'}`;
 }
 
 function render(p)
