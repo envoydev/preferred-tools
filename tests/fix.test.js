@@ -1423,6 +1423,8 @@ test('helper-missing finds both files of a bridge registration and writes both',
         assert.ok(found.some((x) => x.found === 'mcp-bridge.js is missing - sentry (local) does not start'), found.map((x) => x.found).join('\n'));
         const l = logged();
         assert.strictEqual(fix.applyFixes(ctxOf(w), ['helper-missing'], { log: l.log }).failed, null, l.text());
+        // a bridge with a file missing did not start: unlike a hosted helper, it needs a new start (review)
+        assert.match(l.text(), /Restart Claude Code/);
         assert.strictEqual(fsx.readFileSync(helper, 'utf8'), rootsLib.helperSource());
         assert.strictEqual(fsx.readFileSync(bridge, 'utf8'), rootsLib.shippedSource('bridge'));
         assert.strictEqual(fsx.readFileSync(path.join(ptRoot(w), 'package.json'), 'utf8'), '{"type":"commonjs"}\n', 'the root says CommonJS');
@@ -1442,7 +1444,9 @@ test('helper-stale finds helper 3 beside a bridge, and a hand-edited bridge, and
         bridgeAt(ptRoot(w), BV);
         const [lower] = detect(ctxOf(w)).found.filter((x) => x.id === 'helper-stale');
         assert.match(lower.found, new RegExp(`^mcp-headers\\.js is helper 3 - this plugin's is ${HV}`));
-        fix.applyFixes(ctxOf(w), ['helper-stale'], { log: () => {} });
+        const l = logged();
+        fix.applyFixes(ctxOf(w), ['helper-stale'], { log: l.log });
+        assert.match(l.text(), /Restart Claude Code/, 'the bridge exited beside helper 3');
         assert.strictEqual(fsx.readFileSync(path.join(ptRoot(w), 'mcp-headers.js'), 'utf8'), rootsLib.helperSource());
 
         bridgeAt(ptRoot(w), BV, '// mine\n');

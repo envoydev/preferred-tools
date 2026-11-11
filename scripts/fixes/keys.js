@@ -98,7 +98,9 @@ function shippedFiles(ctx, fixId)
     return [...seen.values()];
 }
 
-const helperFinding = (fixId, h, what, extra = {}) => ({ ...C.finding(fixId, h.reg, what, extra), name: h.file, path: h.file, shipped: h.kind });
+// `bridged`: found through a bridge registration, which did not start without the file - so its fix needs a new start,
+// where a hosted server's helper runs at each connect (review)
+const helperFinding = (fixId, h, what, extra = {}) => ({ ...C.finding(fixId, h.reg, what, extra), name: h.file, path: h.file, shipped: h.kind, bridged: Boolean(E.bridgeParts(h.reg.entry)) });
 const nameOf = (h) => roots.FILES[h.kind];
 // the file this finding writes: 'helper' or 'bridge' (a finding from before 0.4.0 carries none: a helper)
 const kindOf = (f) => (f.shipped === 'bridge' ? 'bridge' : 'helper');
@@ -120,7 +122,7 @@ function helperMissingFix(f)
     const kind = kindOf(f);
     fs.mkdirSync(path.dirname(f.path), { recursive: true });
     fs.writeFileSync(f.path, roots.shippedSource(kind));
-    return withCommonjs(path.dirname(f.path), { ok: roots.shippedState(kind, f.path).state === 'same', detail: `wrote ${f.path} (${SHIPPED[kind].word} ${SHIPPED[kind].version})`, restart: false });
+    return withCommonjs(path.dirname(f.path), { ok: roots.shippedState(kind, f.path).state === 'same', detail: `wrote ${f.path} (${SHIPPED[kind].word} ${SHIPPED[kind].version})`, restart: Boolean(f.bridged) });
 }
 
 function helperStaleDetect(ctx)
@@ -145,7 +147,7 @@ function helperStaleFix(f)
     const { word, version } = SHIPPED[kind];
     if (roots.shippedState(kind, f.path).state === 'higher') return { ok: false, detail: `${f.path} is newer than this plugin - left; update preferred-tools`, restart: false };
     fs.writeFileSync(f.path, roots.shippedSource(kind));
-    return withCommonjs(path.dirname(f.path), { ok: roots.shippedState(kind, f.path).state === 'same', detail: `rewrote ${f.path} (${word} ${f.from === undefined ? 'edited' : f.from} -> ${version})`, restart: false });
+    return withCommonjs(path.dirname(f.path), { ok: roots.shippedState(kind, f.path).state === 'same', detail: `rewrote ${f.path} (${word} ${f.from === undefined ? 'edited' : f.from} -> ${version})`, restart: Boolean(f.bridged) });
 }
 
 // ---- root-ignore ----------------------------------------------------------------------------------------------------

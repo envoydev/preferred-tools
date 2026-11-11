@@ -89,7 +89,8 @@ to restart only once it reports, and paste its output when it finishes; a `warn`
 runs are turned off, run it in the foreground with `timeout: 600000`, and again if the limit stops it.
 
 End with the restart line when the script prints one: the repaired registrations load on the next session start. A run
-whose only fixes wrote a `.gitignore` or a key helper prints none, since no session needs it.
+whose only fixes wrote a `.gitignore` or a hosted server's key helper prints none, since that helper runs at each
+connect; one that wrote a bridge (`mcp-bridge.js`) or the helper beside it prints it, since that server did not start.
 
 ## Rules
 
