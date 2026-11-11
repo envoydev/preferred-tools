@@ -1,6 +1,6 @@
 'use strict';
-// Servers already set up (spec D6): a matching registration, a plugin's server and a claude.ai connector, each asked about
-// once - 'on its own' or managed - and the answer recorded in the root's preferred-tools.json.
+// Servers already set up (spec D6, F4): a matching registration, a plugin's server and a claude.ai connector. One the user
+// leaves on its own is recorded in the root's preferred-tools.json; a managed one has no record.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -23,7 +23,6 @@ const invOf = (extra = {}) => ({
 });
 const regOf = (name, scope, entry, rowId, route, extra = {}) => ({ name, scope, entry, rowId, route, own: !rowId, alfredRetired: false, choice: null, ...extra });
 const register = (w, name, entry, scope) => assert.strictEqual(cli.run(['mcp', 'add-json', name, JSON.stringify(entry), '-s', scope], { cwd: w.project, env: w.env }).status, 0);
-const NOTE = ' - connectors this session has not loaded are not seen';
 
 test('connector names match a hosted row by prefix', () => {
     assert.deepStrictEqual(X.HOSTED_ROWS, ['context7', 'github', 'gitlab', 'atlassian', 'sentry']);
@@ -59,7 +58,7 @@ test("a plugin's servers are read from its .mcp.json and its manifest", () => {
     finally { w.clean(); }
 });
 
-test("a matching registration, a plugin's server and a connector are each one question; 'Leave it on its own' recommended", () => {
+test("a matching registration, a plugin's server and a connector are each one item, with its family and fingerprint", () => {
     const i = invOf({
         registrations: [regOf('github', 'user', { ...GH, headers: { Authorization: 'Bearer ${GH}' } }, 'github', 'remote'), regOf('mine', 'local', { command: 'my' }, null, null)],
         pluginServers: [{ plugin: 'docs@m', server: 'c7', entry: C7, rowId: 'context7', route: 'remote', choice: null }, { plugin: 'docs@m', server: 'x', entry: { command: 'x' }, rowId: null, route: null, choice: null }],
@@ -70,39 +69,7 @@ test("a matching registration, a plugin's server and a connector are each one qu
         ['plugin-mcp:docs@m/c7', 'plugin', 'context7', 'project', 'url:mcp.context7.com/mcp', null],
         ['connector:Atlassian', 'connector', 'atlassian', 'global', null, null],
     ]);
-    const q = X.questions(items, []);
-    assert.strictEqual(q.calls.length, 1);
-    const [a, b, c] = q.calls[0];
-    assert.strictEqual(a.question, `github (global) is already set up here. Who looks after it?${NOTE}`);
-    assert.deepStrictEqual(a.options.map((o) => o.label), ['Leave it on its own (Recommended)', 'Let preferred-tools manage it']);
-    assert.strictEqual(b.question, "The docs plugin already provides context7 as 'c7'. Who looks after it?");
-    assert.deepStrictEqual(b.options.map((o) => o.label), ['Leave it with docs (Recommended)', "Add preferred-tools' own registration as well"]);
-    assert.strictEqual(c.question, 'Atlassian is connected through your claude.ai account. Who looks after it?');
-    assert.deepStrictEqual(c.options.map((o) => o.label), ['Leave it with claude.ai (Recommended)', "Add preferred-tools' own registration as well"]);
-    for (const x of q.calls[0]) assert.ok(x.header.length <= 12 && x.multiSelect === false && x.options.every((o) => o.description), JSON.stringify(x));
-    assert.deepStrictEqual(q.answers[a.id], { 'Leave it on its own (Recommended)': { key: 'mcp:github~user', choice: 'own' }, 'Let preferred-tools manage it': { key: 'mcp:github~user', choice: 'manage' } });
-    assert.deepStrictEqual(q.answers[c.id]["Add preferred-tools' own registration as well"], { key: 'connector:Atlassian', choice: 'add' });
-    // five servers: two calls, the note on the first question only
-    const five = X.questions(X.items(invOf(), ['Context7', 'GitHub', 'GitLab', 'Atlassian', 'Sentry'], catalog, ctx), []);
-    assert.deepStrictEqual(five.calls.map((call) => call.length), [4, 1]);
-    assert.deepStrictEqual(five.calls.flat().map((x) => x.question.endsWith(NOTE)), [true, false, false, false, false]);
-    assert.strictEqual(new Set(five.calls.flat().map((x) => x.id)).size, 5);
-});
-
-test("'Let preferred-tools manage it' is recommended when a fix detector finds a repair, and 'Leave it on its own' names it", () => {
-    const i = invOf({ registrations: [regOf('github', 'user', GH, 'github', 'remote'), regOf('c7', 'local', C7, 'context7', 'remote')] });
-    const found = [
-        { id: 'key-to-helper', name: 'github', scope: 'user', found: 'its key is sent from an Authorization header' },
-        { id: 'advice-row', name: 'c7', scope: 'local', found: 'something', blocked: 'advice only - nothing here is applied' },
-        { id: 'other', name: 'github', scope: 'local', found: 'not this one' },
-    ];
-    const q = X.questions(X.items(i, [], catalog, ctx), found);
-    const byKey = (key) => q.calls.flat().find((x) => Object.values(q.answers[x.id])[0].key === key);
-    const gh = byKey('mcp:github~user');
-    assert.deepStrictEqual(gh.options.map((o) => o.label), ['Let preferred-tools manage it (Recommended)', 'Leave it on its own']);
-    assert.strictEqual(gh.options[1].description, 'key-to-helper will not repair it: its key is sent from an Authorization header');
-    assert.deepStrictEqual(q.answers[gh.id]['Let preferred-tools manage it (Recommended)'], { key: 'mcp:github~user', choice: 'manage' });
-    assert.strictEqual(byKey('mcp:c7~local').options[0].label, 'Leave it on its own (Recommended)', 'a blocked finding is no repair');
+    assert.ok(!('questions' in X), 'install asks nothing about servers already set up (spec F4)');
 });
 
 test('a registration whose helper points into a root is not asked about', () => {
@@ -112,21 +79,6 @@ test('a registration whose helper points into a root is not asked about', () => 
     const retired = regOf('chrome-control', 'local', { command: 'npx', args: ['-y', '@playwright/mcp@0.0.83'] }, 'playwright-chrome', 'local', { alfredRetired: true });
     const inherited = regOf('c7', 'inherited', C7, 'context7', 'remote');
     assert.deepStrictEqual(X.items(invOf({ registrations: [helper, data, elsewhere, retired, inherited] }), [], catalog, ctx).map((x) => x.key), ['mcp:serena~user']);
-});
-
-test("a blocked key-to-helper or token-sync finding is a repair waiting on the user: 'manage' recommended, the step named", () => {
-    const i = invOf({ registrations: [regOf('github', 'project', { ...GH, headers: { Authorization: 'Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN}' } }, 'github', 'remote'), regOf('c7', 'local', C7, 'context7', 'remote')] });
-    const found = [
-        { id: 'key-to-helper', name: 'github', scope: 'project', found: 'the Authorization header holds ${GITHUB_PERSONAL_ACCESS_TOKEN}', blocked: "put GITHUB_PERSONAL_ACCESS_TOKEN's value in /work/shop/.preferred-tools/.mcps-secrets, then run /preferred-tools:fix" },
-        { id: 'token-sync', name: 'c7', scope: 'local', found: 'the key differs', blocked: "pick the key's name with /preferred-tools:configure" },
-    ];
-    const q = X.questions(X.items(i, [], catalog, ctx), found);
-    const byKey = (key) => q.calls.flat().find((x) => Object.values(q.answers[x.id])[0].key === key);
-    const gh = byKey('mcp:github~project');
-    assert.deepStrictEqual(gh.options.map((o) => o.label), ['Let preferred-tools manage it (Recommended)', 'Leave it on its own']);
-    assert.strictEqual(gh.options[0].description, "configure, update and fix look after it - key-to-helper can repair it (first: put GITHUB_PERSONAL_ACCESS_TOKEN's value in /work/shop/.preferred-tools/.mcps-secrets, then run /preferred-tools:fix)");
-    assert.strictEqual(gh.options[1].description, 'key-to-helper will not repair it: the Authorization header holds ${GITHUB_PERSONAL_ACCESS_TOKEN}');
-    assert.strictEqual(byKey('mcp:c7~local').options[0].label, 'Let preferred-tools manage it (Recommended)');
 });
 
 test("a helper file of the user's own - no preferred-tools number line, or not this plugin's arguments - is asked about", () => {
@@ -148,7 +100,7 @@ test("a helper file of the user's own - no preferred-tools number line, or not t
     finally { w.clean(); }
 });
 
-test('the record round-trips, and a second run asks nothing about a server already answered, either way', () => {
+test('the record round-trips: a server left on its own is recorded in its family root, a managed one is not', () => {
     const w = world();
     try
     {
@@ -162,24 +114,26 @@ test('the record round-trips, and a second run asks nothing about a server alrea
         const proot = path.join(w.project, '.preferred-tools');
         const groot = path.join(w.home, '.preferred-tools');
         assert.deepStrictEqual(p.steps.map((s) => [s.op, s.file || s.path || s.root]), [
-            ['root-ignore', proot], ['root-ignore', groot],
-            ['record-choice', path.join(proot, 'preferred-tools.json')], ['record-choice', path.join(groot, 'preferred-tools.json')],
-            ['record-root', proot], ['record-root', groot],
+            ['root-ignore', groot], ['record-clean', path.join(groot, 'preferred-tools.json')], ['record-root', groot],
         ]);
         const r = apply(p, { env: w.env, tmp: path.join(w.dir, 'tmp'), log: () => {}, data });
         assert.strictEqual(r.failed, null);
-        assert.deepStrictEqual(readJson(path.join(proot, 'preferred-tools.json')), { version: 1, servers: [{ name: 'c7', scope: 'local', fingerprint: 'url:mcp.context7.com/mcp', choice: 'manage' }] });
+        assert.ok(!fs.existsSync(path.join(proot, 'preferred-tools.json')), 'a managed server has no record');
         assert.deepStrictEqual(readJson(path.join(groot, 'preferred-tools.json')), { version: 1, servers: [{ name: 'github', scope: 'user', fingerprint: 'url:api.githubcopilot.com/mcp', choice: 'own' }, { connector: 'Atlassian', choice: 'own' }] });
         inv = inventory.buildInventory({ project: w.project, env: w.env, data });
-        assert.deepStrictEqual(inv.registrations.map((x) => [x.name, x.choice]), [['c7', 'manage'], ['github', 'own']]);
-        const again = X.items(inv, ['Atlassian'], catalog, { home: w.home });
-        assert.deepStrictEqual(again.map((x) => x.choice), ['manage', 'own', 'own']);
-        assert.deepStrictEqual(X.questions(again, []).calls, [], 'nothing is asked again');
-        // a launch that changed since is asked about again
-        assert.strictEqual(cli.run(['mcp', 'remove', 'c7', '-s', 'local'], { cwd: w.project, env: w.env }).status, 0);
-        register(w, 'c7', { command: 'npx', args: ['-y', '@upstash/context7-mcp'] }, 'local');
+        assert.deepStrictEqual(inv.registrations.map((x) => [x.name, x.choice]), [['c7', null], ['github', 'own']]);
+        // the same plan again: nothing to write
+        const again = plan(inv, {}, { home: w.home, env: w.env, connectors: ['Atlassian'] });
+        assert.deepStrictEqual(again.steps.filter((s) => s.op === 'record-clean'), []);
+        // handing github back removes its entry; the connector's stays
+        const back = plan(inv, { existing: { 'mcp:github~user': 'manage' } }, { home: w.home, env: w.env, connectors: ['Atlassian'] });
+        assert.strictEqual(apply(back, { env: w.env, tmp: path.join(w.dir, 'tmp2'), log: () => {}, data }).failed, null);
+        assert.deepStrictEqual(readJson(path.join(groot, 'preferred-tools.json')).servers, [{ connector: 'Atlassian', choice: 'own' }]);
+        // a launch that changed since is no longer on its own
+        assert.strictEqual(cli.run(['mcp', 'remove', 'github', '-s', 'user'], { cwd: w.project, env: w.env }).status, 0);
+        register(w, 'github', { command: 'docker', args: ['run', '-i', '--rm', 'ghcr.io/github/github-mcp-server'] }, 'user');
         inv = inventory.buildInventory({ project: w.project, env: w.env, data });
-        assert.strictEqual(inv.registrations.find((x) => x.name === 'c7').choice, null);
+        assert.strictEqual(inv.registrations.find((x) => x.name === 'github').choice, null);
     }
     finally { w.clean(); }
 });

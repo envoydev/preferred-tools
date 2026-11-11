@@ -42,14 +42,12 @@ function walkQuestions()
         const i = inv(base, { alfredCodeEnabled: alfred, registrations: regs, pluginServers });
         const q = asks.all(i, { rows: catalog.tools.map((r) => r.id), targets: regs.map((r) => `mcp:${r.name}~${r.scope}`) }, catalog, { env: {}, home });
         const items = existing.items(i, CONNECTORS, catalog, { home, exists: () => false });
-        // one finding on the first registration, so both orders of its question are seen
-        const found = regs.length ? [{ id: 'token-sync', name: regs[0].name, scope: regs[0].scope, found: 'the registration holds ${VAR} while a key file has the key' }] : [];
         const list = [
             ...Object.values(q.static).filter((x) => x.options), ...callsOf(q.pick), ...callsOf(q.change), ...callsOf(q.remove), ...q.roots.questions,
             ...Object.values(q.tools).flatMap((t) => [...(t.first || []), ...(t.questions || []), ...(t.route ? [t.route] : [])]),
             ...Object.values(q.targets).flatMap((t) => [...(t.first || []), ...(t.questions || []), ...(t.route ? [t.route] : [])]),
             ...Object.values(q.keyNames).flatMap(qOf), ...Object.values(q.settings).flatMap(qOf),
-            ...callsOf(existing.questions(items, found)), ...items.flatMap((it) => qOf(existing.ownQuestion(it))),
+            ...items.flatMap((it) => qOf(existing.ownQuestion(it))),
         ];
         for (const question of list) out.push({ where, question });
     }

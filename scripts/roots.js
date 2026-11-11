@@ -337,6 +337,12 @@ function mergeRecord(record, entries, live)
     return { version: RECORD_VERSION, servers: kept };
 }
 
+// The scope family whose root holds an entry's record (spec F4): a user registration and a connector the global root's, a
+// project or local registration and a plugin's server the project root's.
+const recordFamily = (e) => (typeof e.connector === 'string' || e.scope === 'user' ? 'global' : 'project');
+// The entries a record keeps (spec F4): the servers left on their own.
+const ownOnly = (servers) => (servers || []).filter((e) => e && typeof e === 'object' && e.choice === 'own');
+
 // ---- git and the helper on disk -------------------------------------------------------------------------------------
 
 const isDir = (p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } };
@@ -395,6 +401,6 @@ function helperState(file, exists = (p) => fs.existsSync(p))
 }
 
 module.exports = {
-    FILES, GITIGNORE, familyOf, readMap, mapKey, withRoot, inUse, options, resolveNamed, resolve, rootStrFor, recordFiles, readRecord,
-    helperPathOf, registrationRoots, standard, pointsIntoRoot, absOf, recordKey, mergeRecord, gitIgnores, ignoreGap, helperState, helperSource,
+    FILES, GITIGNORE, RECORD_VERSION, familyOf, readMap, mapKey, withRoot, inUse, options, resolveNamed, resolve, rootStrFor, recordFiles, readRecord,
+    helperPathOf, registrationRoots, standard, pointsIntoRoot, absOf, recordKey, mergeRecord, recordFamily, ownOnly, gitIgnores, ignoreGap, helperState, helperSource,
 };

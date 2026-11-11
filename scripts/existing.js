@@ -1,9 +1,8 @@
 'use strict';
-// SERVERS ALREADY SET UP (spec D6) - a registration that matches a catalog row, an MCP server an enabled plugin provides,
-// and a claude.ai connector this session has loaded. Each is asked about once: a registration is left on its own or
-// managed; a plugin's server or a connector is left with it, or preferred-tools' own registration is added beside it.
-// The answer is recorded in the root's preferred-tools.json by the apply's record-choice step. Nothing here writes, and
-// no server is started to find one.
+// SERVERS ALREADY SET UP (spec D6, F4) - a registration that matches a catalog row, an MCP server an enabled plugin
+// provides, and a claude.ai connector this session has loaded. A matching registration is managed by configure, update
+// and fix with no record; one the user leaves on its own in configure is saved in the root's preferred-tools.json by the
+// apply's record-clean step, the only entries that file holds. Nothing here writes, and no server is started to find one.
 const fs = require('node:fs');
 const path = require('node:path');
 const account = require('./account.js');
@@ -17,9 +16,6 @@ const { matchesFingerprint } = require('./inventory.js');
 const HOSTED_ROWS = ['context7', 'github', 'gitlab', 'atlassian', 'sentry'];
 const CHOICES = { mcp: ['own', 'manage'], plugin: ['own', 'add'], connector: ['own', 'add'] };
 const REC = ' (Recommended)';
-const HEADER = 'Already here';
-// R11: an AskUserQuestion header holds 12 characters, so what is not checked ends the first question's text
-const NOT_SEEN = ' - connectors this session has not loaded are not seen';
 
 // `--connectors <Name>,<Name>`: the names, trimmed, each once.
 const parseConnectors = (arg) => [...new Set(String(arg == null ? '' : arg).split(',').map((s) => s.trim()).filter(Boolean))];
@@ -131,50 +127,6 @@ function itemOf(inv, key, catalog)
 const ownerOf = (item) => (item.kind === 'plugin' ? item.plugin.split('@')[0] : 'claude.ai');
 const scopeWord = (scope) => (scope === 'user' ? 'global' : scope);
 
-// The key rows whose blocked finding is still a repair: it waits only on the user filling a key or picking its name, the
-// 0.1.x upgrade case D6's O5 was written for.
-const WAITING = new Set(['key-to-helper', 'token-sync']);
-
-// One question per item not answered yet, at most four a call, the recommended option first. A registration that a fix
-// detector would repair (`findings`: fix.detectAll's found, run read-only) recommends 'Let preferred-tools manage it', and
-// 'Leave it on its own' names what would not be repaired. -> { calls, answers: { <id>: { <label>: { key, choice } } } }
-function questions(list, findings = [])
-{
-    const qs = [];
-    const answers = {};
-    list.filter((x) => !x.choice).forEach((x, n) =>
-    {
-        let question;
-        let opts;
-        if (x.kind === 'mcp')
-        {
-            const repairs = findings.filter((f) => (!f.blocked || WAITING.has(f.id)) && f.name === x.name && f.scope === x.scope);
-            const ready = [...new Set(repairs.filter((f) => !f.blocked).map((f) => f.id))];
-            const can = [...(ready.length ? [`${ready.join(', ')} can repair it`] : []), ...repairs.filter((f) => f.blocked && !ready.includes(f.id)).map((f) => `${f.id} can repair it (first: ${f.blocked})`)];
-            const own = { label: 'Leave it on its own', choice: 'own', description: repairs.length ? repairs.map((f) => `${f.id} will not repair it: ${f.found}`).join('; ') : `nothing in this plugin changes it again, and install stops offering ${x.label} here` };
-            const manage = { label: 'Let preferred-tools manage it', choice: 'manage', description: repairs.length ? `configure, update and fix look after it - ${can.join('; ')}` : 'configure, update and fix look after it, as for a server this plugin added' };
-            opts = repairs.length ? [manage, own] : [own, manage];
-            question = `${x.name} (${scopeWord(x.scope)}) is already set up here. Who looks after it?`;
-        }
-        else
-        {
-            const owner = ownerOf(x);
-            question = x.kind === 'plugin' ? `The ${owner} plugin already provides ${x.label} as '${x.server}'. Who looks after it?` : `${x.connector} is connected through your claude.ai account. Who looks after it?`;
-            opts = [
-                { label: `Leave it with ${owner}`, choice: 'own', description: `install does not offer ${x.label} here` },
-                { label: "Add preferred-tools' own registration as well", choice: 'add', description: `${x.label} is offered as today - two servers of ${x.label} then run` },
-            ];
-        }
-        const id = `existing-${n}`;
-        const labeled = opts.map((o, i) => ({ ...o, label: `${o.label}${i === 0 ? REC : ''}` }));
-        qs.push({ id, header: HEADER, multiSelect: false, question: `${question}${n === 0 ? NOT_SEEN : ''}`, options: labeled.map(({ label, description }) => ({ label, description })) });
-        answers[id] = Object.fromEntries(labeled.map((o) => [o.label, { key: x.key, choice: o.choice }]));
-    });
-    const calls = [];
-    for (let i = 0; i < qs.length; i += 4) calls.push(qs.slice(i, i + 4));
-    return { calls, answers };
-}
-
 // The record's entry for an answer (D6): names, scopes, fingerprints and choices only.
 function recordEntry(item, choice)
 {
@@ -183,7 +135,7 @@ function recordEntry(item, choice)
     return { connector: item.connector, choice };
 }
 
-// What is here now, for the record-choice step to drop what is gone (roots.mergeRecord). `connectors`: the list this run
+// What is here now, for the record-clean step to drop what is gone (roots.mergeRecord). `connectors`: the list this run
 // passed, or null - a run without one keeps every connector entry (R14).
 function liveOf(inv, catalog, connectors = null)
 {
@@ -227,7 +179,7 @@ function ownItems(inv, catalog)
 }
 
 // configure's question for one of them: keep it so, or hand it over - a registration to preferred-tools, a plugin's
-// server or a connector to install's offer beside it. The answer is a record-choice step only.
+// server or a connector to install's offer beside it. The answer is a record-clean step only.
 function ownQuestion(item)
 {
     const reg = item.kind === 'mcp';
@@ -245,6 +197,6 @@ function ownQuestion(item)
 const twoServers = (label, owner) => `two servers of ${label} then run - ${owner}'s and this one`;
 
 module.exports = {
-    HOSTED_ROWS, CHOICES, parseConnectors, matchConnector, pluginServers, fingerprintOf, items, itemOf, questions, recordEntry,
+    HOSTED_ROWS, CHOICES, parseConnectors, matchConnector, pluginServers, fingerprintOf, items, itemOf, recordEntry,
     liveOf, offerRule, ownerOf, twoServers, ownItems, ownQuestion,
 };

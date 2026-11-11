@@ -919,34 +919,83 @@ test('record-root: the entry written, a second project beside it, the key normal
     finally { w.clean(); }
 });
 
-test('record-choice merges by key and drops an entry whose server is gone; a malformed record is replaced only by the merge of its readable entries', () => {
+test('record-clean writes the own entries live still has, in order; a key in keep and in entries takes the entries one', () => {
     const w = world();
     try
     {
         const roots = require('../scripts/roots.js');
         const file = path.join(w.project, '.preferred-tools', 'preferred-tools.json');
-        fs.mkdirSync(path.dirname(file), { recursive: true });
         const a = { name: 'a', scope: 'local', fingerprint: { pkg: 'x' }, choice: 'own' };
         const gone = { name: 'gone', scope: 'local', fingerprint: { pkg: 'y' }, choice: 'own' };
         const moved = { name: 'moved', scope: 'local', fingerprint: { pkg: 'old' }, choice: 'own' };
         const plug = { plugin: 'p@m', server: 's', fingerprint: { host: 'h' }, choice: 'add' };
         const conn = { connector: 'Notion', choice: 'own' };
-        writeJson(file, { version: 1, servers: [a, gone, moved, 'junk', plug, conn] });
         const b = { name: 'b', scope: 'user', fingerprint: { pkg: 'z' }, choice: 'manage' };
-        const a2 = { ...a, choice: 'manage' };
         const live = { servers: { 'mcp:a~local': { pkg: 'x' }, 'mcp:b~user': { pkg: 'z' }, 'mcp:moved~local': { pkg: 'new' }, 'plugin-mcp:p@m/s': { host: 'h' } }, connectors: null };
-        let r = runSteps(w, [{ op: 'record-choice', file, entries: [b, a2], live }]);
+        let r = runSteps(w, [{ op: 'record-clean', file, entries: [a, gone, moved, 'junk', plug, conn, b], keep: [], live }]);
         assert.strictEqual(r.report.failed, null, r.text);
-        assert.deepStrictEqual(readJson(file), { version: 1, servers: [a2, plug, conn, b] }, 'a replaced in place; gone, moved and junk dropped; the connector kept with no list');
+        assert.deepStrictEqual(readJson(file), { version: 1, servers: [a, conn] }, 'gone, moved, junk, add and manage dropped; the connector kept with no list');
         // a run that passed the connectors drops one it lacks (R14)
-        runSteps(w, [{ op: 'record-choice', file, entries: [], live: { ...live, connectors: ['Linear'] } }]);
-        assert.deepStrictEqual(readJson(file).servers.map(roots.recordKey), ['mcp:a~local', 'plugin-mcp:p@m/s', 'mcp:b~user']);
-        // a record that is not JSON: replaced by the merge alone
-        fs.writeFileSync(file, '{oops');
-        r = runSteps(w, [{ op: 'record-choice', file, entries: [b], live }]);
-        assert.deepStrictEqual(readJson(file), { version: 1, servers: [b] });
-        assert.match(r.text, /is not JSON - read as empty/);
+        runSteps(w, [{ op: 'record-clean', file, entries: [a, conn], keep: [], live: { ...live, connectors: ['Linear'] } }]);
+        assert.deepStrictEqual(readJson(file).servers.map(roots.recordKey), ['mcp:a~local']);
+        // keep is written as it is, before the entries; a key in both takes the entries one
+        const x = { name: 'x', scope: 'project', fingerprint: { pkg: 'q' }, choice: 'own' };
+        runSteps(w, [{ op: 'record-clean', file, entries: [a], keep: [x, { ...a, fingerprint: { pkg: 'stale' } }], live }]);
+        assert.deepStrictEqual(readJson(file).servers, [x, a]);
         assert.deepStrictEqual([roots.recordKey(a), roots.recordKey(plug), roots.recordKey(conn), roots.recordKey({ x: 1 })], ['mcp:a~local', 'plugin-mcp:p@m/s', 'connector:Notion', null]);
+    }
+    finally { w.clean(); }
+});
+
+test('record-clean writes own entries only, deletes an empty record, and never touches a file that is not this plugin\'s record', () => {
+    const w = world();
+    try
+    {
+        const file = path.join(w.project, '.preferred-tools', 'preferred-tools.json');
+        const manage = { name: 'm', scope: 'local', fingerprint: 'pkg:m', choice: 'manage' };
+        const add = { plugin: 'p@m', server: 's', fingerprint: 'url:h', choice: 'add' };
+        const own = { name: 'o', scope: 'local', fingerprint: 'pkg:o', choice: 'own' };
+        const live = { servers: { 'mcp:m~local': 'pkg:m', 'plugin-mcp:p@m/s': 'url:h', 'mcp:o~local': 'pkg:o' }, connectors: null };
+        writeJson(file, { version: 1, servers: [manage, add] });
+        let r = runSteps(w, [{ op: 'record-clean', file, entries: [], keep: [], live }]);
+        assert.strictEqual(r.report.failed, null, r.text);
+        assert.ok(!fs.existsSync(file), 'a record left with nothing is deleted');
+        assert.ok(r.text.includes(`removed ${file} - no server is left on its own`), r.text);
+        // not there: nothing to write
+        r = runSteps(w, [{ op: 'record-clean', file, entries: [], keep: [], live }]);
+        assert.strictEqual(r.report.failed, null, r.text);
+        assert.ok(!fs.existsSync(file));
+        // another tool's JSON under this name: byte-identical afterwards
+        fs.writeFileSync(file, '{"foo":1}');
+        r = runSteps(w, [{ op: 'record-clean', file, entries: [], keep: [], live }]);
+        assert.strictEqual(r.report.failed, null, r.text);
+        assert.strictEqual(fs.readFileSync(file, 'utf8'), '{"foo":1}');
+        // a newer record: left as it is
+        const newer = '{ "version": 2, "servers": [] }\n';
+        fs.writeFileSync(file, newer);
+        r = runSteps(w, [{ op: 'record-clean', file, entries: [own], keep: [], live }]);
+        assert.strictEqual(fs.readFileSync(file, 'utf8'), newer);
+        assert.match(r.text, /is version 2, newer than this plugin's 1 - left as it is; update preferred-tools/);
+        // an own entry: the file holds exactly it (Review Focus 5)
+        fs.rmSync(file);
+        r = runSteps(w, [{ op: 'record-clean', file, entries: [own, manage], keep: [], live }]);
+        assert.strictEqual(r.report.failed, null, r.text);
+        assert.deepStrictEqual(readJson(file), { version: 1, servers: [own] });
+    }
+    finally { w.clean(); }
+});
+
+test("record-clean keeps another project's own entry that live does not list (Ruling 10)", () => {
+    const w = world();
+    try
+    {
+        const file = path.join(w.home, '.preferred-tools', 'preferred-tools.json');
+        const x = { name: 'x', scope: 'project', fingerprint: 'pkg:x', choice: 'own' };
+        const y = { name: 'y', scope: 'user', fingerprint: 'pkg:y', choice: 'manage' };
+        writeJson(file, { version: 1, servers: [x, y] });
+        const r = runSteps(w, [{ op: 'record-clean', file, entries: [], keep: [x], live: { servers: {}, connectors: null } }]);
+        assert.strictEqual(r.report.failed, null, r.text);
+        assert.deepStrictEqual(readJson(file), { version: 1, servers: [x] });
     }
     finally { w.clean(); }
 });
@@ -968,32 +1017,32 @@ test('ensure-key-name: a UTF-16 key file is left as it is and the apply goes on'
     finally { w.clean(); }
 });
 
-test('record-choice and record-root: a newer version is left as it is, an unreadable file is kept as .bak before the merge replaces it, and an unchanged merge writes nothing', () => {
+test('record-clean and record-root: a newer version is left as it is, an unreadable file is kept as .bak before the write replaces it, and an unchanged record writes nothing', () => {
     const w = world();
     try
     {
         const file = path.join(w.project, '.preferred-tools', 'preferred-tools.json');
         fs.mkdirSync(path.dirname(file), { recursive: true });
-        const b = { name: 'b', scope: 'user', fingerprint: { pkg: 'z' }, choice: 'manage' };
+        const b = { name: 'b', scope: 'user', fingerprint: { pkg: 'z' }, choice: 'own' };
         const live = { servers: { 'mcp:b~user': { pkg: 'z' } }, connectors: null };
         // a newer record: never replaced
         const newer = '{ "version": 2, "servers": [], "more": true }\n';
         fs.writeFileSync(file, newer);
-        let r = runSteps(w, [{ op: 'record-choice', file, entries: [b], live }]);
+        let r = runSteps(w, [{ op: 'record-clean', file, entries: [b], keep: [], live }]);
         assert.strictEqual(r.report.failed, null, r.text);
         assert.strictEqual(fs.readFileSync(file, 'utf8'), newer);
         assert.match(r.text, /is version 2, newer than this plugin's 1 - left as it is; update preferred-tools/);
         // not JSON: the old bytes kept beside it, then the merge written
         fs.writeFileSync(file, '{oops');
-        r = runSteps(w, [{ op: 'record-choice', file, entries: [b], live }]);
+        r = runSteps(w, [{ op: 'record-clean', file, entries: [b], keep: [], live }]);
         assert.strictEqual(fs.readFileSync(`${file}.bak`, 'utf8'), '{oops');
         assert.deepStrictEqual(readJson(file), { version: 1, servers: [b] });
         assert.match(r.text, /the old file kept as .*preferred-tools\.json\.bak/);
         // the same answers again: nothing written
         const before = fs.statSync(file).mtimeMs;
         fs.utimesSync(file, new Date(0), new Date(0));
-        r = runSteps(w, [{ op: 'record-choice', file, entries: [b], live }]);
-        assert.match(r.text, /already holds these answers - left as it is/);
+        r = runSteps(w, [{ op: 'record-clean', file, entries: [b], keep: [], live }]);
+        assert.match(r.text, /already holds these servers - left as it is/);
         assert.strictEqual(fs.statSync(file).mtimeMs, 0, `not rewritten (was ${before})`);
         assert.deepStrictEqual(fs.readdirSync(path.dirname(file)).filter((f) => f.endsWith('.tmp')), [], 'no temporary file left');
 

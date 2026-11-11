@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const catalogLib = require('../scripts/catalog.js');
-const { plan, render, argvOf } = require('../scripts/plan.js');
+const { plan, render, argvOf, makeCtx, fileSteps } = require('../scripts/plan.js');
 const asks = require('../scripts/asks.js');
 const inventoryLib = require('../scripts/inventory.js');
 const { MARKER } = require('../scripts/kept.js');
@@ -33,7 +33,7 @@ const inv = (base, extra = {}) => ({ version: 1, ...base, cli: { ok: true }, unr
 const opts = (home, extra = {}) => ({ home, env: {}, exists: () => false, machine: { docker: true }, ...extra });
 const pickOne = (id, pick = {}) => ({ picks: { [id]: pick } });
 // the steps that change a registration, without the root's file steps and the records (spec D8)
-const FILE_OPS = ['root-ignore', 'write-helper', 'ensure-key-name', 'record-choice', 'record-root'];
+const FILE_OPS = ['root-ignore', 'write-helper', 'ensure-key-name', 'record-clean', 'record-root'];
 const regSteps = (p) => p.steps.filter((s) => !FILE_OPS.includes(s.op));
 const addStep = (p, i = 0) => p.steps.filter((s) => s.op === 'mcp-add')[i];
 const reg = (name, scope, entry, rowId = null, route = null, flags = {}) => ({ name, scope, entry, rowId, route, own: !rowId, alfredRetired: false, ...flags });
@@ -1818,17 +1818,18 @@ test("a tool answered 'own' is not offered; 'add' is offered with the two-server
     assert.match(opt('context7').description, /two servers of context7 then run - docs's and this one/);
     assert.match(opt('atlassian').description, /two servers of atlassian then run - claude\.ai's and this one/);
     assert.doesNotMatch(opt('sentry').description, /two servers/);
-    // the plan says it too, and records the answer
-    const p = plan(i, { picks: { context7: { route: 'remote', scope: 'project' } }, existing: { 'plugin-mcp:docs@m/c7': 'add' } }, opts('/Users/me'));
+    // the plan says it too, and records nothing: only a server left on its own is recorded
+    const enabled = inv(MAC, { registrations: [sentry], pluginServers: [c7], plugins: [{ id: 'docs@m', plugin: 'docs', scope: 'user', enabled: true, enabledHere: true }], records: { project: null, global: null } });
+    const p = plan(enabled, { picks: { context7: { route: 'remote', scope: 'project' } }, existing: { 'plugin-mcp:docs@m/c7': 'add' } }, opts('/Users/me'));
     assert.deepStrictEqual(p.errors, []);
-    assert.ok(p.notes.includes("context7: two servers of context7 then run - docs's and this one"), p.notes.join('\n'));
-    assert.deepStrictEqual(p.steps.filter((s) => s.op === 'record-choice').map((s) => [s.file, s.entries]), [['/work/shop/.preferred-tools/preferred-tools.json', [{ plugin: 'docs@m', server: 'c7', fingerprint: 'url:mcp.context7.com/mcp', choice: 'add' }]]]);
+    assert.ok(p.notes.includes("two servers of context7 then run - docs's and this one"), p.notes.join('\n'));
+    assert.deepStrictEqual(p.steps.filter((s) => s.op === 'record-clean'), []);
     // an answer the server cannot take, or a server not here: refused
     assert.match(plan(i, { existing: { 'mcp:sentry~user': 'add' } }, opts('/Users/me')).errors.join(), /'add' is not an answer for mcp:sentry~user - own or manage/);
     assert.match(plan(i, { existing: { 'mcp:gone~user': 'own' } }, opts('/Users/me')).errors.join(), /'mcp:gone~user' is not a server found here/);
 });
 
-test('the existing block, and the detector run, come only with --connectors', () => {
+test('plan.js --questions with --connectors prints no existing block, reads no live inventory, and tags the pick list', () => {
     const fs = require('node:fs');
     const { spawnSync } = require('node:child_process');
     const { world } = require('./helpers.js');
@@ -1842,24 +1843,25 @@ test('the existing block, and the detector run, come only with --connectors', ()
         fs.writeFileSync(invFile, JSON.stringify(inventoryLib.keptOf(inventoryLib.buildInventory({ project: w.project, env: w.env }))));
         const run = (...extra) => spawnSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'plan.js'), '--questions', invFile, ...extra], { encoding: 'utf8', env: w.env, cwd: w.project });
         const before = w.calls().length;
-        const without = run();
-        assert.strictEqual(without.status, 0, without.stderr);
-        assert.ok(!('existing' in JSON.parse(without.stdout)));
+        for (const out of [run(), run('--connectors', ''), run('--connectors', 'GitLab')])
+        {
+            assert.strictEqual(out.status, 0, out.stderr);
+            assert.ok(!('existing' in JSON.parse(out.stdout)));
+        }
         assert.strictEqual(w.calls().length, before, 'no inventory read, no detector run');
-        const withC = run('--connectors', '');
-        assert.strictEqual(withC.status, 0, withC.stderr);
-        const q = JSON.parse(withC.stdout).existing;
-        assert.deepStrictEqual(q.calls.flat().map((x) => x.question), ['github (global) is already set up here. Who looks after it? - connectors this session has not loaded are not seen']);
-        assert.ok(w.calls().length > before, 'the live inventory the detectors read');
+        const labels = (out) => JSON.parse(out.stdout).pick.flat().flatMap((x) => x.options.map((o) => o.label));
+        assert.ok(labels(run('--connectors', 'GitLab')).includes('gitlab (also connected through claude.ai)'));
+        assert.ok(labels(run()).includes('gitlab'));
     }
     finally { w.clean(); }
 });
 
-test("configure: the 'On their own' group, and 'Let preferred-tools manage it' plans only a record-choice step", () => {
+test("configure: the 'On their own' group, and 'Let preferred-tools manage it' plans only a record-clean step", () => {
     const asks = require('../scripts/asks.js');
     const gh = reg('github', 'user', { type: 'http', url: 'https://api.githubcopilot.com/mcp/' }, 'github', 'remote', { choice: 'own' });
     const c7 = reg('context7', 'local', { type: 'http', url: 'https://mcp.context7.com/mcp' }, 'context7', 'remote', { choice: null });
-    const i = inv(MAC, { registrations: [gh, c7], pluginServers: [], records: { project: null, global: null } });
+    const ghOwn = { name: 'github', scope: 'user', fingerprint: 'url:api.githubcopilot.com/mcp', choice: 'own' };
+    const i = inv(MAC, { registrations: [gh, c7], pluginServers: [], records: { project: null, global: { file: '/Users/me/.preferred-tools/preferred-tools.json', servers: [ghOwn] } } });
     const ch = asks.changeQuestions(i, catalog);
     assert.strictEqual(ch.keys['github (github, user) - on its own'], 'mcp:github~user');
     assert.strictEqual(ch.keys['context7 (context7, local)'], 'mcp:context7~local');
@@ -1874,11 +1876,96 @@ test("configure: the 'On their own' group, and 'Let preferred-tools manage it' p
     assert.ok(!t.questions && !t.route, 'no route, scope or name to change');
     const all = asks.all(i, { targets: ['mcp:github~user'] }, catalog);
     assert.ok(!('mcp:github~user' in all.keyNames) && !('mcp:github~user' in all.settings));
-    // the answer is a record-choice step only
+    // the answer is a record-clean step only: the entry goes, and the record with it
     const p = plan(i, { existing: { 'mcp:github~user': 'manage' } }, opts('/Users/me'));
     assert.deepStrictEqual(p.errors, []);
     assert.deepStrictEqual(regSteps(p), []);
-    assert.deepStrictEqual(p.steps.filter((s) => s.op === 'record-choice').map((s) => s.entries), [[{ name: 'github', scope: 'user', fingerprint: 'url:api.githubcopilot.com/mcp', choice: 'manage' }]]);
+    assert.deepStrictEqual(p.steps.filter((s) => s.op === 'record-clean').map((s) => [s.file, s.entries, s.keep]), [['/Users/me/.preferred-tools/preferred-tools.json', [], []]]);
+    assert.ok(render(p).includes('removes /Users/me/.preferred-tools/preferred-tools.json  (no server is left on its own)'), render(p));
+});
+
+// ---- 0.3.0: the record holds the servers left on their own only (spec F4) --------------------------------------------
+const PFILE = '/work/shop/.preferred-tools/preferred-tools.json';
+const GFILE = '/Users/me/.preferred-tools/preferred-tools.json';
+const GH_URL = { type: 'http', url: 'https://api.githubcopilot.com/mcp/' };
+const cleans = (p) => p.steps.filter((s) => s.op === 'record-clean').map((s) => [s.file, s.entries, s.keep]);
+
+test("install plans no record when nothing is left on its own; a 0.2.0 record's manage and add entries are dropped and the file deleted", () => {
+    const fresh = plan(inv(MAC), pickOne('playwright-chrome'), opts('/Users/me'));
+    assert.deepStrictEqual(fresh.errors, []);
+    assert.deepStrictEqual(cleans(fresh), []);
+    const manage = { name: 'gh', scope: 'local', fingerprint: 'url:api.githubcopilot.com/mcp', choice: 'manage' };
+    const add = { plugin: 'docs@m', server: 'c7', fingerprint: 'url:mcp.context7.com/mcp', choice: 'add' };
+    const i = inv(MAC, { registrations: [reg('gh', 'local', GH_URL, 'github', 'remote')], records: { project: { file: PFILE, servers: [manage, add] }, global: null } });
+    const p = plan(i, pickOne('playwright-chrome'), opts('/Users/me'));
+    assert.deepStrictEqual(p.errors, []);
+    assert.deepStrictEqual(cleans(p), [[PFILE, [], []]]);
+    const step = p.steps.find((s) => s.op === 'record-clean');
+    assert.strictEqual(step.why, `${PFILE}: the servers you left on their own; configure, update and fix skip them. Remove an entry, or the file, to hand them back.`);
+    assert.ok(render(p).includes(`removes ${PFILE}  (no server is left on its own)`), render(p));
+    // fix's own call to fileSteps has no record part
+    const ctx = { ...makeCtx(inv(MAC), opts('/Users/me')), uses: [], roots: { project: '/work/shop/.preferred-tools', global: null } };
+    assert.deepStrictEqual(fileSteps(i, ctx, { notes: [] }).after.filter((s) => s.op === 'record-clean'), []);
+});
+
+test("a global-family own entry in this project's record moves to the global root's record", () => {
+    const g = { name: 'g', scope: 'user', fingerprint: 'url:api.githubcopilot.com/mcp', choice: 'own' };
+    const i = inv(MAC, { registrations: [reg('g', 'user', GH_URL, 'github', 'remote', { choice: 'own' })], records: { project: { file: PFILE, servers: [g] }, global: null } });
+    const p = plan(i, {}, opts('/Users/me'));
+    assert.deepStrictEqual(p.errors, []);
+    assert.deepStrictEqual(cleans(p), [[PFILE, [], []], [GFILE, [g], []]]);
+    // the global root is not there yet: its .gitignore and its roots-map entry come with it
+    assert.ok(p.steps.some((s) => s.op === 'root-ignore' && s.path === '/Users/me/.preferred-tools'), p.steps.map((s) => s.op).join());
+    assert.ok(p.steps.some((s) => s.op === 'record-root' && s.family === 'global' && s.root === '/Users/me/.preferred-tools'));
+    assert.ok(render(p).includes(`writes ${GFILE}  (the servers left on their own)`), render(p));
+    // a root change: the old root's record is emptied, the new one holds the entry
+    const c = { name: 'c7', scope: 'local', fingerprint: 'url:mcp.context7.com/mcp', choice: 'own' };
+    const moved = inv(MAC, { registrations: [reg('c7', 'local', { type: 'http', url: 'https://mcp.context7.com/mcp' }, 'context7', 'remote', { choice: 'own' })], roots: usedRoots(OLD_ROOT), records: { project: { file: PFILE, servers: [c] }, global: null } });
+    const r = plan(moved, { rootChange: ['project'], roots: { project: { id: 'named', path: 'tools' } } }, opts('/Users/me'));
+    assert.deepStrictEqual(r.errors, []);
+    assert.deepStrictEqual(cleans(r), [['/work/shop/tools/preferred-tools.json', [c], []], [PFILE, [], []]]);
+});
+
+test("configure: 'Leave it on its own' writes one record in the family root, 'preferred-tools' writes none, and a change for an own target is not planned", () => {
+    const X = require('../scripts/existing.js');
+    const entry = { type: 'http', url: 'https://gitlab.com/api/v4/mcp' };
+    const i = inv(MAC, { registrations: [reg('gitlab', 'project', entry, 'gitlab', 'remote')], records: { project: null, global: null } });
+    const p = plan(i, { existing: { 'mcp:gitlab~project': 'own' }, change: { 'mcp:gitlab~project': { scope: 'local' } } }, opts('/Users/me'));
+    assert.deepStrictEqual(p.errors, []);
+    assert.deepStrictEqual(cleans(p), [[PFILE, [{ name: 'gitlab', scope: 'project', fingerprint: X.fingerprintOf(entry, catalog), choice: 'own' }], []]]);
+    assert.ok(!p.steps.some((s) => s.op === 'mcp-move' || s.op === 'mcp-add' || s.op === 'mcp-replace'), p.steps.map((s) => s.op).join());
+    assert.ok(p.unchanged.includes('mcp:gitlab~project: left on its own'), p.unchanged.join('\n'));
+    const managed = plan(i, { existing: { 'mcp:gitlab~project': 'manage' } }, opts('/Users/me'));
+    assert.deepStrictEqual([managed.errors, cleans(managed)], [[], []]);
+});
+
+test('the pick list labels a row that a claude.ai connector or an enabled plugin already provides, and the plan names the two servers', () => {
+    const X = require('../scripts/existing.js');
+    const label = (calls, id) => calls.flat().flatMap((x) => x.options.map((o) => o.label)).find((l) => l === id || l.startsWith(`${id} (`));
+    assert.strictEqual(label(asks.pickQuestions(inv(MAC), catalog, {}, ['GitLab']), 'gitlab'), 'gitlab (also connected through claude.ai)');
+    assert.strictEqual(label(asks.pickQuestions(inv(MAC), catalog), 'gitlab'), 'gitlab');
+    const ps = { plugin: 'gitlab-tools@acme', server: 'gitlab', rowId: 'gitlab', route: 'remote', entry: { type: 'http', url: 'https://gitlab.com/api/v4/mcp' }, choice: null };
+    const plugin = (enabled) => ({ id: 'gitlab-tools@acme', plugin: 'gitlab-tools', scope: 'user', enabled, enabledHere: enabled });
+    const withPlugin = inv(MAC, { pluginServers: [ps], plugins: [plugin(true)] });
+    assert.strictEqual(label(asks.pickQuestions(withPlugin, catalog), 'gitlab'), 'gitlab (also provided by the gitlab-tools plugin)');
+    assert.strictEqual(label(asks.pickQuestions(inv(MAC, { pluginServers: [ps], plugins: [plugin(false)] }), catalog), 'gitlab'), 'gitlab', 'a disabled plugin provides nothing');
+    assert.deepStrictEqual(asks.alsoProvided(withPlugin, 'gitlab', ['GitLab']).map((a) => a.owner), ['claude.ai', 'gitlab-tools']);
+    const viaConnector = plan(inv(MAC), pickOne('gitlab'), opts('/Users/me', { connectors: ['GitLab'] }));
+    assert.ok(viaConnector.notes.includes(X.twoServers('gitlab', 'claude.ai')), viaConnector.notes.join('\n'));
+    const viaPlugin = plan(withPlugin, pickOne('gitlab'), opts('/Users/me'));
+    assert.ok(viaPlugin.notes.includes(X.twoServers('gitlab', 'gitlab-tools')), viaPlugin.notes.join('\n'));
+    assert.ok(!plan(inv(MAC), pickOne('gitlab'), opts('/Users/me')).notes.some((n) => n.startsWith('two servers')));
+});
+
+test("a project entry in the global root's record stays there and is named; its manage entries are dropped", () => {
+    const x = { name: 'x', scope: 'project', fingerprint: 'pkg:x', choice: 'own' };
+    const y = { name: 'y', scope: 'user', fingerprint: 'url:api.githubcopilot.com/mcp', choice: 'manage' };
+    const i = inv(MAC, { registrations: [reg('y', 'user', GH_URL, 'github', 'remote')], records: { project: null, global: { file: GFILE, servers: [x, y] } } });
+    const p = plan(i, {}, opts('/Users/me'));
+    assert.deepStrictEqual(p.errors, []);
+    assert.deepStrictEqual(cleans(p), [[GFILE, [], [x]]]);
+    assert.ok(p.notes.includes(`${GFILE} holds x (project), left on its own in another project - it stays there; remove it there to hand it back`), p.notes.join('\n'));
+    assert.ok(render(p).includes(`writes ${GFILE}  (the servers left on their own)`), render(p));
 });
 
 // ---- 0.2.0: configure changes a root folder, a key's name and the settings (spec D7, D9; plan R3) ----------------------
@@ -1922,7 +2009,7 @@ test('change the root: each managed registration of the family is re-added with 
     assert.match(same.unchanged.join('\n'), /the project root is already .*\.preferred-tools/);
 });
 
-test('change the root: the old data and the old key file stay, the new key file holds the names with empty values, the record\'s entries are copied', () => {
+test('change the root: the old data and the old key file stay, the new key file holds the names with empty values, the record\'s entries move', () => {
     const fs = require('node:fs');
     const { world, writeJson } = require('./helpers.js');
     const { apply } = require('../scripts/apply.js');
@@ -1964,7 +2051,8 @@ test('change the root: the old data and the old key file stay, the new key file 
         assert.deepStrictEqual(keys.namesIn(path.join(fresh, '.mcps-secrets')), [G]);
         assert.strictEqual(keys.valueIn([path.join(fresh, '.mcps-secrets')], G), null, 'the name with an empty value');
         assert.strictEqual(fs.readFileSync(path.join(fresh, 'mcp-headers.js'), 'utf8'), roots.helperSource());
-        assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(fresh, 'preferred-tools.json'), 'utf8')).servers, record.servers, 'the record\'s entries are copied');
+        assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(fresh, 'preferred-tools.json'), 'utf8')).servers, record.servers, 'the record\'s entries move');
+        assert.ok(!fs.existsSync(path.join(old, 'preferred-tools.json')), 'the old root\'s record, left with nothing, is removed');
         assert.strictEqual(roots.readMap(data).projects[roots.mapKey(w.project)], fresh);
         const local = account.readAccount(w.env, w.project).local;
         assert.strictEqual(local.github.headersHelper, `node ${path.join(fresh, 'mcp-headers.js')} ${G} Bearer`);

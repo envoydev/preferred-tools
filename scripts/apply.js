@@ -239,17 +239,28 @@ function writeJson(file, doc, read)
 }
 const readNote = (read, bak) => (read && read.note ? ` - ${read.note}${bak ? `; the old file kept as ${bak}` : ''}` : '');
 
-// <root>/preferred-tools.json: this run's answers merged in, a server gone since dropped (D6). An unchanged merge writes
-// nothing (D8: each step skips what is in place).
-function recordChoice(file, entries, live)
+// <root>/preferred-tools.json as the plan computed it (spec F4): `keep` as it is, then the `entries` a server still has
+// (a key in both takes the entries one), the servers left on their own only. Nothing left: the file goes, but only one
+// that parses as this plugin's record. An unchanged record writes nothing (D8: each step skips what is in place).
+function recordClean(file, entries, keep, live)
 {
     const record = roots.readRecord(file);
     const kept = keepAsIs(record);
     if (kept) return kept;
-    const merged = roots.mergeRecord(record, entries, live);
-    if (record && !record.state && JSON.stringify(merged) === JSON.stringify({ version: record.version, servers: record.servers })) return { ok: true, detail: `${file} already holds these answers - left as it is` };
-    const bak = writeJson(file, merged, record);
-    return { ok: true, detail: `wrote ${file} (${merged.servers.length} server${merged.servers.length === 1 ? '' : 's'})${readNote(record, bak)}` };
+    const fresh = roots.ownOnly(roots.mergeRecord({ servers: [] }, entries, live).servers);
+    const keys = new Set(fresh.map(roots.recordKey));
+    const servers = [...roots.ownOnly(keep).filter((e) => !keys.has(roots.recordKey(e))), ...fresh];
+    if (!servers.length)
+    {
+        if (!record) return { ok: true, detail: `${file}: no server is left on its own - nothing to write` };
+        if (record.state) return { ok: true, detail: `${record.note.replace(/ - read as empty$/, '')} - not this plugin's record, left as it is` };
+        fs.rmSync(file, { force: true });
+        return { ok: true, detail: `removed ${file} - no server is left on its own` };
+    }
+    const doc = { version: roots.RECORD_VERSION, servers };
+    if (record && !record.state && JSON.stringify(doc) === JSON.stringify({ version: record.version, servers: record.servers })) return { ok: true, detail: `${file} already holds these servers - left as it is` };
+    const bak = writeJson(file, doc, record);
+    return { ok: true, detail: `wrote ${file} (${servers.length} server${servers.length === 1 ? '' : 's'} left on ${servers.length === 1 ? 'its' : 'their'} own)${readNote(record, bak)}` };
 }
 
 // <data>/roots.json: the family's root for this project (D2). No data folder given: nothing to write (R8).
@@ -281,7 +292,7 @@ function runStep(step, ctx)
         case 'root-ignore': return rootIgnore(step.path);
         case 'write-helper': return writeHelper(step.path);
         case 'ensure-key-name': return ensureKeyName(step.file, step.names);
-        case 'record-choice': return recordChoice(step.file, step.entries, step.live);
+        case 'record-clean': return recordClean(step.file, step.entries, step.keep, step.live);
         case 'record-root': return recordRoot(step, ctx.data);
         case 'mcp-add': return addAndVerify(call, ctx, step.name, step.scope, step.entry, rowOf(ctx, step));
         case 'mcp-remove': return removeAndVerify(call, ctx, step.name, step.scope);

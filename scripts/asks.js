@@ -190,9 +190,23 @@ const offeredForInstall = (row, inv) =>
     return row.kind === 'mcp' || !at.includes(recommendedScope(row, row.recommendedRoute));
 };
 
-// `existing`: the answers about servers already set up so far (spec D6). A row whose server was left on its own -
-// answered now or recorded - is not offered; one answered 'add' is, with the two servers named.
-function pickQuestions(inv, catalog, existing = {})
+// Who else provides a row here (spec F4): a claude.ai connector this session has loaded, or an enabled plugin's server.
+// -> [{ owner, tag }]
+function alsoProvided(inv, rowId, connectors)
+{
+    const X = require('./existing.js');
+    const out = [];
+    if ((connectors || []).some((n) => X.matchConnector(n) === rowId)) out.push({ owner: 'claude.ai', tag: 'also connected through claude.ai' });
+    const enabled = new Set((inv.plugins || []).filter((p) => p.enabledHere ?? p.enabled).map((p) => p.id));
+    const owners = (inv.pluginServers || []).filter((s) => s.rowId === rowId && enabled.has(s.plugin)).map((s) => s.plugin.split('@')[0]);
+    for (const owner of new Set(owners)) out.push({ owner, tag: `also provided by the ${owner} plugin` });
+    return out;
+}
+
+// `existing`: answers about servers already set up (spec D6). A row whose server was left on its own - answered or
+// recorded - is not offered; one answered 'add' is, with the two servers named. `connectors`: the claude.ai connectors
+// this session has loaded; a row one of them, or an enabled plugin, provides says so in its label (spec F4).
+function pickQuestions(inv, catalog, existing = {}, connectors = null)
 {
     const X = require('./existing.js');
     const rule = X.offerRule(inv, catalog, existing);
@@ -205,6 +219,7 @@ function pickQuestions(inv, catalog, existing = {})
             const user = have.filter((h) => h.scope === 'user');
             const tags = inherited.map((h) => `inherited from ${fromHere(inv, h.from)} as ${h.name}, ${h.approval}`);
             if (user.length) tags.push(row.kind === 'mcp' ? `installed for every project as ${user.map((h) => h.name).join(', ')}` : 'installed for every project');
+            if (row.kind === 'mcp') tags.push(...alsoProvided(inv, row.id, connectors).map((a) => a.tag));
             const stays = [...(user.length ? ['the one for every project'] : []), ...inherited.map((h) => `the one inherited from ${fromHere(inv, h.from)}`)];
             const keep = `${stays.join(' and ')} ${stays.length > 1 ? 'stay' : 'stays'}${user.length ? '' : stays.length > 1 ? ' in their folders' : ' in its folder'}`;
             // windows-mcp 0.8.8 keeps one per desktop healthy; a copy under the row's own name replaces that one here
@@ -584,9 +599,7 @@ function needsRoot(row, routeId)
     return Boolean(row.locations) || Boolean(route && (route.tokenVar || route.helper));
 }
 
-// The families the questions input needs a root for: each pick at its answered (else recommended) scope, and each answer
-// in `existing`, recorded in the project root (a registration at project or local scope, a plugin's server) or the global
-// root (a user registration, a connector).
+// The families the questions input needs a root for: each pick at its answered (else recommended) scope.
 function rootFamilies(inv, picks, catalog, ctx)
 {
     const out = new Set();
@@ -600,13 +613,6 @@ function rootFamilies(inv, picks, catalog, ctx)
         if (!needsRoot(row, routeId)) continue;
         const scope = scopes[id] || scopeOrder(row, inv, { route: routeId, ctx, copyOf: installedOf(inv, id) })[0];
         out.add(roots.familyOf(scope));
-    }
-    for (const key of Object.keys((picks && picks.existing) || {}))
-    {
-        const m = /^mcp:.+~(local|project|user)$/.exec(key);
-        if (m) out.add(roots.familyOf(m[1]));
-        else if (key.startsWith('plugin-mcp:')) out.add('project');
-        else if (key.startsWith('connector:')) out.add('global');
     }
     return ['project', 'global'].filter((f) => out.has(f));
 }
@@ -643,7 +649,7 @@ function all(inv, picks, catalog, { env = {}, home = null, connectors = null } =
 {
     const out = {
         static: { ...STATIC, hud: STATIC.hud(0, 0, 0), prereqMissing: STATIC.prereqMissing('<tool>', '<prerequisite>') },
-        pick: pickQuestions(inv, catalog, picks && picks.existing), change: null, remove: removeQuestions(inv, catalog), tools: {}, targets: {},
+        pick: pickQuestions(inv, catalog, picks && picks.existing, connectors), change: null, remove: removeQuestions(inv, catalog), tools: {}, targets: {},
     };
     // `exists` reads the disk: alfred-code's .alfred/.gitignore and its 2.x data decide which folders are offered
     const ctx = { project: inv.project, platform: inv.os, arch: inv.arch, home: home || require('./account.js').homeDir(process.env), env, keyHome: home, exists: (p) => fs.existsSync(p) };
@@ -735,4 +741,4 @@ function all(inv, picks, catalog, { env = {}, home = null, connectors = null } =
     return out;
 }
 
-module.exports = { PARENT_HELPER_IN_CHILD, SCOPE_TEXT, keyNameQuestion, settingsQuestion, liveReader, heldKey, SCOPE_LABEL, scopeOfLabel, needsRoot, rootFamilies, rootQuestion, REC, recommendedScope, keyStateOf, keyToSend, pickQuestions, changeQuestions, routeQuestion, toolQuestions, toolAsk, scopeQuestion, nameQuestion, locationQuestion, removeQuestions, packed, STATIC, all, chunk, scopesFor };
+module.exports = { PARENT_HELPER_IN_CHILD, SCOPE_TEXT, keyNameQuestion, settingsQuestion, liveReader, heldKey, SCOPE_LABEL, scopeOfLabel, needsRoot, rootFamilies, rootQuestion, REC, recommendedScope, keyStateOf, keyToSend, alsoProvided, pickQuestions, changeQuestions, routeQuestion, toolQuestions, toolAsk, scopeQuestion, nameQuestion, locationQuestion, removeQuestions, packed, STATIC, all, chunk, scopesFor };

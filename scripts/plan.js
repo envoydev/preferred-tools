@@ -360,6 +360,84 @@ function useRoots(ctx, scope, { helper, keyFile, keyName, data })
     if (df) ctx.uses.push({ family: df, root: r[df] });
 }
 
+// A record as found: the inventory's read for its file, else the disk's. -> null | { servers, state? }
+function foundRecord(inv, file)
+{
+    for (const family of ['project', 'global'])
+    {
+        const r = inv.records && inv.records[family];
+        if (r && r.file === file) return r.note ? { servers: [], state: 'noted' } : { servers: r.servers || [] };
+    }
+    return roots.readRecord(file);
+}
+
+// The records (spec F4): each holds only the servers left on their own, in its scope family's record in the root this run
+// uses. Every record found here is read; its own entries, with this run's answers applied, go to their family's record,
+// and a record left with nothing is removed. A project entry in a record that is not this project's own stays where it
+// is, named in a note (Ruling 10). Runs only for a plan that read the answers (`ctx.recordLive`): fix.js has none.
+function recordSteps(inv, ctx, out)
+{
+    if (!ctx.recordLive) return [];
+    const P = E.pathFor(ctx.platform);
+    const fileIn = (dir) => P.join(dir, roots.FILES.record);
+    const map = (inv.roots && inv.roots.map) || null;
+    const mapped = map && map.projects ? map.projects[roots.mapKey(ctx.project)] : null;
+    const inUse = inv.roots && inv.roots.project ? inv.roots.project.path : null;
+    const mine = new Set([mapped, inUse, ctx.roots && ctx.roots.project, ...roots.standard('project', ctx).map((x) => x.root)].filter(Boolean).map(fileIn));
+    const targets = { project: null, global: null };
+    for (const family of Object.keys(targets)) if (ctx.roots && ctx.roots[family]) targets[family] = fileIn(ctx.roots[family]);
+    const found = new Map();
+    const candidates = [targets.project, targets.global, ...['project', 'global'].flatMap((f) => [inv.records && inv.records[f] && inv.records[f].file, ...roots.recordFiles(inv, f, ctx)])];
+    for (const file of candidates.filter(Boolean)) if (!found.has(file)) found.set(file, foundRecord(inv, file));
+
+    const entries = new Map();
+    const keep = new Map();
+    for (const [file, rec] of found)
+    {
+        if (!rec || rec.state) continue;
+        for (const e of roots.ownOnly(rec.servers))
+        {
+            const key = roots.recordKey(e);
+            if (!key) continue;
+            if (roots.recordFamily(e) === 'project' && !mine.has(file))
+            {
+                keep.set(file, [...(keep.get(file) || []), e]);
+                out.notes.push(`${file} holds ${e.name || `${e.plugin}/${e.server}`} (${e.scope || 'a plugin'}), left on its own in another project - it stays there; remove it there to hand it back`);
+                continue;
+            }
+            entries.set(key, { e, from: file });
+        }
+    }
+    for (const family of ['project', 'global'])
+        for (const e of (ctx.recordEntries && ctx.recordEntries[family]) || [])
+        {
+            const key = roots.recordKey(e);
+            if (e.choice === 'own') entries.set(key, { e, from: null });
+            else entries.delete(key);
+        }
+
+    const planned = new Map([...found.keys()].map((f) => [f, { entries: [], keep: keep.get(f) || [] }]));
+    for (const { e, from } of entries.values())
+    {
+        // a family with no root this run (the roots answer's error is in the plan): the entry stays in its file
+        const file = targets[roots.recordFamily(e)] || from;
+        if (file) planned.get(file).entries.push(e);
+    }
+    const steps = [];
+    for (const [file, want] of planned)
+    {
+        const fresh = roots.ownOnly(roots.mergeRecord({ servers: [] }, want.entries, ctx.recordLive).servers);
+        const keys = new Set(fresh.map(roots.recordKey));
+        const next = [...roots.ownOnly(want.keep).filter((e) => !keys.has(roots.recordKey(e))), ...fresh];
+        const family = Object.keys(targets).find((f) => targets[f] === file);
+        if (family && next.length) ctx.uses.push({ family, root: ctx.roots[family] });
+        const rec = found.get(file);
+        const changes = !rec || rec.state ? next.length > 0 : JSON.stringify(next) !== JSON.stringify(rec.servers);
+        if (changes) steps.push({ op: 'record-clean', file, entries: want.entries, keep: want.keep, live: ctx.recordLive, why: `${file}: the servers you left on their own; configure, update and fix skip them. Remove an entry, or the file, to hand them back.` });
+    }
+    return steps;
+}
+
 // The file steps of the roots the plan writes into, in D8's order - each root's .gitignore, the helpers, the key names -
 // and the records that go last. A root this apply creates gets its .gitignore (R13), never one named .alfred; a root that
 // exists is asked of git, and with a gap gets no key file and a note naming the fix.
@@ -367,6 +445,8 @@ function fileSteps(inv, ctx, out)
 {
     const P = E.pathFor(ctx.platform);
     const exists = ctx.exists || ((p) => fs.existsSync(p));
+    // first: a record's family root joins the roots this run writes into
+    const cleans = recordSteps(inv, ctx, out);
     const byRoot = new Map();
     for (const family of ['project', 'global'])
         for (const u of ctx.uses.filter((x) => x.family === family))
@@ -412,20 +492,7 @@ function fileSteps(inv, ctx, out)
         if (mapped !== r.root)
             records.push({ op: 'record-root', family: r.family, project: ctx.project, root: r.root, why: `the ${r.family} root ${r.root}: written to the roots map, so the commands find it again` });
     }
-    // each family's answers, merged into its record in the root this run uses; a record found in another root comes along
-    const choices = [];
-    for (const family of ['project', 'global'])
-    {
-        const list = (ctx.recordEntries && ctx.recordEntries[family]) || [];
-        const carry = Boolean(ctx.carryRecord && ctx.carryRecord.has(family));
-        if ((!list.length && !carry) || !ctx.roots || !ctx.roots[family]) continue;
-        const file = P.join(ctx.roots[family], roots.FILES.record);
-        const found = inv.records && inv.records[family];
-        const carried = found && found.file && found.file !== file ? found.servers : [];
-        if (!list.length && !carried.length) continue;
-        choices.push({ op: 'record-choice', file, entries: [...carried, ...list], live: ctx.recordLive, why: `${file}: your answers about the servers already set up - names, scopes, fingerprints and choices only` });
-    }
-    return { before: [...ignore, ...helpers, ...names], after: [...choices, ...records] };
+    return { before: [...ignore, ...helpers, ...names], after: [...cleans, ...records] };
 }
 
 // ---- one plugin pick ------------------------------------------------------------------------------------------------
@@ -493,16 +560,28 @@ function plan(inv, answers, opts = {})
     // the key's name and the settings (spec D9, R4): top-level maps keyed by row id (install) or target key (configure)
     const keyNames = answers.keyNames || {};
     const settings = answers.settings || {};
+    const connectors = opts.connectors === undefined ? null : opts.connectors;
     for (const [rowId, pick] of Object.entries(answers.picks || {}))
     {
         const row = catalog.byId.get(rowId);
         if (!row) { out.errors.push(`unknown tool '${rowId}'`); continue; }
-        if (row.kind === 'mcp') planMcp(row, { ...(pick || {}), keyName: keyNames[rowId], settings: settings[rowId] }, inv, ctx, catalog, out);
+        if (row.kind === 'mcp')
+        {
+            planMcp(row, { ...(pick || {}), keyName: keyNames[rowId], settings: settings[rowId] }, inv, ctx, catalog, out);
+            // a claude.ai connector or an enabled plugin's server provides it too (spec F4)
+            for (const a of asks.alsoProvided(inv, rowId, connectors)) out.notes.push(existing.twoServers(row.label, a.owner));
+        }
         else planPlugin(row, pick || {}, inv, ctx, catalog, out);
     }
-    for (const [key, pick] of Object.entries(answers.change || {})) planChange(key, { ...(pick || {}), keyName: keyNames[key], settings: settings[key] }, inv, ctx, catalog, out);
+    // a target answered 'Leave it on its own' gets no change (Ruling 9)
+    const leftNow = new Set(Object.entries(answers.existing || {}).filter(([, choice]) => choice === 'own').map(([key]) => key));
+    for (const [key, pick] of Object.entries(answers.change || {}))
+    {
+        if (leftNow.has(key)) { out.unchanged.push(`${key}: left on its own`); continue; }
+        planChange(key, { ...(pick || {}), keyName: keyNames[key], settings: settings[key] }, inv, ctx, catalog, out);
+    }
     for (const r of answers.remove || []) planRemove(r, inv, catalog, out);
-    planExisting(answers, inv, ctx, catalog, out, opts.connectors === undefined ? null : opts.connectors);
+    planExisting(answers, inv, ctx, catalog, out, connectors);
     planRootChange(answers, inv, ctx, catalog, out);
     if (out.hud && answers.hud) out.hud = answers.hud;
     // 'defer': a claude-hud that is not installed yet cannot be checked, so its settings ask follows the install
@@ -535,8 +614,6 @@ function planRootChange(answers, inv, ctx, catalog, out)
         const secretsNew = P.join(next, roots.FILES.secrets);
         let keyed = false;
         ctx.uses.push({ family, root: next });
-        ctx.carryRecord = ctx.carryRecord || new Set();
-        ctx.carryRecord.add(family);
         for (const r of inv.registrations.filter((x) => x.rowId && !x.own && !x.alfredRetired && x.choice !== 'own' && scopes.includes(x.scope)))
         {
             const row = catalog.byId.get(r.rowId);
@@ -576,9 +653,8 @@ function planRootChange(answers, inv, ctx, catalog, out)
     }
 }
 
-// The answers about servers already set up (spec D6): each goes to its family's record, the project root's for a project
-// or local registration and a plugin's server, the global root's for a user registration and a connector. A row answered
-// 'add' and picked runs beside the other server: the plan says so.
+// The answers about the servers already set up (spec D6, F4), from configure: 'own' puts the server in its family's
+// record, 'manage' or 'add' takes it out (recordSteps). What is here now, so a record drops a server gone since.
 function planExisting(answers, inv, ctx, catalog, out, connectors)
 {
     ctx.recordEntries = { project: [], global: [] };
@@ -589,8 +665,6 @@ function planExisting(answers, inv, ctx, catalog, out, connectors)
         const allowed = existing.CHOICES[item.kind];
         if (!allowed.includes(choice)) { out.errors.push(`existing: '${choice}' is not an answer for ${key} - ${allowed.join(' or ')}`); continue; }
         ctx.recordEntries[item.family].push(existing.recordEntry(item, choice));
-        if (ctx.roots && ctx.roots[item.family]) ctx.uses.push({ family: item.family, root: ctx.roots[item.family] });
-        if (choice === 'add' && Object.hasOwn(answers.picks || {}, item.rowId)) out.notes.push(`${item.rowId}: ${existing.twoServers(item.label, existing.ownerOf(item))}`);
     }
     ctx.recordLive = existing.liveOf(inv, catalog, connectors);
 }
@@ -661,7 +735,7 @@ function render(p)
         else if (s.op === 'root-ignore') lines.push(`   writes ${P.join(s.path, '.gitignore')}  (${roots.GITIGNORE.trim().split('\n').join(', ')} - or the lines it lacks, appended)`);
         else if (s.op === 'write-helper') lines.push(`   writes ${P.join(s.path, roots.FILES.helper)}  (this plugin's header helper)`);
         else if (s.op === 'ensure-key-name') lines.push(`   writes ${s.file}  (names only: ${s.names.join(', ')} - you fill in each value)`);
-        else if (s.op === 'record-choice') lines.push(`   writes ${s.file}  (names, scopes, fingerprints and choices only)`);
+        else if (s.op === 'record-clean') lines.push(s.entries.length || s.keep.length ? `   writes ${s.file}  (the servers left on their own)` : `   removes ${s.file}  (no server is left on its own)`);
         else if (s.op === 'record-root') lines.push(`   writes ${roots.FILES.map} in the plugin's data folder  (the ${s.family} root: ${s.root})`);
         else if (s.op === 'fetch') lines.push(`   ${s.argv.map(shq).join(' ')}`, '   (after the apply, in the background: fills the cache only; if it fails the registration stays and the first start tries again)');
         else if (s.op === 'hud') lines.push(`   node scripts/hud-statusline.js ${s.mode === 'replace' ? '--replace' : s.mode === 'skip' ? '--statusline-only' : ''}`.trimEnd());
@@ -703,17 +777,6 @@ function parseArgs(argv)
     return out;
 }
 
-// D6's questions: the servers already set up, each with fix's registration detectors run read-only on the registrations
-// as they are, read unmasked in this process (R1) and never written. fix.js requires this file, so it is required here.
-function existingBlock(inv, args, catalog)
-{
-    const fix = require('./fix.js');
-    const live = require('./inventory.js').buildInventory({ project: inv.project, env: process.env, data: args.data, catalog });
-    const registrationFixes = { ...catalog, fixes: catalog.fixes.filter((f) => f.kind === 'registration') };
-    const found = fix.detectAll(fix.makeCtx({ inv: live, catalog: registrationFixes, env: process.env })).found;
-    return existing.questions(existing.items(live, existing.parseConnectors(args.connectors), catalog, { home: account.homeDir(process.env) }), found);
-}
-
 const USAGE = 'usage: plan.js <inventory.json> <answers.json> [--out plan.json] [--data <dir>]\n       plan.js --questions <inventory.json> [<picks.json>] [--data <dir>] [--connectors <Name>,<Name>]';
 
 function main(argv)
@@ -731,9 +794,8 @@ function main(argv)
     {
         const picks = second ? read(second) : null;
         const catalog = catalogLib.load();
-        const q = asks.all(inv, picks, catalog, { env: process.env, home: account.homeDir(process.env), connectors: args.connectors });
-        // the walk's first call carries --connectors (R12): only it reads the live registrations and runs the detectors
-        if (args.connectors !== null) q.existing = existingBlock(inv, args, catalog);
+        // --connectors: the claude.ai connectors this session has loaded, named in the pick list (spec F4)
+        const q = asks.all(inv, picks, catalog, { env: process.env, home: account.homeDir(process.env), connectors: args.connectors !== null ? existing.parseConnectors(args.connectors) : null });
         console.log(JSON.stringify(q, null, 2));
         return 0;
     }

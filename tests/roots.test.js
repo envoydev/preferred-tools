@@ -176,10 +176,10 @@ test('no option text mentions Other', () => {
     }
 });
 
-test('a root is asked for a family only a pick or an existing answer records into', () => {
+test('a root is asked for a family only a pick records into', () => {
     const qs = (picks) => asks.all(inv(), picks, catalog, { home: '/Users/me' }).roots;
-    assert.deepStrictEqual(qs({ existing: { 'mcp:atlassian~user': 'own' } }).questions.map((x) => x.id), ['root-global'], 'no pick: the global root only');
-    assert.deepStrictEqual(qs({ existing: { 'connector:Atlassian': 'own', 'plugin-mcp:x@m/srv': 'add' } }).questions.map((x) => x.id), ['root-project', 'root-global']);
+    // an answer about a server already set up asks no root: a server left on its own goes to the root in use (Ruling 3)
+    assert.deepStrictEqual(qs({ existing: { 'mcp:atlassian~user': 'own', 'connector:Atlassian': 'own', 'plugin-mcp:x@m/srv': 'add' } }).questions, []);
     assert.deepStrictEqual(qs({ rows: ['playwright-chrome'] }).questions.map((x) => x.id), ['root-project'], 'a local route: local scope, the project family');
     assert.deepStrictEqual(qs({ rows: ['playwright-chrome'], scopes: { 'playwright-chrome': 'user' } }).questions.map((x) => x.id), ['root-global']);
     assert.deepStrictEqual(qs({ rows: ['claude-hud'] }).questions, [], 'a plugin needs no root');
@@ -193,4 +193,15 @@ test('a root is asked for a family only a pick or an existing answer records int
     assert.strictEqual(q.options.filter((o) => /\(Recommended\)/.test(o.label)).length, 1);
     assert.deepStrictEqual(r.answers['root-project'][q.options[0].label], { family: 'project', id: 'preferred-tools', root: '/work/shop/.preferred-tools' });
     assert.deepStrictEqual(r.answers['root-project']['A folder you name'], { family: 'project', id: 'named', root: null });
+});
+
+// ---- 0.3.0: the record holds the servers left on their own, each in its scope family's root (spec F4) -----------------
+test('recordFamily: user scope and a connector are global; project, local and a plugin server are project', () => {
+    assert.strictEqual(roots.recordFamily({ name: 'gh', scope: 'user', choice: 'own' }), 'global');
+    assert.strictEqual(roots.recordFamily({ connector: 'GitLab', choice: 'own' }), 'global');
+    assert.strictEqual(roots.recordFamily({ name: 'gh', scope: 'project', choice: 'own' }), 'project');
+    assert.strictEqual(roots.recordFamily({ name: 'gh', scope: 'local', choice: 'own' }), 'project');
+    assert.strictEqual(roots.recordFamily({ plugin: 'docs@m', server: 'c7', choice: 'own' }), 'project');
+    const own = { name: 'a', scope: 'local', choice: 'own' };
+    assert.deepStrictEqual(roots.ownOnly([own, { ...own, name: 'b', choice: 'manage' }, { connector: 'X', choice: 'add' }, null]), [own]);
 });
