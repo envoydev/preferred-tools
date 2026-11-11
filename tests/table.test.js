@@ -55,7 +55,7 @@ test('what is installed shows by scope as name [route, pin], a custom name inclu
     }), catalog);
     const row = (re) => text.split('\n').find((l) => re.test(l));
     assert.match(row(/\bserena\s+mcp/), /proj-serena \[local, 2\.0\.0\]\s+-\s+serena \[local, 2\.1\.0\]$/, 'one row, two scopes, two pins');
-    assert.match(row(/\bmemory\s+mcp/), /memory \[local, 12\.4\.0\]$/);
+    assert.match(row(/\bmemory\s+mcp/), /memory \[local, 12\.5\.0\]$/);
     assert.match(row(/\bcontext7\s+mcp/), /-\s+context7 \[remote\]\s+-$/);
     assert.match(row(/\bgithub\s+mcp/), /github \[local, v2\.0\.2\]/);
     assert.match(row(/playwright-chrome\s+mcp/), /playwright-chrome \[local, 0\.0\.84\]/);

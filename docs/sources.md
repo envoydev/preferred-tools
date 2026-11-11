@@ -108,6 +108,37 @@ unchanged (every newer release is under 7 days old).
   documents --no-webmcp', so this move would have blocked every registration still on 0.0.83. Its floor is now the
   fixed 0.0.83 (`scripts/fixes/registration.js` `NO_WEBMCP_SINCE`).
 
+## Pins - refresh on 2026-11-12
+
+`npm run refresh-pins -- --write` moved two package pins, and their cut-off to `2026-11-11T23:59:59Z`. With today
+2026-11-12, a release counts only if published on or before 2026-11-05. Each new release was unpacked and read, never
+run (the npm tarball, the PyPI wheel, against the old pin's); every other pin is unchanged, each newer release under 7
+days old.
+
+| Package | Was | Now (published) | Held back by the age gate |
+|---|---|---|---|
+| `mcp-memory-service` | 12.4.0 | 12.5.0 (2026-11-03) | 12.8.0 (2026-11-11) and two more |
+| `appium-mcp` | 1.99.2 | 1.99.3 (2026-11-04) | - |
+| `@upstash/context7-mcp` | 4.5.0 | 4.5.0 | 4.6.0 (2026-11-10) and one more |
+| `@playwright/mcp` | 0.0.84 | 0.0.84 | 0.0.85 (2026-11-09) |
+| `@sentry/mcp-server` | 0.42.0 | 0.42.0 | 0.49.0 (2026-11-07) and one more |
+| `mcp-remote` | 0.16.0 | 0.16.0 | 0.16.6 (2026-11-11) and five more |
+
+- `mcp-memory-service` 12.5.0 - CONFIRMED from the wheel (sha256 `458f8901...` as PyPI lists it): console script
+  `memory = mcp_memory_service.cli.main:main`, the click command `server` with the same options as 12.4.0, extra
+  `[sqlite]`, `numpy` and `sqlite-vec` still core, and `MCP_MEMORY_STORAGE_BACKEND` and `MCP_MEMORY_SQLITE_PRAGMAS` read
+  in `config/storage.py`. CHANGED: `requires_python` is now `>=3.11` (was `>=3.10`); the row runs Python 3.13. Two new
+  migrations, both additive: `020_add_belief_embedding.sql` (`ALTER TABLE beliefs ADD COLUMN embedding BLOB DEFAULT
+  NULL` and an index, with a rollback file) and `021_add_superseded_at.sql` (`ALTER TABLE memories ADD COLUMN
+  superseded_at REAL`); no memory is re-embedded, and belief dedup is a dry run unless `MCP_BELIEF_DEDUP_APPLY=true`,
+  which the row does not set. Release notes: https://github.com/doobidoo/mcp-memory-service/releases/tag/v12.5.0.
+- `appium-mcp` 1.99.3 - CONFIRMED from the tarball, diffed against 1.99.2: one fix, an escaped quote in the locator
+  uniqueness check (`src/locators/locator-generation.ts`, #606), and `@opentelemetry/*` `^0.223.0` -> `^0.300.0`; no
+  flag, env or engine change (`engines.node` `>=22`); `NO_UI`, `ALLOW_REMOTE_APP_URLS` and
+  `REMOTE_SERVER_URL_ALLOW_REGEX` still read in `dist`. MEASURED: `npm audit` at the pin, by the walk's two commands in an
+  empty scratch folder, reports `{info 0, low 1, moderate 23, high 15, critical 0, total 39}` over 1177 dependencies.
+  Release notes: https://github.com/appium/appium-mcp/releases/tag/v1.99.3.
+
 ## GitHub MCP server - github/github-mcp-server
 
 - Remote URL `https://api.githubcopilot.com/mcp/` - CONFIRMED. README (https://github.com/github/github-mcp-server).
