@@ -139,14 +139,16 @@ function questions(detected)
 
 // ---- apply ----------------------------------------------------------------------------------------------------------
 
-function applyFixes(ctx, ids, { only, input = {}, tmp, log = console.log, runCli = cli.run } = {})
+// `scope` narrows a registration finding to one scope (update applies one registration at a time); `fetchFile: false`
+// writes no fetch file and returns the launches to fetch as `fetch`, for update to hand on in its own (apply.js).
+function applyFixes(ctx, ids, { only, scope, input = {}, tmp, log = console.log, runCli = cli.run, fetchFile } = {})
 {
-    const res = { applied: [], skipped: [], failed: null, remaining: [], steps: 0, fetchFile: null, tmp: tmp || null };
+    const res = { applied: [], skipped: [], failed: null, remaining: [], steps: 0, fetchFile: null, fetch: null, tmp: tmp || null };
     const known = new Set(ctx.catalog.fixes.map((f) => f.id));
     const unknown = ids.filter((id) => id !== 'all' && !known.has(id));
     if (unknown.length) { res.failed = `unknown fix id${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}`; log(res.failed); return res; }
     const detected = detectAll(ctx, { only });
-    const picked = detected.found.filter((f) => ids.includes('all') || ids.includes(f.id));
+    const picked = detected.found.filter((f) => (ids.includes('all') || ids.includes(f.id)) && (!scope || f.scope === scope));
     if (!picked.length) { log('Nothing to apply: no picked problem is found any more.'); return res; }
 
     for (const f of picked.filter((x) => x.blocked || (x.input && !input[x.input.id])))
@@ -194,8 +196,9 @@ function applyFixes(ctx, ids, { only, input = {}, tmp, log = console.log, runCli
         for (const n of fileNotes) log(`note: ${n}`);
         const plan = { version: 1, project: ctx.inv.project, os: ctx.platform, alfredCodeEnabled: Boolean(ctx.inv.alfredCodeEnabled), steps: mcpOrder.withOrderStep([...files.before, ...withFetch], ctx.inv.project, mcpOrder.ownProjectNames(ctx.inv)), notes: [], errors: [], expect: steps.map((s) => ({ kind: 'mcp', name: s.name, scope: s.scope, route: ctx.inv.registrations.find((r) => r.name === s.name && r.scope === s.scope).route })) };
         res.tmp = tmp || fs.mkdtempSync(path.join(os.tmpdir(), 'preferred-tools-fix-'));
-        const report = apply(plan, { env: ctx.env, tmp: res.tmp, runCli, log });
+        const report = apply(plan, { env: ctx.env, tmp: res.tmp, runCli, log, fetchFile });
         res.fetchFile = report.fetchFile;
+        res.fetch = report.fetch;
         if (report.failed) { res.failed = report.failed.detail; return res; }
         const lines = reconnectOf(ctx, steps).map(reconnectLine);
         if (lines.length) log('', ...lines);

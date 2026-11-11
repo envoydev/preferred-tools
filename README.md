@@ -75,9 +75,12 @@ to skip a tool whose prerequisite is missing.
   recommends what the tool has now. Its first question about a server is who looks after it: this plugin, or 'Leave it
   on its own', which configure, update and fix then skip.
 - **`/preferred-tools:fix`** looks for known problems in what is installed and applies the recorded fix after you
-  confirm. Run it after moving a project, after an upgrade from 0.2.0, or when a server will not start.
+  confirm. Run it after moving a project, or when a server will not start; after a plugin upgrade,
+  `/preferred-tools:update` runs the checks that move what an older version wrote.
 - **`/preferred-tools:update`** brings installed plugins, pinned servers, language servers, the key helper and the URL
-  bridge up to date when they are behind, offering only releases at least 7 days old.
+  bridge up to date when they are behind, offering only releases at least 7 days old. It also moves the servers an
+  older version of this plugin set up to the way it passes data now: a key out of the registration into `.mcps-secrets`,
+  absolute paths, the root's `.gitignore` and the `.mcp.json` order.
 
 Each one shows a plan and changes nothing before you confirm it. Pass a tool id to go straight to it, for example
 `/preferred-tools:configure sentry`.
@@ -212,14 +215,20 @@ claude plugin marketplace update envoydev
 claude plugin update preferred-tools@envoydev
 ```
 
-The tools: run `/preferred-tools:update` in a project. It lists what is behind and moves only what you pick.
+The tools: run `/preferred-tools:update` in each project after updating the plugin. It lists what is behind and moves
+only what you pick, in one confirmation:
 
-After an upgrade to 0.4.0, `/preferred-tools:update` offers the newer key helper (`mcp-headers.js`, helper 4) for each
-root under 'Key helpers'; a bridge install writes it anyway, since the bridge needs it.
+- **Versions** - plugins, pinned MCP servers and language servers, to releases at least 7 days old; the newer key
+  helper (`mcp-headers.js`, helper 4) and URL bridge for each root under 'Key helpers'.
+- **New ways to pass data** - what an older version of this plugin wrote, moved to the way 0.4.0 does it: a key still
+  in an Authorization header goes to `.mcps-secrets` and the key helper, a relative or `${HOME}` path at Project scope
+  becomes absolute (serena's home moves under the root folder), the root folder's `.gitignore` gains the lines it
+  lacks, and `.mcp.json` is put in order. These run after the version moves, so both changes stay.
 
-After an upgrade from 0.2.0, run `/preferred-tools:fix` in each project: it rewrites the relative paths 0.2.0 wrote at
-Project scope, puts `.mcp.json` in order and keeps a copy a 0.2.0 session left in a subfolder out of git. Your old
-`preferred-tools.json` answers to 'manage' are removed by the next install's plan; the ones 'on its own' stay.
+Something it cannot do alone - a key whose value is not in `.mcps-secrets` yet, a folder only you can name - is listed
+as a note: fill it in, then run `/preferred-tools:fix`. A copy a 0.2.0 session left in a subfolder is kept out of git
+by `/preferred-tools:fix` run in that subfolder. Your old `preferred-tools.json` answers to 'manage' are removed by the
+next install's plan; the ones 'on its own' stay.
 
 ## When something is wrong
 

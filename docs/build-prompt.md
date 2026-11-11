@@ -640,6 +640,14 @@ and the plugin now puts no skill description in every session. It runs `node scr
   own (D6) is listed as 'on its own - not checked'. Every call passes `--data "${CLAUDE_PLUGIN_DATA}"`.
 - Language servers on PATH: reported (`typescript-language-server --version`, `csharp-ls --version`), updated only on
   the user's yes.
+- New ways to pass data. **The user's ruling, 2026-11-12:** 'update command must apply new versions of mcp and new
+  approaches of passing data to it.' The fix rows marked `upgrade` in `catalog/fixes.json` - `key-to-helper` (0.2.0),
+  `root-ignore` (0.2.0), `project-relative-path` (0.3.0), `mcp-order` (0.3.0) - run in the check, and each finding is
+  an offer `upgrade:<fix id>:<name>~<scope>` (`:<path>` for a file or folder) in the same one confirmation, 'All of
+  them' included, under 'New ways to pass data'. The apply runs them last, each through fix's own `applyFixes` on an
+  inventory read again, so a pin the same run moved is the registration the fix starts from; its launches join the run's
+  one fetch file, one step per server. A finding that cannot apply alone (blocked, or needing a folder) is a note naming
+  `/preferred-tools:fix`. Not an upgrade: a route the user picks, such as sentry's Bridge - that stays configure's.
 - Nothing behind: one line, `preferred-tools: everything current`.
 
 `catalog/tools.json`'s own pins move only through a repo script (`npm run refresh-pins`), never during an update.

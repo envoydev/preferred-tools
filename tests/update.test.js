@@ -529,3 +529,84 @@ test("update moves a bridge's mcp-remote pin and its cut-off", async () => {
     }
     finally { w.clean(); }
 });
+
+// ---- new ways to pass data (the user's ruling, 2026-11-12) ---------------------------------------------------------------
+
+test('the fix rows update applies are the ones marked upgrade, each with the version that brought its way', () =>
+{
+    const catalog = require('../scripts/catalog.js').load();
+    assert.deepStrictEqual(catalog.fixes.filter((f) => f.upgrade).map((f) => [f.id, f.upgrade]), [['key-to-helper', '0.2.0'], ['root-ignore', '0.2.0'], ['project-relative-path', '0.3.0'], ['mcp-order', '0.3.0']]);
+});
+
+test('update offers the new ways to pass data that fix knows - a 0.1.x key header, a relative project path - and applies them after the pins, by registration', async () =>
+{
+    const account = require('../scripts/account.js');
+    const w = world();
+    try
+    {
+        const v = `gh-${crypto.randomBytes(10).toString('hex')}`;
+        const pt = path.join(w.project, '.preferred-tools');
+        for (const root of [pt, path.join(w.home, '.preferred-tools')]) { fs.mkdirSync(root, { recursive: true }); fs.writeFileSync(path.join(root, '.mcps-secrets'), `ACME_GH=${v}\n`); }
+        const gh = { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headers: { Authorization: 'Bearer ${ACME_GH}' } };
+        for (const scope of ['local', 'user']) assert.strictEqual(cli.run(['mcp', 'add-json', 'github', JSON.stringify(gh), '-s', scope], { cwd: w.project, env: w.env }).status, 0);
+        // 0.2.0's shape: a project-scope data path relative to the project
+        const memory = { command: 'uvx', args: ['--python', '3.13', '--from', 'mcp-memory-service[sqlite]==12.1.1', 'memory', 'server'], env: { MCP_MEMORY_SQLITE_PATH: '.preferred-tools/memory/memory.db' } };
+        assert.strictEqual(cli.run(['mcp', 'add-json', 'memory', JSON.stringify(memory), '-s', 'project'], { cwd: w.project, env: w.env }).status, 0);
+        const registry = fakeRegistry({ 'pypi:mcp-memory-service': [{ version: '12.1.1', time: ago(40) }, { version: '12.5.0', time: ago(20) }] });
+
+        const c = await run(w, ['--check', '--no-refresh'], { registry });
+        assert.strictEqual(c.code, 0, c.text);
+        assert.match(c.text, /New ways to pass data:\n/);
+        assert.match(c.text, /\n {2}github \(local\) +key-to-helper: /);
+        assert.match(c.text, /\n {2}github \(user\) +key-to-helper: /);
+        assert.match(c.text, /\n {2}memory \(project\) +project-relative-path: /);
+        assert.ok(!c.text.includes(v), 'the check names the key, never its value');
+        const q = JSON.parse((await run(w, ['--questions', '--no-refresh'], { registry })).text);
+        const group = q.pick.flat().find((x) => x.id === 'update-upgrade');
+        assert.ok(group.header.length <= 12, group.header);
+        assert.deepStrictEqual(group.options.map((o) => o.description).sort(), ['upgrade:key-to-helper:github~local', 'upgrade:key-to-helper:github~user', 'upgrade:project-relative-path:memory~project']);
+        assert.ok(group.options.some((o) => o.label === 'github (local): key-to-helper'), group.options.map((o) => o.label).join('\n'));
+
+        // an upgrade picked before the pin still runs after it, on the registration as it is then: both changes stay
+        const tmp = fs.mkdtempSync(path.join(w.dir, 'preferred-tools-'));
+        const a = await run(w, ['--apply', 'upgrade:project-relative-path:memory~project,mcp:memory~project,upgrade:key-to-helper:github~local', '--tmp', tmp], { registry });
+        assert.strictEqual(a.code, 0, a.text);
+        assert.ok(!a.text.includes(v), 'no key printed');
+        const doc = readJson(account.accountFile(w.env));
+        const local = account.projectEntry(doc.projects, w.project).mcpServers.github;
+        assert.strictEqual(local.headers, undefined, 'the header is gone');
+        assert.strictEqual(local.headersHelper, `node ${path.join(pt, 'mcp-headers.js')} ACME_GH Bearer`);
+        assert.ok(fs.existsSync(path.join(pt, 'mcp-headers.js')), 'the helper is written with it');
+        assert.deepStrictEqual(doc.mcpServers.github.headers, gh.headers, 'github (user) was not picked: left');
+        const mem = readJson(path.join(w.project, '.mcp.json')).mcpServers.memory;
+        assert.ok(mem.args.includes('mcp-memory-service[sqlite]==12.5.0'), JSON.stringify(mem));
+        assert.strictEqual(mem.env.MCP_MEMORY_SQLITE_PATH, path.join(pt, 'memory', 'memory.db'));
+        // one fetch file, one step per server, the last launch written
+        assert.strictEqual((a.text.match(/Fetch next/g) || []).length, 1, a.text);
+        const job = readJson(path.join(tmp, 'fetch.json'));
+        assert.deepStrictEqual(job.fetch.map((s) => s.name), ['memory']);
+        assert.strictEqual(job.fetch[0].env.MCP_MEMORY_SQLITE_PATH, mem.env.MCP_MEMORY_SQLITE_PATH);
+
+        const after = await run(w, ['--check', '--no-refresh'], { registry });
+        assert.match(after.text, /\n {2}github \(user\) +key-to-helper: /);
+        assert.doesNotMatch(after.text, /github \(local\) +key-to-helper|memory \(project\) +project-relative-path/);
+    }
+    finally { w.clean(); }
+});
+
+test('an upgrade that cannot apply on its own - a key not filled - is a note naming /preferred-tools:fix, never an offer', async () =>
+{
+    const w = world();
+    try
+    {
+        const gh = { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headers: { Authorization: 'Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN}' } };
+        assert.strictEqual(cli.run(['mcp', 'add-json', 'github', JSON.stringify(gh), '-s', 'local'], { cwd: w.project, env: w.env }).status, 0);
+        const c = await run(w, ['--check', '--no-refresh']);
+        assert.strictEqual(c.code, 0, c.text);
+        assert.doesNotMatch(c.text, /New ways to pass data/);
+        assert.match(c.text, /Notes:\n(.*\n)* {2}github \(local\): .* - not applied here: put GITHUB_PERSONAL_ACCESS_TOKEN's value in .*; run \/preferred-tools:fix/);
+        const q = JSON.parse((await run(w, ['--questions', '--no-refresh'])).text);
+        assert.ok(!q.pick.flat().some((x) => x.id === 'update-upgrade'));
+    }
+    finally { w.clean(); }
+});

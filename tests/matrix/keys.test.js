@@ -9,6 +9,8 @@
 //   K3  an untrusted folder: no header reaches the server, and fix notes the trust
 //   K4  the helper deleted: connects without the header; fix finds helper-missing; after the fix the header is back
 //   K5  a server matching atlassian at global scope, recorded on its own: update and fix leave it byte-identical
+//   K6  update moves a 0.1.x key header to the helper and ignores the key file in git (the user's ruling, 2026-11-12):
+//       offered, applied, the key arrives, nothing left to move
 const test = require('node:test');
 const assert = require('node:assert');
 const crypto = require('node:crypto');
@@ -195,4 +197,40 @@ test('K5 - a server matching atlassian at global scope, recorded on its own: upd
     const u = update.applyUpdates(uctx, ['mcp:atl~user'], out, { tmp: path.join(h.root, 'tmp', 'update'), log: () => {} });
     assert.deepStrictEqual(u.unknown, ['mcp:atl~user'], 'an update by its id is refused');
     assert.strictEqual(before(), was, 'byte-identical');
+});
+
+test('K6 - update moves a 0.1.x key header to the helper and keeps the key file out of git: offered, applied with fix\'s code, the key arrives', T, async () =>
+{
+    const { h, s, catalog } = await world('k6');
+    try
+    {
+        const dir = h.project('upgrade');
+        trust(h, dir);
+        // as 0.1.x wrote it: the key in an Authorization header, its value from the environment
+        const old = { type: 'http', url: catalog.byId.get('github').routes.remote.url, headers: { Authorization: `Bearer \${${G}}` } };
+        assert.strictEqual(h.claude(dir, ['mcp', 'add-json', 'github', JSON.stringify(old), '-s', 'local']).status, 0);
+        const root = path.join(dir, '.preferred-tools');
+        fs.mkdirSync(root, { recursive: true });
+        fill(path.join(root, roots.FILES.secrets), G, KEY);
+        const uctx = update.makeCtx({ inv: h.inventory(dir, { catalog }), project: dir, catalog, env: h.env, refresh: false, data: h.data });
+        const out = await update.check(uctx);
+        // the project is a git work tree and the root a 0.1.x folder with no .gitignore: both ways are offered
+        const ids = out.offers.filter((o) => o.kind === 'upgrade').map((o) => o.id);
+        assert.deepStrictEqual(ids, ['upgrade:key-to-helper:github~local', `upgrade:root-ignore:${root}`], update.render(out));
+        assert.match(update.render(out), /New ways to pass data:\n {2}github \(local\) +key-to-helper: /);
+        const lines = [];
+        const res = update.applyUpdates(uctx, ids, out, { tmp: path.join(h.root, 'tmp', 'update'), log: (...a) => lines.push(a.join(' ')) });
+        assert.deepStrictEqual(res.applied, ids, lines.join('\n'));
+        const ignored = (f) => require('node:child_process').spawnSync('git', ['check-ignore', '-q', f], { cwd: dir }).status === 0;
+        assert.ok(ignored(path.join(root, roots.FILES.secrets)), 'git ignores the key file');
+        assert.ok(!ignored(path.join(root, roots.FILES.helper)), 'git keeps the helper a project-scope server would need');
+        helperOnly(written(h, dir, 'local', 'github'));
+        assert.strictEqual(roots.helperState(path.join(root, roots.FILES.helper)).state, 'same', 'the helper in the project root');
+        const got = await fake.authOnGet(s, dir, 'github', h.env);
+        assert.strictEqual(got.auth, 'expected', `the key reached the server through the helper (${got.status})`);
+        assert.ok(!lines.join('\n').includes(KEY), 'no key printed');
+        const again = await update.check(update.makeCtx({ inv: h.inventory(dir, { catalog }), project: dir, catalog, env: h.env, refresh: false, data: h.data }));
+        assert.deepStrictEqual(again.offers.filter((o) => o.kind === 'upgrade').map((o) => `${o.id}: ${o.found}`), [], 'nothing left to move');
+    }
+    finally { await s.close(); }
 });

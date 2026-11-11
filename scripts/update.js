@@ -1,15 +1,16 @@
 #!/usr/bin/env node
 'use strict';
 // THE UPDATE ENGINE - what is installed and behind its release: plugins (catalog or not), the pinned MCP servers, the
-// language servers on PATH.
+// language servers on PATH, the helper and bridge copies, and the new ways to pass data (fix's `upgrade` rows).
 //
 //   node update.js --check [--json] [--no-refresh] [--project <dir>] [--data <dir>]   read-only (it refreshes the marketplace clones)
 //   node update.js --questions [--no-refresh] [--project <dir>] [--data <dir>]        the asks, as data
 //   --data: the plugin's data folder, whose roots map finds the records - a server left on its own (spec D6) is skipped
 //   node update.js --apply <id,id | all> [--project <dir>] [--tmp <dir>]  changes the install
 //
-// An offer id is `plugin:<plugin id>~<scope>`, `mcp:<name>~<scope>`, `lsp:typescript` or `helper:<file>` (an
-// mcp-headers.js copy older than this plugin's); `all` is every offer whose newer version is known. A plugin whose
+// An offer id is `plugin:<plugin id>~<scope>`, `mcp:<name>~<scope>`, `lsp:typescript`, `helper:<file>` (an
+// mcp-headers.js copy older than this plugin's), `bridge:<file>`, or `upgrade:<fix id>:<name>~<scope>` (`:<path>` for a
+// file or folder finding); `all` is every offer whose newer version is known. A plugin whose
 // marketplace lists no version cannot be compared ahead: it is listed as unchecked, and `claude plugin update` is the
 // check, run only on its own id.
 //
@@ -204,12 +205,36 @@ function helperOffers(ctx, out)
     for (const root of bridgeDirs) offer('bridge', root, BRIDGE_VERSION);
 }
 
+// ---- new ways to pass data (the user's ruling, 2026-11-12) ---------------------------------------------------------------
+
+// The fix rows marked `upgrade` carry what an older preferred-tools wrote to the way this version passes data: a key out
+// of an Authorization header into .mcps-secrets and mcp-headers.js (key-to-helper), absolute project paths
+// (project-relative-path), the root's .gitignore (root-ignore), the .mcp.json order (mcp-order). Only those detectors
+// run. A finding that cannot apply alone - blocked, or needing a folder - is a note naming /preferred-tools:fix.
+const upgradeCatalog = (catalog) => ({ ...catalog, fixes: catalog.fixes.filter((f) => f.upgrade) });
+const upgradeLabel = (f) => (f.kind === 'machine' ? f.name : `${f.name} (${f.scope})`);
+
+function upgradeOffers(ctx, out)
+{
+    const fixLib = require('./fix.js');
+    const catalog = upgradeCatalog(ctx.catalog);
+    if (!catalog.fixes.length) return;
+    const fctx = fixLib.makeCtx({ inv: ctx.inv, catalog, env: ctx.env, machine: ctx.machine, data: ctx.data });
+    for (const f of fixLib.detectAll(fctx).found)
+    {
+        const label = upgradeLabel(f);
+        if (f.blocked || f.input) { out.notes.push(`${label}: ${f.found} - not applied here: ${f.blocked || `needs a folder from you (${f.input.prompt})`}; run /preferred-tools:fix`); continue; }
+        const machine = f.kind === 'machine';
+        out.offers.push({ kind: 'upgrade', id: `upgrade:${f.id}:${machine ? f.name : `${f.name}~${f.scope}`}`, fix: f.id, name: f.name, scope: machine ? null : f.scope, found: f.found, group: 'upgrade', label });
+    }
+}
+
 // ---- check -----------------------------------------------------------------------------------------------------------
 
-function makeCtx({ inv, project, catalog = catalogLib.load(), env = process.env, machine, runCli = cli.run, registry, now = Date.now(), refresh = true })
+function makeCtx({ inv, project, catalog = catalogLib.load(), env = process.env, machine, runCli = cli.run, registry, now = Date.now(), refresh = true, data = null })
 {
     return {
-        inv, project, catalog, env, runCli, now, refresh,
+        inv, project, catalog, env, runCli, now, refresh, data,
         machine: machine || realMachine({ env, platform: inv.os }),
         registry: registry || { versionsOf: (reg, name) => registryLib.versionsOf(reg, name, { env }) },
     };
@@ -223,6 +248,7 @@ async function check(ctx)
     await mcpOffers(ctx, out);
     await lspOffers(ctx, out);
     helperOffers(ctx, out);
+    upgradeOffers(ctx, out);
     return out;
 }
 
@@ -243,6 +269,13 @@ function render(out)
     table('MCP servers (pin -> newest release at least 7 days old):', out.offers.filter((o) => o.kind === 'mcp'));
     table('Language servers:', out.offers.filter((o) => o.kind === 'lsp'));
     table('Key helpers:', out.offers.filter((o) => o.kind === 'helper' || o.kind === 'bridge'));
+    const ups = out.offers.filter((o) => o.kind === 'upgrade');
+    if (ups.length)
+    {
+        lines.push('New ways to pass data:');
+        const w = Math.max(...ups.map((u) => u.label.length));
+        for (const u of ups) lines.push(`  ${u.label.padEnd(w)}  ${u.fix}: ${u.found}`);
+    }
     if (out.unchecked.length)
     {
         lines.push('Plugins whose marketplace lists no version (`claude plugin update` is the check; each is offered on its own):');
@@ -263,14 +296,14 @@ function questions(out)
 {
     const items = [...out.offers, ...out.unchecked];
     if (!items.length) return { offer: null, pick: [] };
-    const groups = [['catalog', 'Catalog plugins'], ['other', 'Other plugins'], ['mcp', 'MCP servers'], ['lsp', 'Language servers'], ['helper', 'Key helpers']];
+    const groups = [['catalog', 'Catalog plugins'], ['other', 'Other plugins'], ['mcp', 'MCP servers'], ['lsp', 'Language servers'], ['helper', 'Key helpers'], ['upgrade', 'New ways to pass data', 'Data passing']];
     const qs = [];
-    for (const [g, title] of groups)
+    for (const [g, title, header] of groups)
     {
         const list = items.filter((o) => o.group === g);
         asksLib.chunk(list, 4).forEach((part) => qs.push({
-            id: `update-${g}`, header: title.slice(0, 12), multiSelect: true, question: `${title}: which do you want to update?`,
-            options: part.map((o) => ({ label: `${o.label}: ${o.from || '?'} -> ${o.to || 'latest'}`, description: o.id })),
+            id: `update-${g}`, header: header || title.slice(0, 12), multiSelect: true, question: `${title}: which do you want to update?`,
+            options: part.map((o) => ({ label: o.kind === 'upgrade' ? `${o.label}: ${o.fix}` : `${o.label}: ${o.from || '?'} -> ${o.to || 'latest'}`, description: o.id })),
         }));
     }
     const offer = { ...asksLib.STATIC.updateOffer };
@@ -351,30 +384,53 @@ function updateHelper(offer, log)
     return ok;
 }
 
+// A new way to pass data, applied with fix's own code to the registration as it is now - after every pin this run moved,
+// so neither change undoes the other - and read back by its detector. Its launches join this run's fetch file.
+function updateUpgrade(ctx, offer, dir, log)
+{
+    const fixLib = require('./fix.js');
+    const inv = inventory.buildInventory({ project: ctx.project, env: ctx.env, run: ctx.runCli, data: ctx.data, catalog: ctx.catalog });
+    const fctx = fixLib.makeCtx({ inv, catalog: upgradeCatalog(ctx.catalog), env: ctx.env, machine: ctx.machine, data: ctx.data });
+    const r = fixLib.applyFixes(fctx, [offer.fix], { only: offer.name, scope: offer.scope || undefined, tmp: dir, log, runCli: ctx.runCli, fetchFile: false });
+    if (r.fetch && r.fetch.fetch.length) ctx.fetches.push(r.fetch);
+    if (r.applied.some((f) => f.kind === 'registration')) ctx.restart = true;
+    const ok = !r.failed && r.applied.length > 0 && !r.remaining.length;
+    log(`${ok ? 'ok    ' : 'CHECK '} ${offer.label}: ${offer.fix} (read back by its detector)`);
+    return ok;
+}
+
 // -> { applied: [id], failed: [id], unknown: [id], fetchFile }
 function applyUpdates(ctx, ids, out, { tmp, log = console.log } = {})
 {
     const res = { applied: [], failed: [], unknown: [], fetchFile: null, dir: null };
     const known = [...out.offers, ...out.unchecked];
-    const chosen = ids.includes('all') ? [...out.offers, ...ids.filter((i) => i !== 'all').map((i) => known.find((o) => o.id === i)).filter(Boolean)] : ids.map((i) => known.find((o) => o.id === i) || i);
+    const picked = ids.includes('all') ? [...out.offers, ...ids.filter((i) => i !== 'all').map((i) => known.find((o) => o.id === i)).filter(Boolean)] : ids.map((i) => known.find((o) => o.id === i) || i);
+    // the new ways to pass data last: each starts from the registration a pin update may just have rewritten
+    const isUpgrade = (c) => typeof c !== 'string' && c.kind === 'upgrade';
+    const chosen = [...picked.filter((c) => !isUpgrade(c)), ...picked.filter(isUpgrade)];
     const dir = tmp || fs.mkdtempSync(path.join(os.tmpdir(), 'preferred-tools-'));
     res.dir = dir;
     ctx.fetches = [];
+    ctx.restart = false;
     for (const c of chosen)
     {
         if (typeof c === 'string') { res.unknown.push(c); log(`NOT OFFERED ${c}: nothing is behind under that id`); continue; }
-        const ok = c.kind === 'plugin' ? updatePlugin(ctx, c, log) : c.kind === 'lsp' ? updateLsp(ctx, c, log) : c.kind === 'helper' || c.kind === 'bridge' ? updateHelper(c, log) : updateMcp(ctx, c, dir, log);
+        const ok = c.kind === 'plugin' ? updatePlugin(ctx, c, log) : c.kind === 'lsp' ? updateLsp(ctx, c, log) : c.kind === 'helper' || c.kind === 'bridge' ? updateHelper(c, log) : c.kind === 'upgrade' ? updateUpgrade(ctx, c, dir, log) : updateMcp(ctx, c, dir, log);
         (ok ? res.applied : res.failed).push(c.id);
     }
-    // every rewritten server in one fetch file, for fetch.js in the background (apply.js says why)
-    const job = fetchLib.job(ctx.project, ctx.fetches.flatMap((f) => f.fetch), ctx.fetches.flatMap((f) => f.check));
+    // every rewritten server in one fetch file, for fetch.js in the background (apply.js says why); a server rewritten
+    // twice in this run is fetched once, as it was written last
+    const last = new Map();
+    for (const s of ctx.fetches.flatMap((f) => f.fetch)) { last.delete(s.name); last.set(s.name, s); }
+    const job = fetchLib.job(ctx.project, [...last.values()], [...new Set(ctx.fetches.flatMap((f) => f.check))]);
     if (job.fetch.length)
     {
         res.fetchFile = fetchLib.writeJob(path.join(dir, 'fetch.json'), job);
         log('', ...fetchLib.nextLines(res.fetchFile, job));
     }
-    // a helper runs at each connect: rewriting one needs no restart
-    if (res.applied.some((id) => !id.startsWith('helper:'))) log('', `Restart Claude Code (or run /reload-plugins for plugins) so the updated servers and plugins load${res.fetchFile ? ' - after the fetch reports' : ''}.`);
+    // a helper runs at each connect: rewriting one needs no restart; a new way to pass data needs one when it rewrote a
+    // registration (a .gitignore or the .mcp.json order changes nothing a session started)
+    if (res.applied.some((id) => !id.startsWith('helper:') && !id.startsWith('upgrade:')) || ctx.restart) log('', `Restart Claude Code (or run /reload-plugins for plugins) so the updated servers and plugins load${res.fetchFile ? ' - after the fetch reports' : ''}.`);
     return res;
 }
 
@@ -406,7 +462,7 @@ async function main(argv, { env = process.env, out = (s) => process.stdout.write
     const project = path.resolve(args.project || process.cwd());
     const inv = inventory.buildInventory({ project, env, run: runCli || cli.run, data: args.data || null });
     if (!inv.cli.ok) { out('preferred-tools: the claude CLI is not on PATH - install Claude Code, then run this again.'); return 3; }
-    const ctx = makeCtx({ inv, project, env, machine, registry, now, runCli: runCli || cli.run, refresh: !args['no-refresh'] });
+    const ctx = makeCtx({ inv, project, env, machine, registry, now, runCli: runCli || cli.run, refresh: !args['no-refresh'], data: args.data || null });
     const found = await check(ctx);
     if (args.apply)
     {

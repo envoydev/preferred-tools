@@ -21,8 +21,10 @@ release-only.
   every question recommending what it has now; its first question about a server is who looks after it. The user's
   ruling (2026-10-27): install is install, configure is configure.
 - `/preferred-tools:fix` - manual; detects known problems and applies the recorded fix.
-- `/preferred-tools:update` - manual; updates installed plugins, pinned catalog servers, language servers and key
-  helpers (`mcp-headers.js`) that are behind, to releases at least 7 days old. It was the model-invocable `update-tools` skill until the user's ruling
+- `/preferred-tools:update` - manual; updates installed plugins, pinned catalog servers, language servers and the copied
+  files (`mcp-headers.js`, `mcp-bridge.js`) that are behind, to releases at least 7 days old, and moves what an older
+  preferred-tools wrote to the way it passes data now, through fix's rows marked `upgrade` (the user's ruling,
+  2026-11-12). It was the model-invocable `update-tools` skill until the user's ruling
   (2026-10-27) made it a command; manual like the other three, so the plugin puts no description in every session.
 
 The build brief, with every design decision, its reason and the user's rulings, is `docs/build-prompt.md`. Read it

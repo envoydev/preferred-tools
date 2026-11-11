@@ -1,11 +1,13 @@
 ---
-description: "Update what is behind - installed plugins, pinned MCP servers and language servers - to releases at least 7 days old, after one confirmation"
+description: "Update what is behind - installed plugins, pinned MCP servers and language servers - to releases at least 7 days old, and move servers an older preferred-tools set up to the way it passes data now, after one confirmation"
 disable-model-invocation: true
 allowed-tools: Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/update.js" --check), Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/update.js" --check *), Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/update.js" --questions), Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/update.js" --questions *)
 ---
 
 Bring what is installed up to date: every plugin on this machine (catalog or not), the pinned MCP servers, the
-language servers on PATH, and the key helper (`mcp-headers.js`) in each root folder. The script finds what is behind and does the work; you paste what it prints and ask.
+language servers on PATH, the key helper (`mcp-headers.js`) and URL bridge (`mcp-bridge.js`) in each root folder, and
+the way this plugin passes data to the servers an older preferred-tools set up. The script finds what is behind and does
+the work; you paste what it prints and ask.
 
 ## Rules
 
@@ -20,7 +22,12 @@ language servers on PATH, and the key helper (`mcp-headers.js`) in each root fol
   at install is listed as 'on its own - not checked' and never offered.
 - **Every ask is data.** Ask exactly the options printed, in the order printed; `AskUserQuestion` adds 'Other' itself.
 - This command never changes `catalog/tools.json`. Its pins move only through the repo script `npm run refresh-pins`.
-- A rename, a move or a route change is not an update; that is `/preferred-tools:configure`.
+- A rename, a move or a route change is not an update; that is `/preferred-tools:configure`. A change in how this plugin
+  passes data to a server it set up is one (the user's ruling, 2026-11-12): the check runs `/preferred-tools:fix`'s rows
+  marked `upgrade` in `catalog/fixes.json` - `key-to-helper` (a key out of an Authorization header into `.mcps-secrets`,
+  read by `mcp-headers.js`), `root-ignore`, `project-relative-path` (absolute project paths, serena's home under the
+  root) and `mcp-order` - offers what they find, and applies it with fix's own code. A finding that needs the user - a
+  key not filled yet, a folder to name - is a note naming `/preferred-tools:fix`, never an offer.
 
 ## 1. What is behind
 
@@ -30,8 +37,9 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/update.js" --check --data "${CLAUDE_PLUGIN_D
 
 Paste the output verbatim in a fenced block. It refreshes each marketplace the installed plugins come from
 (`claude plugin marketplace update <name>`), then lists, in tables: catalog plugins, other plugins, MCP servers as
-`current -> offered` with the release's age, language servers, and key helpers (`mcp-headers.js` copies older than
-this plugin's, as `helper N -> M`). Below them: plugins whose marketplace lists no version
+`current -> offered` with the release's age, language servers, key helpers (`mcp-headers.js` and `mcp-bridge.js` copies
+older than this plugin's, as `helper N -> M` and `bridge N -> M`), and 'New ways to pass data', one line per server or
+folder as `<fix id>: <what it found>`. Below them: plugins whose marketplace lists no version
 (`claude plugin update` is the check for those, so each is offered on its own), releases held back, what was skipped (a hosted URL has no
 pin; a Docker image tag is not checked; a server on its own), what could not be checked, and the language servers on PATH.
 
@@ -71,7 +79,8 @@ Run it with the Bash tool's `timeout: 600000` (10 minutes, the most it allows by
 a language server installs through npm, and the new MCP pins are downloaded after it, not inside it. `all` is every
 offer with a known newer version; an unchecked plugin runs only when its own id is given. Each update is read back: a
 plugin from the plugin list, an MCP pin from the file the CLI wrote, a language server from `--version`, a key helper
-from its first line and digest. A failed MCP
+from its first line and digest, a new way to pass data by its detector run again. The new ways run last, each on the
+registration as it is then, so a pin moved in the same run stays moved; their lines are fix's own. A failed MCP
 rewrite puts the old registration back and prints the line that does it by hand if that fails too (`RESTORE BY HAND`):
 give it to the user as written.
 A key in it shows as `${PREFERRED_TOOLS_KEPT}`, never its value: the user puts their key back there. Paste the output verbatim, then report each result as read back.
