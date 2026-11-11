@@ -1,4 +1,4 @@
-// preferred-tools mcp-headers 2
+// preferred-tools mcp-headers 3
 'use strict';
 // The header helper a hosted registration names as `headersHelper` (spec D4): `node <root>/mcp-headers.js <NAME> <SCHEME>
 // [<global root>]`. Claude Code runs it before it connects and sends the JSON it prints as request headers, so the key stays
@@ -7,6 +7,8 @@
 // It reads <NAME> from `.mcps-secrets` beside it, then from the third argument's folder, then ~/.preferred-tools, then
 // ~/.alfred - the first non-empty value wins - and prints {"Authorization":"<SCHEME> <value>"}. With no value it prints {}
 // and one stderr line naming <NAME> and the files it read, never a value. It always exits 0 with JSON on stdout.
+// For `Basic`, a value holding `:` is `email:api_token` as the user wrote it and is sent base64-encoded; any other value
+// is sent as it is.
 //
 // It prints a header only when Claude Code runs it: Claude Code sets CLAUDE_CODE_MCP_SERVER_NAME for a headersHelper
 // (2.1.85+). Run by hand - a terminal, or an agent's shell tool - it reads no key file and prints {} and one stderr
@@ -20,7 +22,7 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
-const HELPER_VERSION = 2;
+const HELPER_VERSION = 3;
 const SECRETS = '.mcps-secrets';
 const NAME_RULE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const SCHEME_RULE = /^[!-~]+$/;
@@ -75,7 +77,7 @@ function headers(argv, env)
     for (const file of files)
     {
         const value = (readDotenv(file) || {})[name];
-        if (value) return { out: { Authorization: `${scheme} ${value}` }, note: null };
+        if (value) return { out: { Authorization: `${scheme} ${scheme === 'Basic' && value.includes(':') ? Buffer.from(value, 'utf8').toString('base64') : value}` }, note: null };
     }
     return { out: {}, note: `mcp-headers: no value for ${name} in ${files.join(', ')}` };
 }

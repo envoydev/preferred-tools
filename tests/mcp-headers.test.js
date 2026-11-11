@@ -185,3 +185,18 @@ test('digestOf reads a CRLF copy as the same helper', () => {
     assert.strictEqual(helper.digestOf(Buffer.from(text)), helper.digestOf(text));
     assert.notStrictEqual(helper.digestOf(`${text} `), helper.digestOf(text));
 });
+
+// helper 3: Atlassian's personal token goes as Basic base64(email:api_token); the user writes email:api_token
+const schemeRun = (value, scheme) =>
+{
+    const w = world();
+    try
+    {
+        put(sec(w.root), `K=${value}\n`);
+        return w.run('K', scheme).json;
+    }
+    finally { w.clean(); }
+};
+test('Basic with email:token prints the base64 form', () => assert.deepStrictEqual(schemeRun('a@b:t', 'Basic'), { Authorization: 'Basic YUBiOnQ=' }));
+test('Basic with an encoded value passes it through', () => assert.deepStrictEqual(schemeRun('YUBiOnQ=', 'Basic'), { Authorization: 'Basic YUBiOnQ=' }));
+test('Bearer sends a value with a colon as it is', () => assert.deepStrictEqual(schemeRun('x:y', 'Bearer'), { Authorization: 'Bearer x:y' }));

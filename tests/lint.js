@@ -95,6 +95,7 @@ for (const file of textFiles)
 const HELPER_SHA256 = {
     1: '958abe0bf59ab7ef2551573e3105ab7766036c31fc21d19bb0fcf58675e87719', // 0.2.0
     2: '184d9162cd9d506266eb989704a743fd3608728b0601e8f21a398bbc8b8566de', // prints only when Claude Code runs it
+    3: '388dc7ad5ad0093e2340ccadde11ca8b92929f6c3598a306dbebda5b60b798ac', // Basic: email:api_token sent base64-encoded
 };
 {
     const rel = path.join('scripts', 'mcp-headers.js');
