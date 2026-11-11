@@ -558,7 +558,7 @@ test('every question has 2 to 4 options, one Recommended and first, and a call h
                 for (const c of calls) { assert.ok(c.length <= 4, `${row.id}: ${c.length} questions in one call`); c.forEach(checkQuestion); }
             }
             const rq = row.kind === 'mcp' ? asks.routeQuestion(row) : null;
-            if (rq) { checkQuestion(rq); assert.strictEqual(rq.options.length, 2); }
+            if (rq) { checkQuestion(rq); assert.strictEqual(rq.options.length, Object.keys(row.routes).length); }
         }
     }
     Object.values(asks.STATIC).map((q) => (typeof q === 'function' ? q(1, 2, 3) : q)).forEach(checkQuestion);
@@ -2399,4 +2399,35 @@ test('the project-scope helper note says why, once', () => {
     assert.deepStrictEqual(child.sort(), [`context7: ${why}`, `github: ${why}`]);
     const q = asks.scopeQuestion(catalog.byId.get('github'), inv(MAC), { route: 'remote', ctx: { project: '/work/shop', platform: 'darwin', home: '/Users/me', env: {}, exists: () => false } });
     assert.match(q.options.find((o) => o.label.startsWith('Project')).description, /; a session started in a child folder connects without the key - Claude Code does not run a parent folder's helper there$/);
+});
+
+test('buildEntry for the sentry bridge at local, project and user scope', () => {
+    const E = require('../scripts/entries.js');
+    const row = catalog.byId.get('sentry');
+    const tail = (t) => [t, 'SENTRY_ACCESS_TOKEN', 'Sentry-Bearer', 'mcp-remote@0.16.0'];
+    const mac = { platform: 'darwin', home: '/Users/me', project: '/work/shop' };
+    const local = E.buildEntry(row, 'bridge', { scope: 'local', urlNames: { SENTRY_ORG: 'SENTRY_SLUG' } }, mac, catalog.rules);
+    assert.deepStrictEqual(local, { command: 'node', args: ['/work/shop/.preferred-tools/mcp-bridge.js', ...tail('https://mcp.sentry.dev/mcp/{SENTRY_SLUG}/{SENTRY_PROJECT?}')], env: { npm_config_before: '2026-11-11T23:59:59Z' } });
+    const project = E.buildEntry(row, 'bridge', { scope: 'project' }, mac, catalog.rules);
+    assert.strictEqual(project.args[0], '/work/shop/.preferred-tools/mcp-bridge.js', 'absolute at project scope too');
+    assert.strictEqual(project.args[1], 'https://mcp.sentry.dev/mcp/{SENTRY_ORG}/{SENTRY_PROJECT?}');
+    const user = E.buildEntry(row, 'bridge', { scope: 'user', keyName: 'MY_SENTRY' }, mac, catalog.rules);
+    assert.strictEqual(user.args[0], '/Users/me/.preferred-tools/mcp-bridge.js');
+    assert.strictEqual(user.args[2], 'MY_SENTRY');
+    const named = E.buildEntry(row, 'bridge', { scope: 'local' }, { ...mac, roots: { global: '/keys', globalNamed: true } }, catalog.rules);
+    assert.strictEqual(named.args[5], '/keys', 'a named global root is the last argument at local scope');
+    const win = E.buildEntry(row, 'bridge', { scope: 'project' }, { platform: 'win32', home: 'C:\\Users\\me', project: 'C:\\work\\my shop' }, catalog.rules);
+    assert.strictEqual(win.command, 'node');
+    assert.strictEqual(win.args[0], 'C:\\work\\my shop\\.preferred-tools\\mcp-bridge.js', 'unquoted: no shell reads it');
+    for (const [e, scope, keyName, urlNames] of [[local, 'local', 'SENTRY_ACCESS_TOKEN', { SENTRY_ORG: 'SENTRY_SLUG', SENTRY_PROJECT: 'SENTRY_PROJECT' }], [project, 'project', 'SENTRY_ACCESS_TOKEN', { SENTRY_ORG: 'SENTRY_ORG', SENTRY_PROJECT: 'SENTRY_PROJECT' }], [user, 'user', 'MY_SENTRY', { SENTRY_ORG: 'SENTRY_ORG', SENTRY_PROJECT: 'SENTRY_PROJECT' }]])
+    {
+        const cur = E.currentOf(row, { name: 'sentry', scope, route: 'bridge', entry: e });
+        assert.strictEqual(cur.token, true, scope);
+        assert.strictEqual(cur.keyName, keyName, scope);
+        assert.deepStrictEqual(cur.urlNames, urlNames, scope);
+    }
+    assert.deepStrictEqual(E.settingsOf(row, 'bridge', local), [], 'the bridge passes no setting of the user\'s');
+    assert.deepStrictEqual(E.bridgeParts(local), { path: '/work/shop/.preferred-tools/mcp-bridge.js', template: 'https://mcp.sentry.dev/mcp/{SENTRY_SLUG}/{SENTRY_PROJECT?}', keyName: 'SENTRY_ACCESS_TOKEN', scheme: 'Sentry-Bearer', pkg: 'mcp-remote@0.16.0', globalRoot: null });
+    assert.strictEqual(E.bridgeParts({ command: 'npx', args: ['-y', 'mcp-remote@0.16.0'] }), null);
+    assert.strictEqual(E.renameTemplate('https://h/mcp/{A}/{B?}', { A: 'X', B: 'Y' }), 'https://h/mcp/{X}/{Y?}');
 });

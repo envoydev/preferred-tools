@@ -200,3 +200,14 @@ test('writeJob with append adds to a fetch file already there: its steps stay as
     }
     finally { w.clean(); }
 });
+
+test('a bridge entry fetches its mcp-remote pin with its cut-off', () => {
+    const env = { npm_config_before: '2026-11-11T23:59:59Z' };
+    const tail = ['https://mcp.sentry.dev/mcp/{SENTRY_ORG}', 'SENTRY_ACCESS_TOKEN', 'Sentry-Bearer', 'mcp-remote@0.16.0'];
+    const posix = E.fetchStep('sentry', { command: 'node', args: ['/work/shop/.preferred-tools/mcp-bridge.js', ...tail], env }, 'sentry');
+    assert.deepStrictEqual(posix.argv, ['npm', 'exec', '--yes', '--package', 'mcp-remote@0.16.0', '--', 'node', '-e', '0']);
+    assert.strictEqual(posix.what, 'mcp-remote@0.16.0');
+    assert.deepStrictEqual(posix.env, env);
+    const win = E.fetchStep('sentry', { command: 'node', args: ['C:\\work\\shop\\.preferred-tools\\mcp-bridge.js', ...tail], env }, 'sentry');
+    assert.deepStrictEqual(win.argv.slice(0, 4), ['cmd', '/c', 'npm', 'exec']);
+});

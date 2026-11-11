@@ -141,7 +141,8 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     if (!SCOPES.includes(scope)) return out.errors.push(`${row.id}: unknown scope '${scope}'`);
     // a stdio route that needs a key holds it written in, which the committed .mcp.json never carries (spec D5); a
     // registration already there is configure's to keep
-    if (scope === 'project' && routeId !== 'remote' && route.authMode === 'token' && !(cur && cur.scope === 'project'))
+    // a bridge holds names only (0.4.0, Ruling 6)
+    if (scope === 'project' && routeId !== 'remote' && route.runtime !== 'bridge' && route.authMode === 'token' && !(cur && cur.scope === 'project'))
         return out.errors.push(`${row.id}: its local route needs a key written into the registration, so it is not offered at project scope - the committed .mcp.json carries no key; pick local or global scope, or the hosted route`);
     const bad = inv.unreadable.find((u) => (u.scope === scope) || (scope !== 'project' && ['local', 'user'].includes(u.scope) && ['local', 'user'].includes(scope)));
     if (bad) return out.errors.push(`${row.id}: the ${scope} scope is unreadable (${bad.file} is ${bad.state}); nothing is written there`);

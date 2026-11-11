@@ -611,3 +611,23 @@ test("the inventory reads each enabled plugin's MCP servers, matched to a row, a
     }
     finally { w.clean(); }
 });
+
+test('a bridge registration matches sentry route bridge; mcp-remote by hand and a launcher of the user\'s match nothing', () => {
+    const T = 'https://mcp.sentry.dev/mcp/{SENTRY_SLUG}';
+    const tail = [T, 'SENTRY_ACCESS_TOKEN', 'Sentry-Bearer', 'mcp-remote@0.16.0'];
+    assert.deepStrictEqual(inv.matchEntry({ command: 'node', args: ['/h/.preferred-tools/mcp-bridge.js', ...tail] }, catalog), { rowId: 'sentry', route: 'bridge' });
+    assert.deepStrictEqual(inv.matchEntry({ command: 'node.exe', args: ['C:/Users/dev/.preferred-tools/mcp-bridge.js', ...tail] }, catalog), { rowId: 'sentry', route: 'bridge' });
+    assert.deepStrictEqual(inv.matchEntry({ command: 'node', args: ['C:\\Users\\dev\\.preferred-tools\\mcp-bridge.js', ...tail] }, catalog), { rowId: 'sentry', route: 'bridge' }, 'a Windows path');
+    // Review Focus 4: a user's own Sentry setup stays the user's
+    assert.strictEqual(inv.matchEntry({ command: 'npx', args: ['-y', 'mcp-remote@0.15.2', 'https://mcp.sentry.dev/mcp/acme'] }, catalog), null);
+    assert.strictEqual(inv.matchEntry({ command: 'node', args: ['/w/.alfred/sentry-mcp.js'] }, catalog), null);
+    assert.strictEqual(inv.matchEntry({ command: 'node', args: ['/w/my-bridge.js', 'https://mcp.sentry.dev/mcp/{X}'] }, catalog), null);
+    assert.strictEqual(inv.matchEntry({ command: 'node', args: ['/w/mcp-bridge.js', 'https://example.com/mcp/{X}', 'K', 'Bearer', 'mcp-remote@0.16.0'] }, catalog), null, 'a bridge to another host');
+    assert.deepStrictEqual(inv.matchEntry(URL_('https://mcp.sentry.dev/mcp'), catalog), { rowId: 'sentry', route: 'remote' });
+    assert.strictEqual(inv.matchEntry(URL_('https://mcp.context7.com/mcp'), catalog).rowId, 'context7');
+    assert.strictEqual(inv.matchEntry(URL_('https://gitlab.example.com/api/v4/mcp'), catalog).rowId, 'gitlab', 'a hosted URL is never the bridge route');
+});
+
+test('fingerprintKey gives a bridge fingerprint its own key', () => {
+    assert.strictEqual(catalogLib.fingerprintKey({ bridge: 'mcp.sentry.dev/mcp/' }), 'bridge:mcp.sentry.dev/mcp/');
+});

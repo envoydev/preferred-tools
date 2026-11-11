@@ -858,7 +858,7 @@
       "kind": "mcp",
       "group": "machine",
       "label": "sentry",
-      "summary": "Sentry issues and events (hosted, OAuth; or the npm server with a token)",
+      "summary": "Sentry issues and events (hosted, OAuth or a key; the npm server with a token; or a bridge that reads the organization from .mcps-secrets)",
       "name": "sentry",
       "os": [
         "darwin",
@@ -901,6 +901,39 @@
           "fingerprints": [
             {
               "pkg": "@sentry/mcp-server"
+            }
+          ],
+          "prereqs": [
+            "npx"
+          ]
+        },
+        "bridge": {
+          "runtime": "bridge",
+          "url": "https://mcp.sentry.dev/mcp/{SENTRY_ORG}/{SENTRY_PROJECT?}",
+          "urlVars": [
+            {
+              "var": "SENTRY_ORG",
+              "label": "organization slug"
+            },
+            {
+              "var": "SENTRY_PROJECT",
+              "label": "project slug"
+            }
+          ],
+          "authMode": "token",
+          "helper": {
+            "var": "SENTRY_ACCESS_TOKEN",
+            "scheme": "Sentry-Bearer"
+          },
+          "package": {
+            "registry": "npm",
+            "name": "mcp-remote",
+            "version": "0.16.0",
+            "cutoff": "2026-11-11T23:59:59Z"
+          },
+          "fingerprints": [
+            {
+              "bridge": "mcp.sentry.dev/mcp/"
             }
           ],
           "prereqs": [

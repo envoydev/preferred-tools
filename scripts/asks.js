@@ -13,7 +13,7 @@ const roots = require('./roots.js');
 const REC = ' (Recommended)';
 // The `remote` route is worded 'hosted' in every ask: alfred-code's stop guard reads a bare 'remote' in an ask as git
 // state and sends Claude to fetch and re-ask (docs/sources.md, 'alfred-code hooks over the commands').
-const ROUTE_WORD = { remote: 'hosted', local: 'local' };
+const ROUTE_WORD = { remote: 'hosted', local: 'local', bridge: 'bridge' };
 const HEADER = { code: 'Code', docs: 'Docs, forges', browsers: 'Browsers', machine: 'Machine', own: 'On their own', roots: 'Root folders' };
 const SCOPE_TEXT = {
     local: 'this project, only you (~/.claude.json, under this project)',
@@ -295,9 +295,9 @@ function routeQuestion(row, current = null)
     if (ids.length < 2) return null;
     const first = current || row.recommendedRoute;
     const order = [first, ...ids.filter((i) => i !== first)];
-    const text = { remote: 'run by the vendor - no local runtime needed', local: 'runs on this machine' };
+    const text = { remote: 'run by the vendor - no local runtime needed', local: 'runs on this machine', bridge: 'the hosted server at a URL filled from .mcps-secrets each start - a small proxy runs here through npx' };
     return {
-        id: `route-${row.id}`, header: 'Route', multiSelect: false, question: `${row.label}: hosted or local?`,
+        id: `route-${row.id}`, header: 'Route', multiSelect: false, question: ids.length > 2 ? `${row.label}: which route?` : `${row.label}: hosted or local?`,
         options: order.map((r, i) => ({ label: `${ROUTE_WORD[r][0].toUpperCase()}${ROUTE_WORD[r].slice(1)}${i === 0 ? REC : ''}`, description: text[r] })),
     };
 }
@@ -310,7 +310,8 @@ function scopesFor(row, routeId, ctx = null)
     if (row.kind === 'plugin') return ['project', 'local', 'user'];
     // a stdio route that needs a key holds it written in, which the .mcp.json in this folder never carries (spec D5)
     const route = row.routes && row.routes[routeId];
-    const stdioKey = routeId !== 'remote' && route && route.authMode === 'token';
+    // a bridge holds names only, never a key (0.4.0)
+    const stdioKey = routeId !== 'remote' && route && route.runtime !== 'bridge' && route.authMode === 'token';
     return ['local', 'project', 'user'].filter((s) => s !== 'project' || !stdioKey);
 }
 

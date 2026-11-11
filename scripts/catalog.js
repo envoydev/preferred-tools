@@ -18,6 +18,7 @@ function load(dir = CATALOG_DIR)
 // One string per fingerprint, equal for two rows exactly when they would match the same registration.
 function fingerprintKey(f)
 {
+    if (f.bridge) return `bridge:${f.bridge}`;
     if (f.pkg) return `pkg:${f.pkg}${f.flag ? `+${f.flag}=${f.value}` : ''}`;
     if (f.command) return `cmd:${f.command}`;
     return `url:${f.host || '*'}${f.pathPrefix || ''}`;

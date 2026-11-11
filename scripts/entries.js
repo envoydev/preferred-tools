@@ -5,6 +5,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const keys = require('./keys.js');
+const { templateNames } = require('./mcp-bridge.js');
 
 const pathFor = (platform) => (platform === 'win32' ? path.win32 : path.posix);
 const slashes = (p) => p.replace(/\\/g, '/');
@@ -44,6 +45,15 @@ function currentOf(row, reg)
 {
     const e = reg.entry;
     const flag = (f) => { const i = (e.args || []).indexOf(f); return i >= 0 ? e.args[i + 1] : undefined; };
+    const bridge = bridgeParts(e);
+    if (bridge)
+    {
+        // each catalog URL name, by position, to the name the template holds
+        const route = Object.values(row.routes).find((r) => r.runtime === 'bridge');
+        const held = templateNames(bridge.template) || [];
+        const urlNames = Object.fromEntries(((route && route.urlVars) || []).map((v, i) => [v.var, held[i] ? held[i].name : v.var]));
+        return { name: reg.name, scope: reg.scope, route: reg.route, entry: e, rootStr: null, executablePath: undefined, token: true, keyName: bridge.keyName, urlNames, host: null };
+    }
     return {
         name: reg.name, scope: reg.scope, route: reg.route, entry: e,
         rootStr: row.locations ? rootOfEntry(row, e) : null,
@@ -269,6 +279,7 @@ const APPIUM_SDK_ENV = ['ANDROID_HOME', 'JAVA_HOME'];
 function settingsOf(row, routeId, entry = null)
 {
     const route = row.routes[routeId];
+    if (route.runtime === 'bridge') return [];
     const derived = new Set(((row.locations && row.locations.derived) || []).filter((d) => d.in === 'env').map((d) => d.key));
     const env = (entry ? entry.env : route.env) || {};
     return Object.entries(env).filter(([k]) => k !== route.tokenVar && !derived.has(k) && !APPIUM_SDK_ENV.includes(k) && k !== 'npm_config_before' && !keys.credentialName(k));
@@ -366,6 +377,31 @@ function helperNameOf(command)
 // the route's scheme.
 const helperFor = (route, scope, ctx, keyName = null) => helperCommand({ helperPath: helperPathFor(scope, ctx), name: keyName || route.helper.var, scheme: route.helper.scheme, globalRoot: helperGlobalRoot(scope, ctx), style: ctx.platform === 'win32' ? 'win32' : 'posix' });
 
+// ---- the bridge (0.4.0) --------------------------------------------------------------------------------------------
+
+// Where a bridge registration at `scope` finds mcp-bridge.js: beside the helper, absolute at every scope.
+function bridgePathFor(scope, ctx)
+{
+    return pathFor(ctx.platform).join(rootOf(scope === 'user' ? 'global' : 'project', ctx), 'mcp-bridge.js');
+}
+
+// A bridge registration's parts, read from its launch: `node <path>/mcp-bridge.js <template> <KEY> <SCHEME> <pkg> [<root>]`.
+// -> { path, template, keyName, scheme, pkg, globalRoot } | null
+function bridgeParts(entry)
+{
+    if (!entry || typeof entry !== 'object' || typeof entry.command !== 'string' || !Array.isArray(entry.args)) return null;
+    if (path.basename(entry.command.replace(/\\/g, '/')).replace(/\.exe$/i, '').toLowerCase() !== 'node') return null;
+    const args = entry.args.map(String);
+    const at = args.findIndex((a) => a.replace(/\\/g, '/').split('/').pop() === 'mcp-bridge.js');
+    if (at < 0 || !args[at + 1]) return null;
+    const [template, keyName = null, scheme = null, pkg = null, globalRoot = null] = args.slice(at + 1);
+    return { path: args[at], template, keyName, scheme, pkg, globalRoot };
+}
+
+// A template with each catalog name replaced by the user's: { SENTRY_ORG: 'SENTRY_SLUG' } turns {SENTRY_ORG} into
+// {SENTRY_SLUG}, and keeps an optional segment's `?`.
+const renameTemplate = (template, names) => template.replace(/\{([A-Za-z_][A-Za-z0-9_]*)(\?)?\}/g, (m, name, opt) => `{${names[name] || name}${opt || ''}}`);
+
 // A fresh entry from the catalog. `a` = { rootStr, scope, executablePath, token, keyName, params }. A hosted route that
 // sends a key gets `headersHelper` and no `headers`: the key stays in .mcps-secrets (spec D4).
 function buildEntry(row, routeId, a, ctx, rules)
@@ -377,6 +413,17 @@ function buildEntry(row, routeId, a, ctx, rules)
         const useKey = route.helper && (route.authMode === 'token' || (route.authMode === 'optional-token' && a.token));
         if (useKey) entry.headersHelper = helperFor(route, a.scope, ctx, a.keyName);
         return entry;
+    }
+    if (route.runtime === 'bridge')
+    {
+        // no shell reads this command line: a path with a space is one argument as it is
+        const p = route.package;
+        const globalRoot = helperGlobalRoot(a.scope, ctx);
+        return {
+            command: 'node',
+            args: [bridgePathFor(a.scope, ctx), renameTemplate(route.url, a.urlNames || {}), a.keyName || route.helper.var, route.helper.scheme, `${p.name}@${p.version}`, ...(globalRoot ? [globalRoot] : [])],
+            env: { npm_config_before: p.cutoff },
+        };
     }
 
     let entry;
@@ -446,6 +493,14 @@ function fetchStep(name, entry, rowId, old)
 function fetchOf(name, entry, rowId)
 {
     if (!entry || !entry.command) return null;
+    const bridge = bridgeParts(entry);
+    if (bridge)
+    {
+        if (!bridge.pkg) return null;
+        const npm = ['npm', 'exec', '--yes', '--package', bridge.pkg, '--', 'node', '-e', '0'];
+        const argv = /^[A-Za-z]:/.test(bridge.path) ? ['cmd', '/c', ...npm] : npm;
+        return { op: 'fetch', name, row: rowId, what: bridge.pkg, argv, env: entry.env || {}, why: `${rowId || name}: fetch ${bridge.pkg} so the first start answers in time` };
+    }
     let cmd = entry.command;
     let args = (entry.args || []).slice();
     const viaCmd = /^cmd(\.exe)?$/i.test(cmd) && /^\/c$/i.test(args[0] || '');
@@ -488,4 +543,5 @@ module.exports = {
     defaultRoot, alfredRoot, otherSide, otherPlace, rootOfEntry, applyRoot, buildEntry, nameProblem, subst, fetchStep,
     ALFRED_ENTRIES, alfredData, alfredNameProblem, recommendedSide, rootOf, machinePath, expandVars,
     helperCommand, helperPathFor, helperGlobalRoot, helperNameOf, helperFor, helperArgv, helperParts, shellArg, APPIUM_SDK_ENV, settingsOf, mergeSettings,
+    bridgePathFor, bridgeParts, renameTemplate,
 };

@@ -16,6 +16,7 @@ const account = require('./account.js');
 const cli = require('./claude-cli.js');
 const kept = require('./kept.js');
 const roots = require('./roots.js');
+const E = require('./entries.js');
 const { readState } = account;
 const { blockingStdio } = require('./json-file.js');
 
@@ -55,6 +56,11 @@ const flagValue = (args, flag) =>
 
 function matchesFingerprint(entry, f)
 {
+    // a bridge (0.4.0): `node <root>/mcp-bridge.js <template> ...`, matched by the file's exact name and the template's host
+    // and path - never by the URL branch below, which would take every hosted URL for a fingerprint with no host
+    const bridge = E.bridgeParts(entry);
+    if (f.bridge) return Boolean(bridge) && bridge.template.replace(/^https?:\/\//i, '').toLowerCase().startsWith(f.bridge);
+    if (bridge) return false;
     if (entry.url || entry.type === 'http' || entry.type === 'sse')
     {
         if (f.pkg || f.command) return false;

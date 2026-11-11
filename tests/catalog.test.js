@@ -50,7 +50,7 @@ test('every MCP route carries what its transport needs', () => {
         for (const [routeId, route] of Object.entries(row.routes))
         {
             const at = `${row.id}/${routeId}`;
-            assert.ok(['local', 'remote'].includes(routeId), at);
+            assert.ok(['local', 'remote', 'bridge'].includes(routeId), at);
             assert.ok(!('projectScope' in route), `${at}: no projectScope - every route may sit at every scope`);
             assert.ok(Array.isArray(route.fingerprints) && route.fingerprints.length, `${at}: fingerprints`);
             assert.ok(Array.isArray(route.prereqs), `${at}: prereqs`);
@@ -60,6 +60,7 @@ test('every MCP route carries what its transport needs', () => {
                 assert.match(route.url, /^https:\/\//, at);
                 assert.ok(['oauth', 'token', 'optional-token'].includes(route.authMode), `${at}: authMode`);
             }
+            else if (routeId === 'bridge') assert.strictEqual(route.runtime, 'bridge', at);
             else
             {
                 assert.ok(['uvx', 'npx', 'docker'].includes(route.runtime), `${at}: runtime`);
@@ -269,3 +270,25 @@ test('gitlab and atlassian take a key through the helper, with OAuth as the keyl
 });
 
 test('memory keeps its data in the root of its scope', () => assert.strictEqual(cat.byId.get('memory').locations.defaultSide, 'project'));
+
+test('a bridge route: template names equal urlVars, a key helper, a pinned mcp-remote and a bridge fingerprint', () => {
+    const bridge = require('../scripts/mcp-bridge.js');
+    const routes = cat.tools.filter((r) => r.kind === 'mcp').flatMap((r) => Object.entries(r.routes).filter(([, x]) => x.runtime === 'bridge').map(([id, x]) => [`${r.id}/${id}`, x]));
+    assert.deepStrictEqual(routes.map(([at]) => at), ['sentry/bridge']);
+    for (const [at, route] of routes)
+    {
+        const names = bridge.templateNames(route.url);
+        assert.ok(names, `${at}: a template the bridge reads`);
+        assert.deepStrictEqual(names.map((n) => n.name), route.urlVars.map((v) => v.var), `${at}: urlVars in the template's order`);
+        assert.ok(route.urlVars.every((v) => typeof v.label === 'string' && v.label), `${at}: each URL name has a label`);
+        assert.strictEqual(route.authMode, 'token', at);
+        assert.ok(route.helper.var && route.helper.scheme, `${at}: helper`);
+        assert.strictEqual(route.package.name, 'mcp-remote', at);
+        assert.match(route.package.version, /^\d+\.\d+\.\d+$/, at);
+        assert.match(route.package.cutoff, /^\d{4}-\d{2}-\d{2}T23:59:59Z$/, at);
+        assert.deepStrictEqual(route.prereqs, ['npx'], at);
+        assert.ok(route.fingerprints.every((fp) => typeof fp.bridge === 'string' && fp.bridge.endsWith('/')), `${at}: bridge fingerprints`);
+    }
+    const sentry = cat.tools.find((r) => r.id === 'sentry');
+    assert.strictEqual(sentry.recommendedRoute, 'remote', 'the bridge is a third choice, never the recommended one');
+});
