@@ -58,7 +58,7 @@ test('every MCP route carries what its transport needs', () => {
             {
                 assert.strictEqual(route.type, 'http', at);
                 assert.match(route.url, /^https:\/\//, at);
-                assert.ok(['oauth', 'token', 'optional-token'].includes(route.auth), `${at}: auth`);
+                assert.ok(['oauth', 'token', 'optional-token'].includes(route.authMode), `${at}: authMode`);
             }
             else
             {
@@ -202,6 +202,28 @@ test('every fix row has the fields the brief names and points at an existing row
     }
 });
 
+// A secret guard reads a string under a key named like a credential as a key, so the catalog holds none: its mode
+// fields are `authMode` and `keyless`, and a credential-named field holds only a ${VAR}, a variable's name or a flag.
+// Then no guard treats the catalog as a key file, whatever words it knows.
+test('no catalog field named like a credential holds a plain string', () => {
+    const CREDENTIAL = /(?:auth|token|key|secret|passw(?:or)?d|pwd|credentials?)$/i;
+    const NOT_A_VALUE = [/^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/, /^[A-Z][A-Z0-9_]*$/, /^--[a-z0-9-]+$/];
+    const bad = [];
+    const walk = (v, at) =>
+    {
+        if (Array.isArray(v)) return v.forEach((x, i) => walk(x, `${at}[${i}]`));
+        if (!v || typeof v !== 'object') return undefined;
+        for (const [k, x] of Object.entries(v))
+        {
+            if (typeof x === 'string' && CREDENTIAL.test(k) && !NOT_A_VALUE.some((re) => re.test(x))) bad.push(`${at}.${k}`);
+            walk(x, `${at}.${k}`);
+        }
+        return undefined;
+    };
+    walk(cat, 'catalog');
+    assert.deepStrictEqual(bad, []);
+});
+
 test('hosted keyed routes carry a helper block and no Authorization header', () => {
     const want = { context7: ['CONTEXT7_API_KEY', 'Bearer', 'optional-token'], github: ['GITHUB_PERSONAL_ACCESS_TOKEN', 'Bearer', 'token'], sentry: ['SENTRY_ACCESS_TOKEN', 'Sentry-Bearer', 'optional-token'] };
     for (const row of cat.tools.filter((r) => r.kind === 'mcp' && r.routes.remote))
@@ -212,7 +234,7 @@ test('hosted keyed routes carry a helper block and no Authorization header', () 
         assert.ok(!('tokenVar' in r), `${row.id}: a hosted route names its key through helper.var`);
         if (want[row.id])
         {
-            assert.deepStrictEqual([r.helper.var, r.helper.scheme, r.auth], want[row.id], row.id);
+            assert.deepStrictEqual([r.helper.var, r.helper.scheme, r.authMode], want[row.id], row.id);
             assert.match(r.helper.var, /^[A-Za-z_][A-Za-z0-9_]*$/);
             assert.match(r.helper.scheme, /^[!-~]+$/);
         }

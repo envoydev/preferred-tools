@@ -401,7 +401,7 @@ function buildEntry(row, routeId, a, ctx, rules)
     if (routeId === 'remote')
     {
         const entry = { type: route.type, url: subst(route.url, a.params || {}) };
-        const useKey = route.helper && (route.auth === 'token' || (route.auth === 'optional-token' && a.token));
+        const useKey = route.helper && (route.authMode === 'token' || (route.authMode === 'optional-token' && a.token));
         if (useKey) entry.headersHelper = helperFor(route, a.scope, ctx, a.keyName);
         return entry;
     }

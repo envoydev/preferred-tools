@@ -213,7 +213,7 @@
         "remote": {
           "type": "http",
           "url": "https://mcp.context7.com/mcp",
-          "auth": "optional-token",
+          "authMode": "optional-token",
           "helper": {
             "var": "CONTEXT7_API_KEY",
             "scheme": "Bearer"
@@ -228,7 +228,7 @@
         },
         "local": {
           "runtime": "npx",
-          "auth": "optional-token",
+          "authMode": "optional-token",
           "tokenVar": "CONTEXT7_API_KEY",
           "package": {
             "registry": "npm",
@@ -273,7 +273,7 @@
         "remote": {
           "type": "http",
           "url": "https://api.githubcopilot.com/mcp/",
-          "auth": "token",
+          "authMode": "token",
           "helper": {
             "var": "GITHUB_PERSONAL_ACCESS_TOKEN",
             "scheme": "Bearer"
@@ -288,7 +288,7 @@
         },
         "local": {
           "runtime": "docker",
-          "auth": "token",
+          "authMode": "token",
           "tokenVar": "GITHUB_PERSONAL_ACCESS_TOKEN",
           "image": {
             "name": "ghcr.io/github/github-mcp-server",
@@ -347,7 +347,7 @@
         "remote": {
           "type": "http",
           "url": "https://{host}/api/v4/mcp",
-          "auth": "oauth",
+          "authMode": "oauth",
           "fingerprints": [
             {
               "pathPrefix": "/api/v4/mcp"
@@ -375,7 +375,7 @@
         "remote": {
           "type": "http",
           "url": "https://mcp.atlassian.com/v2/mcp",
-          "auth": "oauth",
+          "authMode": "oauth",
           "fingerprints": [
             {
               "host": "mcp.atlassian.com",
@@ -842,12 +842,12 @@
         "remote": {
           "type": "http",
           "url": "https://mcp.sentry.dev/mcp",
-          "auth": "optional-token",
+          "authMode": "optional-token",
           "helper": {
             "var": "SENTRY_ACCESS_TOKEN",
             "scheme": "Sentry-Bearer"
           },
-          "noKey": "oauth",
+          "keyless": "oauth",
           "fingerprints": [
             {
               "host": "mcp.sentry.dev",
@@ -858,7 +858,7 @@
         },
         "local": {
           "runtime": "npx",
-          "auth": "token",
+          "authMode": "token",
           "tokenVar": "SENTRY_ACCESS_TOKEN",
           "package": {
             "registry": "npm",

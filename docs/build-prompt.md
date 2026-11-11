@@ -69,6 +69,12 @@ Items marked (verify) are facts from the alfred-code record or from memory, unch
 | typescript-lsp | plugin | `typescript-lsp@claude-plugins-official` | marketplace `anthropics/claude-plugins-official` | needs `typescript-language-server` + `typescript@6` on PATH, Node 22.22.2 or later |
 | csharp-lsp | plugin | `csharp-lsp@claude-plugins-official` | the same | needs `csharp-ls` on PATH (`dotnet tool install -g csharp-ls`, .NET 10 SDK) |
 
+A route's key mode sits in `authMode` (`token`, `oauth`, `optional-token`), and a hosted route that signs in with OAuth
+when no key is chosen carries `keyless: "oauth"`. No field is named like a credential unless it holds a `${VAR}`, a
+variable's name or a flag (a test in `tests/catalog.test.js`): a secret guard reads a string under such a name as a
+key, and 0.2.0's `auth` and `noKey` made one treat the whole catalog as a key file (the user's ruling, 2026-11-11:
+rename them here rather than ask a guard to learn the mode words).
+
 The ten servers the stack used to ship (serena, memory, context7, the four browsers, appium, macOS, Windows) have a
 paste-ready entry each, with every env key and pin, in the alfred-code checkout beside this one:
 `../alfred-code/stack/mcp/original-mcps.json` (also `https://github.com/envoydev/alfred-code/blob/main/stack/mcp/original-mcps.json`),

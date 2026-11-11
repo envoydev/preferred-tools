@@ -158,7 +158,7 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     if (!SCOPES.includes(scope)) return out.errors.push(`${row.id}: unknown scope '${scope}'`);
     // a stdio route that needs a key holds it written in, which the committed .mcp.json never carries (spec D5); a
     // registration already there is configure's to keep
-    if (scope === 'project' && routeId !== 'remote' && route.auth === 'token' && !(cur && cur.scope === 'project'))
+    if (scope === 'project' && routeId !== 'remote' && route.authMode === 'token' && !(cur && cur.scope === 'project'))
         return out.errors.push(`${row.id}: its local route needs a key written into the registration, so it is not offered at project scope - the committed .mcp.json carries no key; pick local or global scope, or the hosted route`);
     const bad = inv.unreadable.find((u) => (u.scope === scope) || (scope !== 'project' && ['local', 'user'].includes(u.scope) && ['local', 'user'].includes(scope)));
     if (bad) return out.errors.push(`${row.id}: the ${scope} scope is unreadable (${bad.file} is ${bad.state}); nothing is written there`);
@@ -203,9 +203,9 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     const params = { host: row.params ? (pick.params && pick.params.host) || (cur && cur.host) || row.params[0].default : undefined, ...(pick.params || {}) };
     // an optional key: sent when picked, else when a name D9 offers is filled in the chain the scope reads; a stdio route
     // at project scope runs keyless (spec D5)
-    const keyless = scope === 'project' && routeId !== 'remote' && route.auth === 'optional-token';
+    const keyless = scope === 'project' && routeId !== 'remote' && route.authMode === 'optional-token';
     if (keyless && pick.token) return out.errors.push(`${row.id}: its local route runs keyless at project scope - the committed .mcp.json carries no key; pick local or global scope for a key, or the hosted route`);
-    let wantToken = pick.token === undefined ? (cur ? Boolean(cur.token) : route.auth === 'optional-token' && asks.keyToSend(asks.keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled, scope))) : Boolean(pick.token);
+    let wantToken = pick.token === undefined ? (cur ? Boolean(cur.token) : route.authMode === 'optional-token' && asks.keyToSend(asks.keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled, scope))) : Boolean(pick.token);
     if (keyless && wantToken)
     {
         out.notes.push(`${row.id}: --api-key is left out - its local route runs keyless at project scope`);
@@ -216,7 +216,7 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     // with the chain's .mcps-secrets only - the 0.1.x key files are read for names, never values - else the catalog's
     const keyVar = route.helper ? route.helper.var : route.tokenVar;
     if (pick.keyName !== undefined && !keys.NAME_RULE.test(String(pick.keyName))) return out.errors.push(`${row.id}: '${pick.keyName}' is not a key name - a name matches ${keys.NAME_RULE.source}`);
-    const usesKey = Boolean(keyVar) && (route.auth === 'token' || (route.auth === 'optional-token' && wantToken));
+    const usesKey = Boolean(keyVar) && (route.authMode === 'token' || (route.authMode === 'optional-token' && wantToken));
     const ks = usesKey ? asks.keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled, scope) : null;
     const sameRoute = Boolean(cur) && cur.route === routeId;
     const liveKey = sameRoute && ks && ks.kind === 'stdio' ? asks.heldKey(ctx.readLive(cur.name, cur.scope) || {}, route) : null;
@@ -301,7 +301,7 @@ function planMcp(row, pick, inv, ctx, catalog, out)
             else if (header) out.notes.push(`${row.id}: '${cur.name}' sends its key from an Authorization header - /preferred-tools:fix moves it into .mcps-secrets, read by mcp-headers.js (key-to-helper)`);
             else entry.headersHelper = E.helperFor(route, scope, ctx, keyName);
         }
-        else if (route.auth === 'optional-token' && wantToken !== cur.token)
+        else if (route.authMode === 'optional-token' && wantToken !== cur.token)
         {
             const args = (entry.args || []).slice();
             const i = args.indexOf('--api-key');
@@ -365,7 +365,7 @@ function planMcp(row, pick, inv, ctx, catalog, out)
         if (scope === 'project') out.notes.push(`${row.id}: a session started in a subfolder or a child project does not get this key - install it there too, or at global scope`);
         once('node must be on the PATH Claude Code starts with - mcp-headers.js runs under it, as this plugin\'s commands do');
     }
-    if (route.auth === 'oauth' || (route.noKey === 'oauth' && !wantToken)) out.oauth.push({ row: row.id, name, scope });
+    if (route.authMode === 'oauth' || (route.keyless === 'oauth' && !wantToken)) out.oauth.push({ row: row.id, name, scope });
     if (row.dangerous && row.dangerous.length) out.dangerous.push({ row: row.id, name, tools: row.dangerous });
     out.expect.push({ kind: 'mcp', row: row.id, name, scope, route: routeId });
 

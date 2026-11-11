@@ -790,7 +790,7 @@ test('plan.js plans every route at project scope but a stdio route that needs a 
         for (const routeId of Object.keys(row.routes))
         {
             const p = plan(inv(row.os.includes('win32') && !row.os.includes('darwin') ? WIN : MAC), pickOne(row.id, { route: routeId, scope: 'project' }), opts('/h'));
-            if (routeId === 'local' && row.routes.local.auth === 'token') { assert.match(p.errors.join(), /not offered at project scope/, `${row.id}/${routeId}`); continue; }
+            if (routeId === 'local' && row.routes.local.authMode === 'token') { assert.match(p.errors.join(), /not offered at project scope/, `${row.id}/${routeId}`); continue; }
             assert.deepStrictEqual(p.errors, [], `${row.id}/${routeId}`);
             assert.strictEqual(addStep(p).scope, 'project', `${row.id}/${routeId}`);
         }

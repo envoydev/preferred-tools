@@ -124,7 +124,7 @@ function recommendedScope(row, routeId, keyState = null)
     if (routeId !== 'remote') return 'local';
     const route = row.routes[routeId];
     if (!route || !route.helper) return 'project';
-    return route.auth === 'token' || Boolean(keyState && keyState.found) ? 'user' : 'project';
+    return route.authMode === 'token' || Boolean(keyState && keyState.found) ? 'user' : 'project';
 }
 // an optional key is sent by default when a name D9 offers is filled in the chain the chosen scope reads
 const keyToSend = (keyState) => Boolean(keyState && keyState.found);
@@ -294,7 +294,7 @@ function scopesFor(row, routeId, ctx = null)
     const serenaWin = row.locations && row.locations.windowsAbsolute && ctx && ctx.platform === 'win32';
     // a stdio route that needs a key holds it written in, which the committed .mcp.json never carries (spec D5)
     const route = row.routes && row.routes[routeId];
-    const stdioKey = routeId !== 'remote' && route && route.auth === 'token';
+    const stdioKey = routeId !== 'remote' && route && route.authMode === 'token';
     return ['local', 'project', 'user'].filter((s) => s !== 'project' || (!stdioKey && !(serenaWin && E.serenaWindowsHome(ctx).needsInput)));
 }
 
@@ -506,7 +506,7 @@ function toolAsk(row, inv, { route, scope = null, name = null, current = null, c
         });
     }
     // an optional key (spec D5): asked at every scope but for a stdio route at project scope, which runs keyless
-    else if (row.routes[routeId].auth === 'optional-token' && !(routeId !== 'remote' && at === 'project'))
+    else if (row.routes[routeId].authMode === 'optional-token' && !(routeId !== 'remote' && at === 'project'))
     {
         const route = row.routes[routeId];
         const ks = keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled, at || 'user');
@@ -514,7 +514,7 @@ function toolAsk(row, inv, { route, scope = null, name = null, current = null, c
         const useKey = route.helper
             ? { label: 'Use a key from .mcps-secrets', description: `mcp-headers.js reads it each time Claude Code connects${file ? `, from ${file} first` : ''} - never written into the registration` }
             : { label: 'Use a key from .mcps-secrets', description: `the apply writes it into the registration from ${file || '.mcps-secrets'}, never printed` };
-        const noKey = route.noKey === 'oauth'
+        const noKey = route.keyless === 'oauth'
             ? { label: 'Sign in with OAuth', description: 'run /mcp once in a session to log in' }
             : { label: 'No key - lower rate limits', description: 'works anonymously' };
         qs.push({
