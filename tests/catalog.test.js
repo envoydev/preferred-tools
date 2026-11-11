@@ -118,7 +118,7 @@ test('every location root derives its paths from one root, in the row\'s locatio
     assert.deepStrictEqual(loc('memory'), ['env:MCP_MEMORY_SQLITE_PATH:memory.db']);
     assert.deepStrictEqual(loc('playwright-chrome'), ['arg:--user-data-dir:', 'arg:--output-dir:output']);
     assert.deepStrictEqual(loc('appium'), ['env:SCREENSHOTS_DIR:screenshots', 'env:PAGE_SOURCES_DIR:page-sources']);
-    assert.strictEqual(cat.byId.get('memory').locations.defaultSide, 'account');
+    assert.strictEqual(cat.byId.get('memory').locations.defaultSide, 'project');
     // the old roots are the ones original-mcps.json holds, not a pattern
     assert.strictEqual(cat.byId.get('serena').locations.alfred, '.alfred/serena/home');
     assert.strictEqual(cat.byId.get('playwright-webkit').locations.alfred, '.alfred/webkit-control');
@@ -200,6 +200,11 @@ test('every fix row has the fields the brief names and points at an existing row
         for (const t of f.tool) assert.ok(cat.byId.has(t), `${f.id}: unknown row ${t}`);
         assert.ok(f.os.every((o) => OSES.includes(o)), f.id);
     }
+    for (const id of ['key-to-helper', 'helper-missing', 'helper-stale', 'root-ignore'])
+    {
+        const tools = cat.fixes.find((f) => f.id === id).tool;
+        for (const t of ['gitlab', 'atlassian']) assert.ok(tools.includes(t), `${id} lists ${t}`);
+    }
 });
 
 // A secret guard reads a string under a key named like a credential as a key, so the catalog holds none: its mode
@@ -225,7 +230,8 @@ test('no catalog field named like a credential holds a plain string', () => {
 });
 
 test('hosted keyed routes carry a helper block and no Authorization header', () => {
-    const want = { context7: ['CONTEXT7_API_KEY', 'Bearer', 'optional-token'], github: ['GITHUB_PERSONAL_ACCESS_TOKEN', 'Bearer', 'token'], sentry: ['SENTRY_ACCESS_TOKEN', 'Sentry-Bearer', 'optional-token'] };
+    const want = { context7: ['CONTEXT7_API_KEY', 'Bearer', 'optional-token'], github: ['GITHUB_PERSONAL_ACCESS_TOKEN', 'Bearer', 'token'], sentry: ['SENTRY_ACCESS_TOKEN', 'Sentry-Bearer', 'optional-token'],
+        gitlab: ['GITLAB_TOKEN', 'Bearer', 'optional-token'], atlassian: ['ATLASSIAN_API_TOKEN', 'Basic', 'optional-token'] };
     for (const row of cat.tools.filter((r) => r.kind === 'mcp' && r.routes.remote))
     {
         const r = row.routes.remote;
@@ -241,3 +247,25 @@ test('hosted keyed routes carry a helper block and no Authorization header', () 
         else assert.strictEqual(r.helper, undefined, `${row.id}: OAuth only`);
     }
 });
+
+test('the order lists every MCP row once and nothing else', () => {
+    const mcp = cat.tools.filter((r) => r.kind === 'mcp').map((r) => r.id).sort();
+    assert.deepStrictEqual([...cat.order].sort(), mcp);
+    assert.deepStrictEqual(cat.order, ['atlassian', 'github', 'gitlab', 'context7', 'sentry', 'memory', 'serena',
+        'windows-control', 'macos-control', 'appium', 'playwright-chrome', 'playwright-msedge', 'playwright-firefox', 'playwright-webkit']);
+});
+
+test('gitlab and atlassian take a key through the helper, with OAuth as the keyless way', () => {
+    const want = { gitlab: ['GITLAB_TOKEN', 'Bearer'], atlassian: ['ATLASSIAN_API_TOKEN', 'Basic'] };
+    for (const [id, [v, scheme]] of Object.entries(want))
+    {
+        const r = cat.byId.get(id).routes.remote;
+        assert.strictEqual(r.helper.var, v, id);
+        assert.strictEqual(r.helper.scheme, scheme, id);
+        assert.strictEqual(r.keyless, 'oauth', id);
+        assert.strictEqual(r.authMode, 'optional-token', id);
+        assert.ok(typeof r.helper.hint === 'string' && r.helper.hint.length > 0, `${id}: hint`);
+    }
+});
+
+test('memory keeps its data in the root of its scope', () => assert.strictEqual(cat.byId.get('memory').locations.defaultSide, 'project'));

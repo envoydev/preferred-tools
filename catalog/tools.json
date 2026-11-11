@@ -29,6 +29,22 @@
       "label": "Machine and monitoring"
     }
   ],
+  "order": [
+    "atlassian",
+    "github",
+    "gitlab",
+    "context7",
+    "sentry",
+    "memory",
+    "serena",
+    "windows-control",
+    "macos-control",
+    "appium",
+    "playwright-chrome",
+    "playwright-msedge",
+    "playwright-firefox",
+    "playwright-webkit"
+  ],
   "tools": [
     {
       "id": "serena",
@@ -138,7 +154,7 @@
         }
       },
       "locations": {
-        "defaultSide": "account",
+        "defaultSide": "project",
         "relative": true,
         "alfred": "~/.alfred-memory",
         "derived": [
@@ -328,7 +344,7 @@
       "kind": "mcp",
       "group": "docs",
       "label": "gitlab",
-      "summary": "GitLab's own hosted MCP server (gitlab.com or a self-managed host), OAuth",
+      "summary": "GitLab's own hosted MCP server (gitlab.com or a self-managed host), a token or OAuth",
       "name": "gitlab",
       "os": [
         "darwin",
@@ -347,7 +363,13 @@
         "remote": {
           "type": "http",
           "url": "https://{host}/api/v4/mcp",
-          "authMode": "oauth",
+          "authMode": "optional-token",
+          "helper": {
+            "var": "GITLAB_TOKEN",
+            "scheme": "Bearer",
+            "hint": "a fine-grained personal access token with the MCP tool resource and the Execute permission - a legacy token is refused (403)"
+          },
+          "keyless": "oauth",
           "fingerprints": [
             {
               "pathPrefix": "/api/v4/mcp"
@@ -363,7 +385,7 @@
       "kind": "mcp",
       "group": "docs",
       "label": "atlassian",
-      "summary": "Atlassian's hosted Rovo MCP server (Jira, Confluence), OAuth",
+      "summary": "Atlassian's hosted Rovo MCP server (Jira, Confluence), an API token or OAuth",
       "name": "atlassian",
       "os": [
         "darwin",
@@ -375,7 +397,13 @@
         "remote": {
           "type": "http",
           "url": "https://mcp.atlassian.com/v2/mcp",
-          "authMode": "oauth",
+          "authMode": "optional-token",
+          "helper": {
+            "var": "ATLASSIAN_API_TOKEN",
+            "scheme": "Basic",
+            "hint": "an org admin must turn API tokens on; the value is email:api_token; some tools are missing with a token - OAuth has them all"
+          },
+          "keyless": "oauth",
           "fingerprints": [
             {
               "host": "mcp.atlassian.com",

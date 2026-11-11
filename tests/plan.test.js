@@ -1,6 +1,8 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const catalogLib = require('../scripts/catalog.js');
 const { plan, render, argvOf } = require('../scripts/plan.js');
@@ -92,7 +94,7 @@ test('uvx rows get their own python: windows-control 3.14 (x64 build on ARM64), 
     const mem = addStep(plan(inv(MAC), pickOne('memory'), opts('/Users/me'))).entry;
     assert.ok(mem.args.includes('mcp-memory-service[sqlite]==12.4.0'));
     assert.ok(!mem.args.includes('--with'), 'numpy is a core dependency of the pin');
-    assert.strictEqual(mem.env.MCP_MEMORY_SQLITE_PATH, '/Users/me/.preferred-tools/memory/memory.db');
+    assert.strictEqual(mem.env.MCP_MEMORY_SQLITE_PATH, '/work/shop/.preferred-tools/memory/memory.db');
 });
 
 test('desktop control is offered only on its own OS', () => {
@@ -275,9 +277,9 @@ test('project scope (a row measured safe): relative paths and ${VAR} only, never
     assert.strictEqual(rel.args[rel.args.indexOf('--user-data-dir') + 1], '.preferred-tools/playwright-chrome');
     assert.strictEqual(rel.args[rel.args.indexOf('--output-dir') + 1], '.preferred-tools/playwright-chrome/output');
     const mem = addStep(plan(inv(MAC), pickOne('memory', { scope: 'project' }), o)).entry;
-    assert.strictEqual(mem.env.MCP_MEMORY_SQLITE_PATH, '${HOME}/.preferred-tools/memory/memory.db');
+    assert.strictEqual(mem.env.MCP_MEMORY_SQLITE_PATH, '.preferred-tools/memory/memory.db');
     const memWin = addStep(plan(inv(WIN), pickOne('memory', { scope: 'project' }), opts('C:\\Users\\me', { catalog: cat }))).entry;
-    assert.strictEqual(memWin.env.MCP_MEMORY_SQLITE_PATH, '${USERPROFILE}/.preferred-tools/memory/memory.db');
+    assert.strictEqual(memWin.env.MCP_MEMORY_SQLITE_PATH, '.preferred-tools/memory/memory.db');
     const abs = plan(inv(MAC), pickOne('playwright-chrome', { scope: 'project', location: { side: 'path', path: '/abs/pw' } }), o);
     assert.match(abs.errors[0], /committed file/);
     assert.strictEqual(abs.steps.length, 0);
@@ -304,13 +306,13 @@ test('hosted routes may sit at project scope; a stdio route that needs a key may
     assert.ok(!JSON.stringify(addStep(c7).entry).includes('${'), 'keyless: the committed entry holds no reference');
 });
 
-test('locations: the plugin\'s own folder by default, even with alfred-code data on disk; memory defaults to the account folder', () => {
+test('locations: the plugin\'s own folder by default, even with alfred-code data on disk; memory too', () => {
     const has = (p) => p === '/work/shop/.alfred/chrome-control' || p === '/Users/me/.alfred-memory' || p === '/work/shop/.alfred/serena/home';
     const o = opts('/Users/me', { exists: has });
     const chrome = addStep(plan(inv(MAC), pickOne('playwright-chrome'), o)).entry;
     assert.strictEqual(chrome.args[chrome.args.indexOf('--user-data-dir') + 1], '/work/shop/.preferred-tools/playwright-chrome');
     const mem = addStep(plan(inv(MAC), pickOne('memory'), o)).entry;
-    assert.strictEqual(mem.env.MCP_MEMORY_SQLITE_PATH, '/Users/me/.preferred-tools/memory/memory.db');
+    assert.strictEqual(mem.env.MCP_MEMORY_SQLITE_PATH, '/work/shop/.preferred-tools/memory/memory.db');
     const serena = addStep(plan(inv(MAC), pickOne('serena'), o)).entry;
     assert.strictEqual(serena.env.SERENA_HOME, '/work/shop/.preferred-tools/serena');
     // alfred-code's folder only on the user's pick, and only when it is on disk
@@ -989,13 +991,13 @@ test('a copy that keeps the name is not another windows-mcp', () => {
 const ALFRED = (p) => p === '/work/shop/.alfred/.gitignore';
 const ALFRED_WIN = (p) => p === 'C:\\work\\shop\\.alfred\\.gitignore';
 
-test('with alfred-code installed: .alfred/<name> at project and local, the account folder at user; memory keeps its account folder', () => {
+test('with alfred-code installed: .alfred/<name> at project and local, the account folder at user; memory too', () => {
     const at = (id, scope, cat) => addStep(plan(inv(MAC, { alfredCodeEnabled: true }), pickOne(id, { scope }), opts('/Users/me', { exists: ALFRED, catalog: cat }))).entry;
     assert.strictEqual(flag(at('playwright-chrome', 'local'), '--user-data-dir'), '/work/shop/.alfred/playwright-chrome');
     assert.strictEqual(flag(at('playwright-chrome', 'project', withRelative('playwright-chrome')), '--user-data-dir'), '.alfred/playwright-chrome');
     assert.strictEqual(flag(at('playwright-chrome', 'project', withoutRelative('playwright-chrome')), '--user-data-dir'), '${HOME}/.preferred-tools/playwright-chrome', 'not proven relative: the account folder');
     assert.strictEqual(flag(at('playwright-chrome', 'user'), '--user-data-dir'), '/Users/me/.preferred-tools/playwright-chrome');
-    assert.strictEqual(at('memory', 'local').env.MCP_MEMORY_SQLITE_PATH, '/Users/me/.preferred-tools/memory/memory.db');
+    assert.strictEqual(at('memory', 'local').env.MCP_MEMORY_SQLITE_PATH, '/work/shop/.alfred/memory/memory.db');
     assert.strictEqual(at('serena', 'local').env.SERENA_HOME, '/work/shop/.alfred/serena');
     // 'Use the recommended settings for all': no scope, no location - local scope, then the D3 table
     assert.strictEqual(flag(at('playwright-chrome', undefined), '--user-data-dir'), '/work/shop/.alfred/playwright-chrome');
@@ -1074,15 +1076,8 @@ test('configure: a local .alfred folder moved to project scope is written relati
 // ---- the location question (D4) and scope and name first (D5) -----------------------------------------------------
 test('location labels name the place; descriptions give the exact folder; the answers map covers every label', () => {
     const q = (scope, alfred, cat = catalog) => asks.locationQuestion(cat.byId.get('memory'), inv(WIN, { alfredCodeEnabled: alfred }), { scope, ctx: { project: WIN.project, platform: 'win32', home: 'C:\\Users\\mac', env: {}, exists: (p) => alfred && p === 'C:\\work\\shop\\.alfred\\.gitignore' } });
-    const local = q('local', true);
-    assert.deepStrictEqual(local.question.options.map((o) => o.label), ["The global root's folder (Recommended)", "The project root's folder"]);
-    assert.strictEqual(local.question.options[0].description, 'C:\\Users\\mac\\.preferred-tools\\memory - one memory for every project on this machine');
-    assert.strictEqual(local.question.options[1].description, "C:\\work\\shop\\.alfred\\memory - this project's own memory");
-    assert.deepStrictEqual(Object.values(local.answers), [{ side: 'account' }, { side: 'project' }]);
-    assert.deepStrictEqual(Object.keys(local.answers), local.question.options.map((o) => o.label));
-    const project = q('project', true);
-    assert.match(project.question.options[0].description, /^`\$\{USERPROFILE\}\/\.preferred-tools\/memory` - on this machine C:\\Users\\mac\\\.preferred-tools\\memory/);
-    assert.match(project.question.options[1].description, /^`\.alfred\/memory` - from C:\\work\\shop: C:\\work\\shop\\\.alfred\\memory; from a child or a subfolder: its own - this project's own memory$/);
+    // memory keeps its data in the root of its scope: one place, nothing to ask
+    for (const scope of ['local', 'project']) assert.deepStrictEqual([q(scope, true).question, q(scope, true).only], [null, { side: 'project' }], scope);
     const unproven = q('project', true, withoutRelative('memory'));
     assert.strictEqual(unproven.question, null);
     assert.deepStrictEqual(unproven.only, { side: 'account' });
@@ -1106,18 +1101,27 @@ test('serena on Windows: the root when it is space-free, the profile .serena whe
 });
 
 test('--questions: a location row asks scope and name first; the location follows them; no scopes or names - the recommended scope and the original name', () => {
-    const first = asks.all(inv(MAC), { rows: ['memory'] }, catalog, { home: '/Users/me' }).tools.memory;
-    assert.deepStrictEqual(first.first.map((q) => q.id), ['scope-memory', 'name-memory']);
-    assert.ok(!first.questions.some((q) => /^(scope|name)-/.test(q.id)));
-    assert.match(first.questions.find((q) => q.id === 'location-memory').options[1].description, /\/work\/shop\/\.preferred-tools\/memory/); // Review Focus 1
-    assert.deepStrictEqual(Object.values(first.answers), [{ side: 'account' }, { side: 'project' }]);
-    const named = asks.all(inv(MAC), { rows: ['memory'], scopes: { memory: 'local' }, names: { memory: 'shop-memory' } }, catalog, { home: '/Users/me' }).tools.memory;
-    assert.match(named.questions.find((q) => q.id === 'location-memory').options[0].description, /\.preferred-tools[\\/]shop-memory/);
-    const kept = asks.all(inv(MAC), { rows: ['memory'], names: { memory: 'keep' } }, catalog, { home: '/Users/me' }).tools.memory;
-    assert.match(kept.questions.find((q) => q.id === 'location-memory').options[0].description, /\.preferred-tools\/memory /);
-    // the roots answered so far place the folder
-    const rooted = asks.all(inv(MAC), { rows: ['memory'], roots: { project: { id: 'named', path: 'tools/keys' } } }, catalog, { home: '/Users/me' }).tools.memory;
-    assert.match(rooted.questions.find((q) => q.id === 'location-memory').options[1].description, /^\/work\/shop\/tools\/keys\/memory /);
+    // a row with two places: Playwright with alfred-code 2.x data on disk
+    const project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pt-loc-')));
+    fs.mkdirSync(path.join(project, '.alfred', 'chrome-control'), { recursive: true });
+    try
+    {
+        const at = (picks) => asks.all(inv({ ...MAC, project }), { rows: ['playwright-chrome'], ...picks }, catalog, { home: '/Users/me' }).tools['playwright-chrome'];
+        const loc = (t) => t.questions.find((q) => q.id === 'location-playwright-chrome');
+        const first = at({});
+        assert.deepStrictEqual(first.first.map((q) => q.id), ['scope-playwright-chrome', 'name-playwright-chrome']);
+        assert.ok(!first.questions.some((q) => /^(scope|name)-/.test(q.id)));
+        assert.ok(loc(first).options[0].description.startsWith(`${project}/.preferred-tools/playwright-chrome`), loc(first).options[0].description); // Review Focus 1
+        assert.deepStrictEqual(Object.values(first.answers), [{ side: 'project' }, { side: 'alfred' }]);
+        assert.match(loc(at({ scopes: { 'playwright-chrome': 'local' }, names: { 'playwright-chrome': 'shop-pw' } })).options[0].description, /\.preferred-tools[\\/]shop-pw/);
+        assert.match(loc(at({ names: { 'playwright-chrome': 'keep' } })).options[0].description, /\.preferred-tools\/playwright-chrome /);
+        // the roots answered so far place the folder
+        assert.ok(loc(at({ roots: { project: { id: 'named', path: 'tools/keys' } } })).options[0].description.startsWith(`${project}/tools/keys/playwright-chrome `));
+    }
+    finally { fs.rmSync(project, { recursive: true, force: true }); }
+    // memory keeps its data in the root of its scope: scope and name first, no location question
+    const mem = asks.all(inv(MAC), { rows: ['memory'] }, catalog, { home: '/Users/me' }).tools.memory;
+    assert.deepStrictEqual([mem.first.map((q) => q.id), mem.questions.some((q) => q.id === 'location-memory'), mem.only], [['scope-memory', 'name-memory'], false, { side: 'project' }]);
     const pw = asks.all(inv(MAC), { rows: ['playwright-chrome'] }, catalog).tools['playwright-chrome'];
     assert.deepStrictEqual([pw.questions.some((q) => q.id === 'location-playwright-chrome'), pw.only], [false, { side: 'project' }], 'one place: no location question');
     const c7 = asks.all(inv(MAC), { rows: ['context7'] }, catalog).tools.context7;
@@ -1401,20 +1405,16 @@ test('a pick\'s data folder is <root>/<name>: relative at project scope, absolut
     assert.strictEqual(flag(addStep(plan(inv(MAC, { alfredCodeEnabled: true }), pickOne('playwright-chrome'), o)).entry, '--user-data-dir'), '/work/shop/.alfred/playwright-chrome');
 });
 
-test('memory: the global root\'s memory recommended, <root>/memory offered; at project scope the global one only under the home folder', () => {
+test('memory: its data in the root of its scope - the project root at project and local scope, the global root at user scope, nothing asked', () => {
     const q = (scope, rootAnswers = null) => asks.locationQuestion(catalog.byId.get('memory'), inv(MAC), { scope, ctx: { project: '/work/shop', platform: 'darwin', home: '/Users/me', env: {}, exists: () => false, roots: rootAnswers } });
-    const local = q('local');
-    assert.deepStrictEqual(local.question.options.map((o) => o.label), ["The global root's folder (Recommended)", "The project root's folder"]);
-    assert.match(local.question.options[0].description, /^\/Users\/me\/\.preferred-tools\/memory - one memory for every project/);
-    assert.match(local.question.options[1].description, /^\/work\/shop\/\.preferred-tools\/memory - this project's own memory/);
-    assert.deepStrictEqual(Object.values(local.answers), [{ side: 'account' }, { side: 'project' }]);
-    assert.match(q('project').question.options[0].description, /^`\$\{HOME\}\/\.preferred-tools\/memory`/);
+    for (const scope of ['local', 'project']) assert.deepStrictEqual([q(scope).question, q(scope).only], [null, { side: 'project' }], scope);
     const far = q('project', { project: '/work/shop/.preferred-tools', global: '/srv/keys', globalNamed: true });
-    assert.deepStrictEqual([far.question, far.only], [null, { side: 'project' }], 'a global root outside the home folder cannot be written at project scope');
+    assert.deepStrictEqual([far.question, far.only], [null, { side: 'project' }]);
     assert.deepStrictEqual([q('user').question, q('user').only], [null, { side: 'account' }], 'global scope: one place');
     const db = (scope, roots) => addStep(plan(inv(MAC), { picks: { memory: { scope } }, roots }, opts('/Users/me'))).entry.env.MCP_MEMORY_SQLITE_PATH;
-    assert.strictEqual(db('local'), '/Users/me/.preferred-tools/memory/memory.db');
-    assert.strictEqual(db('project'), '${HOME}/.preferred-tools/memory/memory.db');
+    assert.strictEqual(db('local'), '/work/shop/.preferred-tools/memory/memory.db');
+    assert.strictEqual(db('user'), '/Users/me/.preferred-tools/memory/memory.db');
+    assert.strictEqual(db('project'), '.preferred-tools/memory/memory.db');
     assert.strictEqual(db('project', { global: { id: 'named', path: '/srv/keys' } }), '.preferred-tools/memory/memory.db');
     assert.strictEqual(addStep(plan(inv(MAC), { picks: { memory: { location: { side: 'project' } } } }, opts('/Users/me'))).entry.env.MCP_MEMORY_SQLITE_PATH, '/work/shop/.preferred-tools/memory/memory.db');
 });
@@ -1476,7 +1476,8 @@ test('the three typed values are asked next and no text the walk produces mentio
         assert.doesNotMatch(t, OTHER_RE, t);
         assert.doesNotMatch(t, /under Other/, t);
     }
-    assert.deepStrictEqual(Object.keys(typed).sort(), ['A browser binary I name', 'A self-managed host', 'Another space-free folder']);
+    // gitlab's key question takes the slot its host question had until the walk asks every extra (Task 7 of the 0.3.0 plan)
+    assert.deepStrictEqual(Object.keys(typed).sort(), ['A browser binary I name', 'Another space-free folder']);
     for (const [label, d] of Object.entries(typed)) assert.match(d, /asked next$/, label);
 });
 
@@ -1702,7 +1703,7 @@ test('key name options: the default, names found holding the row id, \'A name yo
         assert.ok(!/not-printed/.test(JSON.stringify(k)), 'names only, never a value');
         assert.ok(!k.question.options.some((o) => OTHER_RE.test(o.description) || /under Other/.test(o.description)));
         // no key name for a route that takes no key, or a stdio route at project scope
-        assert.strictEqual(asks.keyNameQuestion(catalog.byId.get('gitlab'), 'remote', 'user', ctx()), null);
+        assert.strictEqual(asks.keyNameQuestion(catalog.byId.get('gitlab'), 'remote', 'user', ctx()).question.id, 'keyname-gitlab');
         assert.strictEqual(asks.keyNameQuestion(catalog.byId.get('context7'), 'local', 'project', ctx()), null);
     }
     finally { w.clean(); }

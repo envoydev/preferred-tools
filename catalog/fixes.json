@@ -249,7 +249,9 @@
       "tool": [
         "context7",
         "github",
-        "sentry"
+        "sentry",
+        "gitlab",
+        "atlassian"
       ],
       "os": [
         "darwin",
@@ -268,7 +270,9 @@
       "tool": [
         "context7",
         "github",
-        "sentry"
+        "sentry",
+        "gitlab",
+        "atlassian"
       ],
       "os": [
         "darwin",
@@ -287,7 +291,9 @@
       "tool": [
         "context7",
         "github",
-        "sentry"
+        "sentry",
+        "gitlab",
+        "atlassian"
       ],
       "os": [
         "darwin",
@@ -306,7 +312,9 @@
       "tool": [
         "context7",
         "github",
-        "sentry"
+        "sentry",
+        "gitlab",
+        "atlassian"
       ],
       "os": [
         "darwin",
