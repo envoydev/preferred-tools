@@ -227,6 +227,9 @@ function planMcp(row, pick, inv, ctx, catalog, out)
             const n = (pick.urlNames && pick.urlNames[v.var]) || held[v.var] || v.var;
             if (!keys.NAME_RULE.test(String(n))) return out.errors.push(`${row.id}: '${n}' is not a name - a name matches ${keys.NAME_RULE.source}`);
             if (n === keyName || keys.credentialName(n)) return out.errors.push(`${row.id}: ${n} holds a key - a key never goes in a URL; pick another name for the ${v.label}`);
+            // one name per part: a template naming one twice never starts (review I4)
+            const twin = Object.keys(urlNames).find((k) => urlNames[k] === n);
+            if (twin) return out.errors.push(`${row.id}: ${n} already names the ${route.urlVars.find((x) => x.var === twin).label} - each part of the URL needs its own name; pick another name for the ${v.label}`);
             urlNames[v.var] = n;
         }
     }

@@ -142,8 +142,8 @@ A bridge route (sentry's 'Bridge') adds one 'URL name' question per value its UR
 it uses now first. Another name goes to `"urlNames": {<key>: {"<VAR>": "<NAME>"}}` at the top of `answers.json`, where
 `<VAR>` ends the question id (`urlname-<id>-<VAR>`); 'A name you choose' is asked next, checked against
 `^[A-Za-z_][A-Za-z0-9_]*$`. The plan rewrites only the URL template and the key argument of the registration as read,
-keeping its pin, and refuses a URL name that is the key's name or reads as a credential. A change takes effect when the
-server starts again: say to restart Claude Code or reconnect it in `/mcp`.
+keeping its pin, and refuses a URL name that is the key's name or reads as a credential, and a name two parts of the URL
+share. A change takes effect when the server starts again: say to restart Claude Code or reconnect it in `/mcp`.
 
 Write the answers into `<tmp>/answers.json` as `{"change": {<key>: {"row": <targets.<key>.row>, ...}}}`, mapped as
 below, and leave out every answer that keeps what the tool has now - the plan reads a missing key as 'keep':

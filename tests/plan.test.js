@@ -2607,6 +2607,29 @@ test('a URL name that is the key or a credential name is refused, and nothing is
     finally { b.clean(); }
 });
 
+test('two URL parts under one name are refused at install and configure, and nothing is written (review I4)', () => {
+    const b = bridgeWorld();
+    try
+    {
+        const refused = (answers, regs = []) =>
+        {
+            const p = bridgeAnswers(b, regs, answers);
+            assert.ok(!p.steps.some((s) => ['mcp-add', 'mcp-replace', 'mcp-move'].includes(s.op)), JSON.stringify(p.steps.map((s) => s.op)));
+            return p.errors.join('\n');
+        };
+        const install = { picks: { sentry: { route: 'bridge', scope: 'project' } }, urlNames: { sentry: { SENTRY_ORG: 'SENTRY_SLUG', SENTRY_PROJECT: 'SENTRY_SLUG' } } };
+        assert.strictEqual(refused(install), 'sentry: SENTRY_SLUG already names the organization slug - each part of the URL needs its own name; pick another name for the project slug');
+        // configure: the org renamed to the name the project already has
+        const r = bridgeReg(b, 'project');
+        assert.strictEqual(refused({ change: { 'mcp:sentry~project': {} }, urlNames: { 'mcp:sentry~project': { SENTRY_ORG: 'SENTRY_PROJECT' } } }, [r]), 'sentry: SENTRY_PROJECT already names the organization slug - each part of the URL needs its own name; pick another name for the project slug');
+        // a swap is two names still
+        const swap = bridgeAnswers(b, [r], { change: { 'mcp:sentry~project': {} }, urlNames: { 'mcp:sentry~project': { SENTRY_ORG: 'SENTRY_PROJECT', SENTRY_PROJECT: 'SENTRY_ORG' } } });
+        assert.deepStrictEqual(swap.errors, []);
+        assert.strictEqual(changedStep(swap).entry.args[1], 'https://mcp.sentry.dev/mcp/{SENTRY_PROJECT}/{SENTRY_ORG?}');
+    }
+    finally { b.clean(); }
+});
+
 // ---- 0.3.0 review, Important 1: the key's format reaches the user on the recommended path ---------------------------
 
 test('an unfilled reconnect line names what the key must be: atlassian email:api_token, gitlab a fine-grained token', () => {

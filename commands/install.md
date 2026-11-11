@@ -125,7 +125,7 @@ name holding the row's word (`SENTRY`) is offered beside it, never above it. The
 `next.answers.<question id>.<label>`, a name written to `"urlNames": {<id>: {"<VAR>": "<NAME>"}}` at the top of
 `answers.json`, where `<VAR>` ends the question id (`urlname-<id>-<VAR>`); `named` - 'A name you choose' - is asked
 next, checked against `^[A-Za-z_][A-Za-z0-9_]*$` as for the key name. A URL value is a plain name the user writes in `.mcps-secrets`, never a key: the plan
-refuses a URL name that is the key's name or reads as a credential.
+refuses a URL name that is the key's name or reads as a credential, and a name two parts of the URL share.
 
 | Answer | Entry |
 |---|---|
