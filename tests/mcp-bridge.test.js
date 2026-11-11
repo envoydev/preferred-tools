@@ -208,6 +208,21 @@ test('a bad value, or a usage error, exits 1 with one line naming no value', () 
     finally { w.clean(); }
 });
 
+test('a URL value equal to the key exits 1 before npx, naming the variable and never the value (review)', () => {
+    const w = world();
+    try
+    {
+        // a key that is a valid slug, pasted under a URL name too, would reach mcp-remote's argv and its log
+        put(sec(w.root), `${K}=${KEY}\nSENTRY_ORG=acme\nSENTRY_PROJECT=${KEY}\n`);
+        const r = w.run([T, K, 'Sentry-Bearer', PKG]);
+        assert.strictEqual(r.status, 1);
+        assert.strictEqual(r.stderr.trim(), `mcp-bridge: SENTRY_PROJECT in ${sec(w.root)} holds the key's value - a key never goes in a URL`);
+        assert.ok(!r.stderr.includes(KEY) && !r.stdout.includes(KEY));
+        assert.deepStrictEqual(w.calls(), []);
+    }
+    finally { w.clean(); }
+});
+
 const waitFor = async (check, ms = 5000) =>
 {
     const end = Date.now() + ms;

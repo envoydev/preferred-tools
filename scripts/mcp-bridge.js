@@ -16,8 +16,9 @@
 //
 // A URL value must be a plain name (`^[A-Za-z0-9][A-Za-z0-9_.-]*$`), so no value can change the path, reach cmd.exe as a
 // metacharacter or read as a flag; a template name that is the key's name or reads as a credential is refused before
-// any file is read, so a key never goes in a URL. A missing key exits 1 before npx starts: mcp-remote never sends a
-// request with no Authorization header, the one that would open its OAuth sign-in in a browser.
+// any file is read, and a value equal to the key's is refused, so a key never goes in a URL. A missing key exits 1
+// before npx starts: mcp-remote never sends a request with no Authorization header, the one that would open its OAuth
+// sign-in in a browser.
 const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
@@ -136,6 +137,8 @@ function launch(argv, env, { dir, platform, helper } = {})
             return { error: `no value for ${n.name} in ${files.join(', ')}` };
         }
         if (!SLUG.test(v.value)) return { error: `${n.name} in ${v.file} ${PLAIN}` };
+        // a key pasted under a URL name too: a key that is a slug would reach mcp-remote's argv and its log
+        if (v.value === key.value) return { error: `${n.name} in ${v.file} holds the key's value - a key never goes in a URL` };
         values[n.name] = v.value;
     }
     const filled = fillTemplate(template, values);
