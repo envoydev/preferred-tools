@@ -71,7 +71,13 @@ function dataFolderIgnoreDetect(ctx)
         if (r.scope === 'inherited' ? r.approval === 'rejected' || r.shadowed : r.scope !== 'project' || r.approval === 'rejected') continue;
         const row = C.rowOf(ctx, r.rowId);
         const root = row.locations ? E.rootOfEntry(row, r.entry) : null;
-        if (!root || root.includes('${') || root.startsWith('~') || path.posix.isAbsolute(root) || path.win32.isAbsolute(root)) continue;
+        if (!root || root.includes('${') || root.startsWith('~')) continue;
+        if (path.posix.isAbsolute(root) || path.win32.isAbsolute(root))
+        {
+            const copy = leftoverCopy(ctx, r, root, P);
+            if (copy && !seen.has(copy.folder)) { seen.add(copy.folder); out.push(copy.finding); }
+            continue;
+        }
         const rel = root.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '');
         const folder = P.resolve(ctx.inv.project, ...rel.split('/'));
         if (seen.has(folder)) continue;
@@ -98,6 +104,31 @@ function dataFolderIgnoreDetect(ctx)
         });
     }
     return out;
+}
+
+// A data root written absolute under the folder that declares it (0.3.0, spec F7): a session started in a child folder
+// under 0.2.0, when the path was relative, made its own copy there. Found when this folder is not the declaring one, the
+// copy is on disk and git does not ignore it; the fix gives it the same .gitignore. Its data is never moved or deleted.
+function leftoverCopy(ctx, r, root, P)
+{
+    const declared = r.scope === 'inherited' ? r.from : ctx.inv.project;
+    if (!declared || P.resolve(declared) === P.resolve(ctx.inv.project)) return null;
+    const rel = P.relative(declared, root);
+    if (!rel || rel.startsWith('..') || P.isAbsolute(rel)) return null;
+    const folder = P.join(ctx.inv.project, rel);
+    if (!ctx.machine.exists(folder)) return null;
+    const slashed = rel.split(P.sep).join('/');
+    const git = ignoredByGit(ctx, slashed);
+    if (git === true) return null;
+    if (git === null && (ctx.machine.exists(P.join(folder, '.gitignore')) || (/^\.alfred\//.test(slashed) && ctx.machine.exists(P.join(ctx.inv.project, '.alfred', '.gitignore'))))) return null;
+    return {
+        folder,
+        finding: {
+            id: 'data-folder-ignore', row: r.rowId, name: r.name, scope: r.scope,
+            found: `${slashed} - a 0.2.0 copy no server uses any more - its data is left, never moved or deleted; it is not git-ignored`,
+            proposal: { path: folder },
+        },
+    };
 }
 
 // Create the folder with a .gitignore holding `*`, as the plan's ensure-dir step does; a .gitignore already there is left.

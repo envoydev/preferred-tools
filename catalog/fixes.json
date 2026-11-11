@@ -327,6 +327,86 @@
       "fix": "rootIgnoreFix",
       "verifiedOn": "this build: tests/fix.test.js root-ignore (2026-11-10)",
       "source": "docs/build-prompt.md D7; docs/sources.md 'Claude Code - headersHelper'"
+    },
+    {
+      "id": "project-relative-path",
+      "tool": [
+        "serena",
+        "memory",
+        "playwright-chrome",
+        "playwright-msedge",
+        "playwright-firefox",
+        "playwright-webkit",
+        "appium",
+        "context7",
+        "github",
+        "gitlab",
+        "atlassian",
+        "sentry"
+      ],
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "kind": "registration",
+      "symptom": "a project-scope registration names its data folder or key helper relative or through ${HOME}/${USERPROFILE}, so a session started in a child folder uses its own copy",
+      "detect": "projectRelativePathDetect",
+      "fix": "projectRelativePathFix",
+      "verifiedOn": "this build: tests/fix.test.js project-relative-path (2026-11-11); a stdio server starts in the session's folder (tests/probes/mcp-tree.js)",
+      "source": "docs/superpowers/specs/2026-11-11-field-fixes-0.3.0-design.md F7; docs/sources.md '.mcp.json in parent folders' M1 and M4 (a session reads every parent .mcp.json and starts each stdio server in its own folder) and 'Relative data folders - the probe'"
+    },
+    {
+      "id": "mcp-order",
+      "tool": [
+        "atlassian",
+        "github",
+        "gitlab",
+        "context7",
+        "sentry",
+        "memory",
+        "serena",
+        "windows-control",
+        "macos-control",
+        "appium",
+        "playwright-chrome",
+        "playwright-msedge",
+        "playwright-firefox",
+        "playwright-webkit"
+      ],
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "kind": "machine",
+      "symptom": "the catalog servers in .mcp.json are not in the user's order",
+      "detect": "mcpOrderDetect",
+      "fix": "mcpOrderFix",
+      "verifiedOn": "this build: tests/fix.test.js mcp-order and tests/mcp-order.test.js (2026-11-11)",
+      "source": "docs/superpowers/specs/2026-11-11-field-fixes-0.3.0-design.md F8 (the user's ruling, 2026-11-11)"
+    },
+    {
+      "id": "helper-child-folder",
+      "tool": [
+        "context7",
+        "github",
+        "gitlab",
+        "atlassian",
+        "sentry"
+      ],
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "kind": "registration",
+      "advice": true,
+      "symptom": "a parent folder's hosted server connects without its key in a child folder",
+      "detect": "helperChildFolderDetect",
+      "fix": null,
+      "verifiedOn": "this build: tests/fix.test.js helper-child-folder (2026-11-11); tests/probes/headers-helper.js child-folder case (M1)",
+      "source": "docs/superpowers/specs/2026-11-11-field-fixes-0.3.0-design.md F3a; docs/sources.md 'Claude Code - headersHelper' M1 (a parent folder's helper, named relative or absolute, does not run in a child folder)"
     }
   ]
 }

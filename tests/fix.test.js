@@ -585,7 +585,7 @@ test('data-folder-ignore: in a git work tree git decides - the project\'s own ig
     finally { w.clean(); }
 });
 
-test('fix detectors never return an inherited registration (data-folder-ignore reads relative folders from the parents, in its own test)', () =>
+test('fix detectors never return an inherited registration (data-folder-ignore, project-relative-path, mcp-order and helper-child-folder read the parents, in their own tests)', () =>
 {
     const entry = fresh('serena');
     const stripped = { ...entry, env: { SERENA_HOME: entry.env.SERENA_HOME } };
@@ -1225,4 +1225,160 @@ test('appium-sdk-env at project scope finds and proposes the SDK homes as at loc
     // a machine path there is kept, not taken out
     const held = { ...appium, env: { ...appium.env, ANDROID_HOME: '/opt/sdk', JAVA_HOME: '/opt/jdk' } };
     assert.deepStrictEqual(detect(ctxFor({ platform: 'darwin', home: '/Users/dev', env: { ANDROID_HOME: '/opt/sdk', JAVA_HOME: '/opt/jdk' }, machine, registrations: [reg('appium', held, { name: 'appium-mcp', scope: 'project' })] })).found.filter((x) => x.id === 'appium-sdk-env'), []);
+});
+
+// ---- 0.3.0: 0.2.0's relative project paths, the .mcp.json order and a parent's helper (F7, F8, F3a) -------------------
+
+const asks = require('../scripts/asks.js');
+const existingLib = require('../scripts/existing.js');
+const GH = { type: 'http', url: 'https://api.githubcopilot.com/mcp/' };
+const C7 = { type: 'http', url: 'https://mcp.context7.com/mcp' };
+const ctxIn = (w, dir, machine = noMachine()) => fix.makeCtx({ inv: inventory.buildInventory({ project: dir, env: w.env }), env: w.env, machine });
+
+test('project-relative-path: relative, ${HOME}, ${USERPROFILE}\\.serena and a relative helper are found and fixed as read, a user arg kept', () =>
+{
+    const pw = { command: 'npx', args: ['-y', '@playwright/mcp@0.0.83', '--browser', 'chrome', '--user-data-dir', '.alfred/playwright-chrome', '--output-dir', '.alfred/playwright-chrome/output', '--viewport-size', '1280x720'] };
+    const memory = { command: 'uvx', args: ['--python', '3.13', '--from', 'mcp-memory-service[sqlite]==12.1.1', 'memory', 'server'], env: { MCP_MEMORY_SQLITE_PATH: '${HOME}/.preferred-tools/memory/memory.db' } };
+    const c7 = { ...C7, headersHelper: 'node .preferred-tools/mcp-headers.js CONTEXT7_API_KEY Bearer' };
+    const regs = [reg('playwright-chrome', pw, { scope: 'project' }), reg('memory', memory, { scope: 'project' }), reg('context7', c7, { scope: 'project', route: 'remote' })];
+    const at = (registrations, over = {}) => ctxFor({ project: '/work/shop', home: '/home/dev', registrations, ...over });
+    const ctx = at(regs);
+    const found = F.projectRelativePathDetect(ctx);
+    assert.deepStrictEqual(found.map((f) => [f.id, f.name, f.scope, Boolean(f.blocked)]), ['playwright-chrome', 'memory', 'context7'].map((n) => ['project-relative-path', n, 'project', false]));
+    for (const f of found) assert.match(f.found, /a copy in a child folder is kept out of git by \/preferred-tools:fix run there$/);
+    // the same folder, written out: no data to name
+    assert.ok(!found.some((f) => /old data stays/.test(f.found)), found.map((f) => f.found).join('\n'));
+    const fixed = regs.map((r, i) => F.projectRelativePathFix(r.entry, found[i], ctx));
+    assert.deepStrictEqual(fixed[0], { command: 'npx', args: ['-y', '@playwright/mcp@0.0.83', '--browser', 'chrome', '--user-data-dir', '/work/shop/.alfred/playwright-chrome', '--output-dir', '/work/shop/.alfred/playwright-chrome/output', '--viewport-size', '1280x720'] });
+    assert.deepStrictEqual(fixed[1], { ...memory, env: { MCP_MEMORY_SQLITE_PATH: '/home/dev/.preferred-tools/memory/memory.db' } });
+    assert.deepStrictEqual(fixed[2], { ...C7, headersHelper: 'node /work/shop/.preferred-tools/mcp-headers.js CONTEXT7_API_KEY Bearer' });
+    // read back: the fixed entries are clean
+    assert.deepStrictEqual(F.projectRelativePathDetect(at(regs.map((r, i) => ({ ...r, entry: fixed[i] })))), []);
+    // not found: local scope, ~ and another variable
+    assert.deepStrictEqual(F.projectRelativePathDetect(at(regs.map((r) => ({ ...r, scope: 'local' })))), []);
+    for (const v of ['~/.pw', '${WORK}/pw']) assert.deepStrictEqual(F.projectRelativePathDetect(at([reg('playwright-chrome', { ...pw, args: ['-y', '@playwright/mcp@0.0.83', '--user-data-dir', v] }, { scope: 'project' })])), [], v);
+    // an unset variable is blocked: nothing to write it as
+    const [b] = F.projectRelativePathDetect(at([reg('memory', { ...memory, env: { MCP_MEMORY_SQLITE_PATH: '${USERPROFILE}/.preferred-tools/memory/memory.db' } }, { scope: 'project' })]));
+    assert.match(b.blocked, /USERPROFILE is not set/);
+
+    // serena on Windows: 0.2.0's ${USERPROFILE}\.serena becomes <project root>\serena, a new folder - the old one is named
+    const serena = { command: 'uvx', args: ['--python', '3.13', '--from', 'serena-agent@1.0.0', 'serena', 'start-mcp-server'], env: { SERENA_HOME: '${USERPROFILE}\\.serena' } };
+    const win = (project, registrations) => ctxFor({ platform: 'win32', project, home: 'C:\\Users\\dev', env: { USERPROFILE: 'C:\\Users\\dev' }, registrations });
+    const wctx = win('C:\\work\\shop', [reg('serena', serena, { scope: 'project' })]);
+    const [s] = F.projectRelativePathDetect(wctx);
+    assert.match(s.found, /the old data stays at C:\\Users\\dev\\\.serena - moving the path moves no data/);
+    assert.match(s.found, /about 327MB/);
+    assert.deepStrictEqual(F.projectRelativePathFix(serena, s, wctx), { ...serena, env: { SERENA_HOME: 'C:\\work\\shop\\.preferred-tools\\serena' } });
+    // a project root with a space: the profile's .serena, written out
+    const spaced = win('C:\\my work\\shop', [reg('serena', serena, { scope: 'project' })]);
+    assert.deepStrictEqual(F.projectRelativePathFix(serena, F.projectRelativePathDetect(spaced)[0], spaced).env, { SERENA_HOME: 'C:\\Users\\dev\\.serena' });
+    // a relative helper on Windows: absolute, in the forward slashes node and cmd both take
+    const wc = win('C:\\work\\shop', [reg('context7', c7, { scope: 'project', route: 'remote' })]);
+    assert.strictEqual(F.projectRelativePathFix(c7, F.projectRelativePathDetect(wc)[0], wc).headersHelper, 'node C:/work/shop/.preferred-tools/mcp-headers.js CONTEXT7_API_KEY Bearer');
+});
+
+test('project-relative-path and mcp-order in a child folder name the parent', () =>
+{
+    const fs = require('node:fs');
+    const w = world();
+    try
+    {
+        writeJson(path.join(w.project, '.mcp.json'), { mcpServers: {
+            'playwright-chrome': { command: 'npx', args: ['-y', '@playwright/mcp@0.0.83', '--browser', 'chrome', '--user-data-dir', '.alfred/playwright-chrome'] },
+            github: GH,
+        } });
+        const child = path.join(w.project, 'C');
+        fs.mkdirSync(child);
+        const ours = (d) => d.found.filter((f) => ['project-relative-path', 'mcp-order'].includes(f.id));
+        const d = detect(ctxIn(w, child));
+        assert.deepStrictEqual(ours(d).map((f) => [f.id, f.blocked]), [['project-relative-path', 'run /preferred-tools:fix in ..'], ['mcp-order', 'run /preferred-tools:fix in ..']]);
+        const text = fix.render(d);
+        assert.match(text, /project-relative-path .* NOT APPLICABLE: run \/preferred-tools:fix in \.\./);
+        assert.match(text, /mcp-order .* NOT APPLICABLE: run \/preferred-tools:fix in \.\./);
+        // in the parent itself, both apply
+        assert.deepStrictEqual(ours(detect(ctxIn(w, w.project))).map((f) => [f.id, Boolean(f.blocked)]), [['project-relative-path', false], ['mcp-order', false]]);
+    }
+    finally { w.clean(); }
+});
+
+test('mcp-order: found when out of order, not found when in order or when a server left on its own sits among the user\'s', () =>
+{
+    const fs = require('node:fs');
+    const w = world();
+    try
+    {
+        const mine = { command: 'my-server' };
+        const file = path.join(w.project, '.mcp.json');
+        const at = (servers) => { writeJson(file, { mcpServers: servers }); return F.mcpOrderDetect(ctxIn(w, w.project)); };
+        const [f] = at({ mine, c7: C7, gh: GH });
+        assert.deepStrictEqual([f.id, f.row, f.name, f.scope, Boolean(f.blocked)], ['mcp-order', 'github', '.mcp.json', 'project', false]);
+        assert.match(f.found, /mine, c7, gh .*gh, c7, mine/);
+        const r = F.mcpOrderFix(f, ctxIn(w, w.project));
+        assert.deepStrictEqual([r.ok, r.restart], [true, false], r.detail);
+        assert.deepStrictEqual(Object.keys(readJson(file).mcpServers), ['gh', 'c7', 'mine']);
+        assert.deepStrictEqual(F.mcpOrderDetect(ctxIn(w, w.project)), [], 'read back: in order');
+        // gh left on its own sits with the user's servers: in order where it is
+        const record = path.join(w.project, '.preferred-tools', 'preferred-tools.json');
+        writeJson(record, { version: 1, servers: [{ name: 'gh', scope: 'project', fingerprint: existingLib.fingerprintOf(GH, catalog), choice: 'own' }] });
+        assert.deepStrictEqual(at({ c7: C7, mine, gh: GH }), []);
+        fs.rmSync(record);
+        assert.strictEqual(at({ c7: C7, mine, gh: GH }).length, 1, 'managed, the same file is out of order');
+        fs.rmSync(file);
+        assert.deepStrictEqual(F.mcpOrderDetect(ctxIn(w, w.project)), [], 'no .mcp.json');
+    }
+    finally { w.clean(); }
+});
+
+test('helper-child-folder: found from a child for an inherited helper, not found at the root', () =>
+{
+    const fs = require('node:fs');
+    if (asks.PARENT_HELPER_IN_CHILD) { assert.ok(!catalog.fixes.some((f) => f.id === 'helper-child-folder')); return; }
+    const w = world();
+    try
+    {
+        const helper = `node ${path.join(w.project, '.preferred-tools', 'mcp-headers.js')} CONTEXT7_API_KEY Bearer`;
+        writeJson(path.join(w.project, '.mcp.json'), { mcpServers: { context7: { ...C7, headersHelper: helper } } });
+        const child = path.join(w.project, 'C');
+        fs.mkdirSync(child);
+        const d = detect(ctxIn(w, child), 'helper-child-folder');
+        assert.deepStrictEqual(d.found.map((f) => [f.id, f.name, f.scope, f.kind]), [['helper-child-folder', 'context7', 'inherited', 'registration']]);
+        assert.match(d.found[0].found, /connects here without its key/);
+        assert.strictEqual(d.found[0].blocked, 'move it to Global with /preferred-tools:configure in .., or start Claude in ..');
+        assert.deepStrictEqual(detect(ctxIn(w, w.project), 'helper-child-folder').found, []);
+    }
+    finally { w.clean(); }
+});
+
+test('data-folder-ignore: after the paths are absolute, a 0.2.0 copy in a child is found once and gets its .gitignore; an ignored one is not', () =>
+{
+    const fs = require('node:fs');
+    const { spawnSync } = require('node:child_process');
+    const w = world();
+    try
+    {
+        const root = path.join(w.project, '.alfred', 'playwright-chrome');
+        writeJson(path.join(w.project, '.mcp.json'), { mcpServers: { 'playwright-chrome': { command: 'npx', args: ['-y', '@playwright/mcp@0.0.83', '--browser', 'chrome', '--user-data-dir', root, '--output-dir', path.join(root, 'output')] } } });
+        const child = path.join(w.project, 'C');
+        fs.mkdirSync(child);
+        const machine = noMachine({ exists: (p) => fs.existsSync(p), run: C.realMachine().run });
+        const at = (dir) => F.dataFolderIgnoreDetect(ctxIn(w, dir, machine));
+        assert.deepStrictEqual(at(child), [], 'no copy on disk');
+        const copy = path.join(child, '.alfred', 'playwright-chrome');
+        fs.mkdirSync(path.join(copy, 'output'), { recursive: true });
+        const found = at(child);
+        assert.deepStrictEqual(found.map((f) => [f.id, f.name, f.scope, f.proposal.path]), [['data-folder-ignore', 'playwright-chrome', 'inherited', copy]]);
+        assert.match(found[0].found, /a 0\.2\.0 copy no server uses any more - its data is left, never moved or deleted/);
+        // in the declaring folder the absolute root is the one in use, not a copy
+        assert.deepStrictEqual(at(w.project), []);
+        const r = F.dataFolderIgnoreFix(found[0], ctxIn(w, child, machine));
+        assert.strictEqual(r.ok, true, r.detail);
+        assert.strictEqual(fs.readFileSync(path.join(copy, '.gitignore'), 'utf8'), '*\n');
+        assert.deepStrictEqual(at(child), [], 'read back');
+        // git ignores it: nothing
+        fs.rmSync(path.join(copy, '.gitignore'));
+        spawnSync('git', ['init', '-q'], { cwd: w.project });
+        fs.writeFileSync(path.join(w.project, '.gitignore'), '.alfred/\n');
+        assert.deepStrictEqual(at(child), []);
+    }
+    finally { w.clean(); }
 });
