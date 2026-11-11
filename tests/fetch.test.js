@@ -211,3 +211,25 @@ test('a bridge entry fetches its mcp-remote pin with its cut-off', () => {
     const win = E.fetchStep('sentry', { command: 'node', args: ['C:\\work\\shop\\.preferred-tools\\mcp-bridge.js', ...tail], env }, 'sentry');
     assert.deepStrictEqual(win.argv.slice(0, 4), ['cmd', '/c', 'npm', 'exec']);
 });
+
+test('the fetch job fetches a bridge\'s mcp-remote but never starts the bridge', async () => {
+    const w = world();
+    try
+    {
+        const BRIDGE = { command: 'node', args: [path.join(w.project, '.preferred-tools', 'mcp-bridge.js'), 'https://mcp.sentry.dev/mcp/{SENTRY_ORG}', 'SENTRY_ACCESS_TOKEN', 'Sentry-Bearer', 'mcp-remote@0.16.0'], env: { npm_config_before: '2026-11-11T23:59:59Z' } };
+        writeJson(path.join(w.project, '.mcp.json'), { mcpServers: { sentry: BRIDGE } });
+        const file = fetchLib.writeJob(path.join(w.dir, 'tmp', 'fetch.json'), fetchLib.job(w.project, [{ ...E.fetchStep('sentry', BRIDGE, 'sentry'), scope: 'project' }], []));
+        const started = [];
+        const lines = [];
+        const res = await fetchLib.run(JSON.parse(fs.readFileSync(file, 'utf8')), {
+            env: w.env,
+            runFetch: () => ({ status: 0 }),
+            start: async (entry) => { started.push(entry); return { ok: true, ms: 1 }; },
+            log: (...a) => lines.push(a.join(' ')),
+        });
+        assert.deepStrictEqual(res.fetched, ['mcp-remote@0.16.0']);
+        assert.deepStrictEqual(started, []);
+        assert.deepStrictEqual(res.skipped, ["'sentry' not started: a bridge has no first-run work beyond its package"]);
+    }
+    finally { w.clean(); }
+});

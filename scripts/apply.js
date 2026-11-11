@@ -137,8 +137,9 @@ function pluginState(ctx, id, scope)
 const eolOf = (text) => (/\r\n/.test(text) ? '\r\n' : '\n');
 const appendLines = (text, lines) => { const eol = eolOf(text); return `${text}${text && !/\r?\n$/.test(text) ? eol : ''}${lines.map((l) => `${l}${eol}`).join('')}`; };
 
-// What the plugin itself writes in a root (R13): a folder holding anything else holds the user's files.
-const PLUGIN_FILES = new Set(['.gitignore', ...Object.values(roots.FILES), ['.', 'secrets'].join('')]);
+// What the plugin itself writes in a root (R13): a folder holding anything else holds the user's files. package.json is the
+// one ensureCommonjs writes (0.4.0 Ruling 12).
+const PLUGIN_FILES = new Set(['.gitignore', 'package.json', ...Object.values(roots.FILES), ['.', 'secrets'].join('')]);
 function pluginWritten(root, name)
 {
     if (PLUGIN_FILES.has(name)) return true;
@@ -178,19 +179,42 @@ function rootIgnore(root)
     return { ok: true, detail: `appended ${lack.join(', ')} to ${file}` };
 }
 
-// <root>/mcp-headers.js: copied when absent or its number is lower (D4); a hand edit or a newer copy is left.
-function writeHelper(root)
+// <root>/package.json, {"type":"commonjs"}, when absent (0.4.0 Ruling 12): a package.json above the root that says
+// "type": "module" would load mcp-headers.js and mcp-bridge.js as ES modules, where `require` does not exist. One that is
+// there is never changed; a "module" one is named. -> { wrote, note }
+function ensureCommonjs(root)
 {
-    const file = path.join(root, roots.FILES.helper);
-    const { state, number } = roots.helperState(file);
-    const version = require('./mcp-headers.js').HELPER_VERSION;
-    if (state === 'same') return { ok: true, detail: `${file} is up to date - left as it is` };
-    if (state === 'higher') return { ok: true, detail: `mcp-headers.js in ${root} is newer than this plugin - update preferred-tools` };
-    if (state === 'edited') return { ok: true, detail: `${file} changed since preferred-tools wrote it - left; /preferred-tools:fix rewrites it` };
-    fs.mkdirSync(root, { recursive: true });
-    fs.writeFileSync(file, roots.helperSource());
-    return { ok: true, detail: state === 'lower' ? `rewrote ${file} (helper ${number} -> ${version})` : `wrote ${file} (helper ${version})` };
+    const file = path.join(root, 'package.json');
+    let text = null;
+    try { text = fs.readFileSync(file, 'utf8'); } catch { /* absent */ }
+    if (text === null)
+    {
+        fs.mkdirSync(root, { recursive: true });
+        fs.writeFileSync(file, '{"type":"commonjs"}\n');
+        return { wrote: true, note: null };
+    }
+    let type = null;
+    try { type = JSON.parse(text.replace(/^\uFEFF/, '')).type; } catch { /* not this plugin's to judge */ }
+    return { wrote: false, note: type === 'module' ? `${file} says "type": "module" - mcp-headers.js and mcp-bridge.js cannot load there; set it to "commonjs", or remove it` : null };
 }
+
+// A file this plugin copies into a root - <root>/mcp-headers.js (D4) or <root>/mcp-bridge.js (0.4.0): copied when absent
+// or its number is lower; a hand edit or a newer copy is left. package.json beside it either way.
+const SHIPPED = { helper: { word: 'helper', version: () => require('./mcp-headers.js').HELPER_VERSION }, bridge: { word: 'bridge', version: () => require('./mcp-bridge.js').BRIDGE_VERSION } };
+function writeShipped(kind, root)
+{
+    const file = path.join(root, roots.FILES[kind]);
+    const { state, number } = roots.shippedState(kind, file);
+    const { word, version } = SHIPPED[kind];
+    const pkg = ensureCommonjs(root);
+    const withPkg = (detail) => ({ ok: true, detail: [detail, pkg.wrote ? `wrote ${path.join(root, 'package.json')} (type commonjs)` : null, pkg.note].filter(Boolean).join('; ') });
+    if (state === 'same') return withPkg(`${file} is up to date - left as it is`);
+    if (state === 'higher') return withPkg(`${roots.FILES[kind]} in ${root} is newer than this plugin - update preferred-tools`);
+    if (state === 'edited') return withPkg(`${file} changed since preferred-tools wrote it - left; /preferred-tools:fix rewrites it`);
+    fs.writeFileSync(file, roots.shippedSource(kind));
+    return withPkg(state === 'lower' ? `rewrote ${file} (${word} ${number} -> ${version()})` : `wrote ${file} (${word} ${version()})`);
+}
+const writeHelper = (root) => writeShipped('helper', root);
 
 // The key file's names (D3): created with its comment line, readable by its owner only; `NAME=` appended for each name it
 // lacks. Its values are never read out of this process, and no line is rewritten. Refused where git would commit it.
@@ -293,6 +317,7 @@ function runStep(step, ctx)
         }
         case 'root-ignore': return rootIgnore(step.path);
         case 'write-helper': return writeHelper(step.path);
+        case 'write-bridge': return writeShipped('bridge', step.path);
         case 'ensure-key-name': return ensureKeyName(step.file, step.names);
         case 'record-clean': return recordClean(step.file, step.entries, step.keep, step.live);
         // never fails the apply: a warning, and the file as it was (spec F8)
@@ -405,7 +430,9 @@ function apply(plan, { env = process.env, tmp, runCli = cli.run, log = console.l
     // with none (a hosted URL, a rename, a move), the status is asked here
     const done = new Set(report.applied.map((a) => a.i));
     const written = plan.steps.filter((s, i) => done.has(i + 1) && ['mcp-add', 'mcp-replace', 'mcp-move'].includes(s.op)).map((s) => s.to || { name: s.name, scope: s.scope });
-    const fresh = written.map((w) => w.name);
+    // a bridge whose key or URL names are not filled yet exits at its start: its status would only say so (0.4.0 Ruling 11)
+    const unfilled = new Set(plan.steps.filter((s) => s.filled === false).map((s) => (s.to ? s.to.name : s.name)));
+    const fresh = written.map((w) => w.name).filter((n) => !unfilled.has(n));
     const scopeOf = new Map(written.map((w) => [w.name, w.scope]));
     // a hosted keyed server fetches nothing: its status is asked now, so a refused key is named here (spec F3)
     const reconnect = (plan.reconnect || []).filter((r) => scopeOf.has(r.name));
@@ -464,4 +491,4 @@ function main(argv)
 }
 
 if (require.main === module) process.exit(main(process.argv.slice(2)));
-module.exports = { REFUSED, refusedLine, reconnectLines, apply, runStep, restoreStep, fillStep, readRegistration, restoreLine, rootIgnore, rootIgnoreLines, writeHelper, ensureKeyName };
+module.exports = { REFUSED, refusedLine, reconnectLines, apply, runStep, restoreStep, fillStep, readRegistration, restoreLine, rootIgnore, rootIgnoreLines, writeHelper, writeShipped, ensureCommonjs, ensureKeyName };

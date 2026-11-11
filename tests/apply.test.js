@@ -1173,3 +1173,86 @@ test('the apply repeats the reconnect lines after the read-back, and names a ref
     }
     finally { w.clean(); }
 });
+
+// ---- the bridge file (0.4.0) ------------------------------------------------------------------------------------------
+
+const BRIDGE_SRC = path.join(__dirname, '..', 'scripts', 'mcp-bridge.js');
+const E = require('../scripts/entries.js');
+test('write-bridge writes, rewrites a lower copy, and leaves an edited or newer one', () => {
+    const w = world();
+    try
+    {
+        const src = fs.readFileSync(BRIDGE_SRC, 'utf8');
+        const root = path.join(w.project, '.preferred-tools');
+        const dest = path.join(root, 'mcp-bridge.js');
+        const step = { op: 'write-bridge', path: root };
+        const BV = require('../scripts/mcp-bridge.js').BRIDGE_VERSION;
+        let r = runSteps(w, [step]);
+        assert.strictEqual(r.report.failed, null, r.text);
+        assert.strictEqual(fs.readFileSync(dest, 'utf8'), src);
+        assert.ok(r.text.includes(`wrote ${dest} (bridge ${BV})`), r.text);
+        fs.writeFileSync(dest, src.replace(/^\/\/ preferred-tools mcp-bridge \d+/, '// preferred-tools mcp-bridge 0'));
+        r = runSteps(w, [step]);
+        assert.strictEqual(fs.readFileSync(dest, 'utf8'), src);
+        assert.ok(r.text.includes(`rewrote ${dest} (bridge 0 -> ${BV})`), r.text);
+        r = runSteps(w, [step]);
+        assert.ok(r.text.includes(`${dest} is up to date - left as it is`), r.text);
+        const edited = `${src}// mine\n`;
+        fs.writeFileSync(dest, edited);
+        r = runSteps(w, [step]);
+        assert.strictEqual(fs.readFileSync(dest, 'utf8'), edited);
+        assert.ok(r.text.includes(`${dest} changed since preferred-tools wrote it - left; /preferred-tools:fix rewrites it`), r.text);
+        const newer = src.replace(/^\/\/ preferred-tools mcp-bridge \d+/, `// preferred-tools mcp-bridge ${BV + 1}`);
+        fs.writeFileSync(dest, newer);
+        r = runSteps(w, [step]);
+        assert.strictEqual(fs.readFileSync(dest, 'utf8'), newer);
+        assert.ok(r.text.includes(`mcp-bridge.js in ${root} is newer than this plugin - update preferred-tools`), r.text);
+    }
+    finally { w.clean(); }
+});
+
+test('write-helper and write-bridge write package.json type commonjs when absent, and never change one that is there', () => {
+    const w = world();
+    try
+    {
+        for (const op of ['write-helper', 'write-bridge'])
+        {
+            const root = path.join(w.project, `.root-${op}`);
+            const pkg = path.join(root, 'package.json');
+            let r = runSteps(w, [{ op, path: root }]);
+            assert.strictEqual(r.report.failed, null, r.text);
+            assert.strictEqual(fs.readFileSync(pkg, 'utf8'), '{"type":"commonjs"}\n', op);
+            fs.writeFileSync(pkg, '{"type":"module"}\n');
+            fs.rmSync(path.join(root, op === 'write-helper' ? 'mcp-headers.js' : 'mcp-bridge.js'));
+            r = runSteps(w, [{ op, path: root }]);
+            assert.strictEqual(fs.readFileSync(pkg, 'utf8'), '{"type":"module"}\n', `${op}: left byte-identical`);
+            assert.ok(r.text.includes(`${pkg} says "type": "module" - mcp-headers.js and mcp-bridge.js cannot load there; set it to "commonjs", or remove it`), r.text);
+            fs.writeFileSync(pkg, '{"name":"x"}\n');
+            fs.rmSync(path.join(root, op === 'write-helper' ? 'mcp-headers.js' : 'mcp-bridge.js'));
+            r = runSteps(w, [{ op, path: root }]);
+            assert.strictEqual(fs.readFileSync(pkg, 'utf8'), '{"name":"x"}\n');
+            assert.ok(!r.text.includes('cannot load there'), r.text);
+        }
+    }
+    finally { w.clean(); }
+});
+
+test('a bridge step with filled: false is left out of the fetch job\'s check; filled: true is in it', () => {
+    const w = world();
+    try
+    {
+        const entry = (n) => ({ command: 'node', args: [path.join(w.project, '.preferred-tools', 'mcp-bridge.js'), 'https://mcp.sentry.dev/mcp/{SENTRY_ORG}', 'SENTRY_ACCESS_TOKEN', 'Sentry-Bearer', 'mcp-remote@0.16.0'], env: { npm_config_before: '2026-11-11T23:59:59Z' } });
+        const steps = [
+            { op: 'mcp-add', name: 'sentry', scope: 'local', entry: entry(), row: 'sentry', route: 'bridge', filled: false, why: 'x' },
+            E.fetchStep('sentry', entry(), 'sentry'),
+            { op: 'mcp-add', name: 'sentry2', scope: 'local', entry: entry(), row: 'sentry', route: 'bridge', filled: true, why: 'y' },
+            E.fetchStep('sentry2', entry(), 'sentry'),
+        ];
+        const fetchFile = path.join(w.dir, 'fetch.json');
+        const { report } = runSteps(w, steps, { fetchFile });
+        assert.strictEqual(report.failed, null);
+        assert.deepStrictEqual(report.fetch.check, ['sentry2']);
+        assert.deepStrictEqual(JSON.parse(fs.readFileSync(fetchFile, 'utf8')).check, ['sentry2']);
+    }
+    finally { w.clean(); }
+});

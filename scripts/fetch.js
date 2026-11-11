@@ -160,6 +160,14 @@ async function run(j, { env = process.env, runFetch = realFetch, start = realSta
         // the parent folder whose .mcp.json holds a server this folder inherits (fix's npx-cache-entry); it starts here.
         const entry = step.scope ? account.readRegistration(step.name, step.scope, step.from || cwd, env) : undefined;
         if (!entry || !entry.command) { warn(n, `'${step.name}' is not at ${step.scope || 'a known'} scope any more - not started`); continue; }
+        // a bridge's first start would only run the package just fetched - and reach the hosted server with the key
+        if (E.bridgeParts(entry))
+        {
+            const line = `'${step.name}' not started: a bridge has no first-run work beyond its package`;
+            res.skipped.push(line);
+            log(`${n}. skip   ${line}`);
+            continue;
+        }
         const missing = unsetVar(entry, env);
         if (missing)
         {

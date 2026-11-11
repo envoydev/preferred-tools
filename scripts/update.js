@@ -176,23 +176,32 @@ function helperOffers(ctx, out)
 {
     const roots = require('./roots.js');
     const { HELPER_VERSION } = require('./mcp-headers.js');
+    const { BRIDGE_VERSION } = require('./mcp-bridge.js');
     const P = E.pathFor(ctx.inv.os);
     const rctx = { project: ctx.project, home: require('./account.js').homeDir(ctx.env), platform: ctx.inv.os, catalog: ctx.catalog };
     const dirs = new Set(['project', 'global'].map((f) => ctx.inv.roots && ctx.inv.roots[f] && ctx.inv.roots[f].path).filter(Boolean));
+    const bridgeDirs = new Set();
     for (const r of ctx.inv.registrations || [])
     {
         if (!r.rowId || r.own || r.alfredRetired || r.choice === 'own' || r.scope === 'inherited') continue;
         const named = roots.helperPathOf(r.entry && r.entry.headersHelper);
         if (named) dirs.add(P.dirname(roots.absOf(named, rctx)));
+        // a bridge's folder holds its bridge and the helper it requires (0.4.0)
+        const bridge = E.bridgeParts(r.entry);
+        if (bridge) bridgeDirs.add(P.dirname(roots.absOf(bridge.path, rctx)));
     }
-    for (const root of dirs)
+    for (const root of bridgeDirs) dirs.add(root);
+    const offer = (kind, root, version) =>
     {
-        const file = P.join(root, roots.FILES.helper);
-        const { state, number } = roots.helperState(file);
-        if (state === 'lower') out.offers.push({ kind: 'helper', id: `helper:${file}`, file, root, from: String(number), to: String(HELPER_VERSION), group: 'helper', label: `mcp-headers.js in ${root}` });
-        else if (state === 'higher') out.notes.push(`mcp-headers.js in ${root} is newer than this plugin - update preferred-tools`);
-        else if (state === 'edited') out.notes.push(`mcp-headers.js in ${root} changed since preferred-tools wrote it - left; /preferred-tools:fix (helper-stale) rewrites it`);
-    }
+        const name = roots.FILES[kind];
+        const file = P.join(root, name);
+        const { state, number } = roots.shippedState(kind, file);
+        if (state === 'lower') out.offers.push({ kind, id: `${kind}:${file}`, file, root, from: String(number), to: String(version), group: 'helper', label: `${name} in ${root}` });
+        else if (state === 'higher') out.notes.push(`${name} in ${root} is newer than this plugin - update preferred-tools`);
+        else if (state === 'edited') out.notes.push(`${name} in ${root} changed since preferred-tools wrote it - left; /preferred-tools:fix (helper-stale) rewrites it`);
+    };
+    for (const root of dirs) offer('helper', root, HELPER_VERSION);
+    for (const root of bridgeDirs) offer('bridge', root, BRIDGE_VERSION);
 }
 
 // ---- check -----------------------------------------------------------------------------------------------------------
@@ -233,7 +242,7 @@ function render(out)
     table('Other plugins:', out.offers.filter((o) => o.kind === 'plugin' && o.group === 'other'));
     table('MCP servers (pin -> newest release at least 7 days old):', out.offers.filter((o) => o.kind === 'mcp'));
     table('Language servers:', out.offers.filter((o) => o.kind === 'lsp'));
-    table('Key helpers:', out.offers.filter((o) => o.kind === 'helper'));
+    table('Key helpers:', out.offers.filter((o) => o.kind === 'helper' || o.kind === 'bridge'));
     if (out.unchecked.length)
     {
         lines.push('Plugins whose marketplace lists no version (`claude plugin update` is the check; each is offered on its own):');
@@ -326,15 +335,19 @@ function updateMcp(ctx, offer, tmp, log)
     return pin === offer.to;
 }
 
-// A helper copy rewritten with this plugin's, if it is still the lower one the check offered; read back.
+// A helper or bridge copy rewritten with this plugin's, if it is still the lower one the check offered; read back. The
+// root's package.json says CommonJS when it has none (apply.js ensureCommonjs).
 function updateHelper(offer, log)
 {
     const roots = require('./roots.js');
-    const before = roots.helperState(offer.file);
+    const kind = offer.kind === 'bridge' ? 'bridge' : 'helper';
+    const before = roots.shippedState(kind, offer.file);
     if (before.state !== 'lower') { log(`CHECK  ${offer.label}: now ${before.state} - left as it is`); return false; }
-    fs.writeFileSync(offer.file, roots.helperSource());
-    const ok = roots.helperState(offer.file).state === 'same';
-    log(`${ok ? 'ok    ' : 'CHECK '} ${offer.label}: helper ${offer.from} -> ${offer.to} (read back)`);
+    fs.writeFileSync(offer.file, roots.shippedSource(kind));
+    const pkg = require('./apply.js').ensureCommonjs(path.dirname(offer.file));
+    if (pkg.note) log(`note   ${pkg.note}`);
+    const ok = roots.shippedState(kind, offer.file).state === 'same';
+    log(`${ok ? 'ok    ' : 'CHECK '} ${offer.label}: ${kind} ${offer.from} -> ${offer.to} (read back)`);
     return ok;
 }
 
@@ -350,7 +363,7 @@ function applyUpdates(ctx, ids, out, { tmp, log = console.log } = {})
     for (const c of chosen)
     {
         if (typeof c === 'string') { res.unknown.push(c); log(`NOT OFFERED ${c}: nothing is behind under that id`); continue; }
-        const ok = c.kind === 'plugin' ? updatePlugin(ctx, c, log) : c.kind === 'lsp' ? updateLsp(ctx, c, log) : c.kind === 'helper' ? updateHelper(c, log) : updateMcp(ctx, c, dir, log);
+        const ok = c.kind === 'plugin' ? updatePlugin(ctx, c, log) : c.kind === 'lsp' ? updateLsp(ctx, c, log) : c.kind === 'helper' || c.kind === 'bridge' ? updateHelper(c, log) : updateMcp(ctx, c, dir, log);
         (ok ? res.applied : res.failed).push(c.id);
     }
     // every rewritten server in one fetch file, for fetch.js in the background (apply.js says why)

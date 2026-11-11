@@ -482,3 +482,50 @@ test('update offers and rewrites a lower-numbered helper copy; leaves a higher o
     }
     finally { w.clean(); }
 });
+
+// ---- the bridge (0.4.0) -------------------------------------------------------------------------------------------------
+
+const bridgeEntry = (root, pin = '0.16.0') => ({ command: 'node', args: [path.join(root, 'mcp-bridge.js'), 'https://mcp.sentry.dev/mcp/{SENTRY_ORG}/{SENTRY_PROJECT?}', 'SENTRY_ACCESS_TOKEN', 'Sentry-Bearer', `mcp-remote@${pin}`], env: { npm_config_before: '2026-11-11T23:59:59Z' } });
+
+test('update offers a lower mcp-bridge.js for rewriting beside the helper', async () => {
+    const roots = require('../scripts/roots.js');
+    const w = world();
+    try
+    {
+        const pt = path.join(w.project, '.preferred-tools');
+        fs.mkdirSync(pt, { recursive: true });
+        fs.writeFileSync(path.join(pt, 'mcp-headers.js'), roots.helperSource());
+        const bridgeFile = path.join(pt, 'mcp-bridge.js');
+        fs.writeFileSync(bridgeFile, roots.shippedSource('bridge').replace(/^\/\/ preferred-tools mcp-bridge \d+/, '// preferred-tools mcp-bridge 0'));
+        assert.strictEqual(cli.run(['mcp', 'add-json', 'sentry', JSON.stringify(bridgeEntry(pt)), '-s', 'local'], { cwd: w.project, env: w.env }).status, 0);
+        const BV = require('../scripts/mcp-bridge.js').BRIDGE_VERSION;
+        const c = await run(w, ['--check', '--no-refresh'], { registry: fakeRegistry({ 'npm:mcp-remote': [{ version: '0.16.0', time: ago(20) }] }) });
+        assert.strictEqual(c.code, 0, c.text);
+        assert.match(c.text, new RegExp(`mcp-bridge\\.js in .*\\.preferred-tools +0 -> ${BV}`));
+        const a = await run(w, ['--apply', `bridge:${bridgeFile}`], { registry: fakeRegistry({ 'npm:mcp-remote': [{ version: '0.16.0', time: ago(20) }] }) });
+        assert.strictEqual(a.code, 0, a.text);
+        assert.strictEqual(fs.readFileSync(bridgeFile, 'utf8'), roots.shippedSource('bridge'));
+        assert.strictEqual(fs.readFileSync(path.join(pt, 'package.json'), 'utf8'), '{"type":"commonjs"}\n', 'the root says CommonJS');
+    }
+    finally { w.clean(); }
+});
+
+test("update moves a bridge's mcp-remote pin and its cut-off", async () => {
+    const w = world();
+    try
+    {
+        const pt = path.join(w.project, '.preferred-tools');
+        const e = bridgeEntry(pt);
+        assert.strictEqual(cli.run(['mcp', 'add-json', 'sentry', JSON.stringify(e), '-s', 'local'], { cwd: w.project, env: w.env }).status, 0);
+        const reg = fakeRegistry({ 'npm:mcp-remote': [{ version: '0.16.0', time: ago(25) }, { version: '0.16.4', time: ago(8) }] });
+        const inv = inventory.buildInventory({ project: w.project, env: w.env });
+        const ctx = update.makeCtx({ inv, project: w.project, env: w.env, machine: noLsp, registry: reg, now: NOW, refresh: false });
+        const out = await update.check(ctx);
+        const offers = out.offers.filter((o) => o.kind === 'mcp');
+        assert.strictEqual(offers.length, 1, JSON.stringify(out));
+        assert.strictEqual(offers[0].entry.args[4], 'mcp-remote@0.16.4');
+        assert.deepStrictEqual(offers[0].entry.args.slice(0, 4), e.args.slice(0, 4));
+        assert.notStrictEqual(offers[0].entry.env.npm_config_before, e.env.npm_config_before);
+    }
+    finally { w.clean(); }
+});

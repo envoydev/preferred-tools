@@ -33,7 +33,7 @@ const inv = (base, extra = {}) => ({ version: 1, ...base, cli: { ok: true }, unr
 const opts = (home, extra = {}) => ({ home, env: {}, exists: () => false, machine: { docker: true }, ...extra });
 const pickOne = (id, pick = {}) => ({ picks: { [id]: pick } });
 // the steps that change a registration, without the root's file steps and the records (spec D8)
-const FILE_OPS = ['root-ignore', 'write-helper', 'ensure-key-name', 'record-clean', 'record-root'];
+const FILE_OPS = ['root-ignore', 'write-helper', 'write-bridge', 'ensure-key-name', 'record-clean', 'record-root'];
 const regSteps = (p) => p.steps.filter((s) => !FILE_OPS.includes(s.op));
 const addStep = (p, i = 0) => p.steps.filter((s) => s.op === 'mcp-add')[i];
 const reg = (name, scope, entry, rowId = null, route = null, flags = {}) => ({ name, scope, entry, rowId, route, own: !rowId, alfredRetired: false, ...flags });
@@ -2430,4 +2430,83 @@ test('buildEntry for the sentry bridge at local, project and user scope', () => 
     assert.deepStrictEqual(E.bridgeParts(local), { path: '/work/shop/.preferred-tools/mcp-bridge.js', template: 'https://mcp.sentry.dev/mcp/{SENTRY_SLUG}/{SENTRY_PROJECT?}', keyName: 'SENTRY_ACCESS_TOKEN', scheme: 'Sentry-Bearer', pkg: 'mcp-remote@0.16.0', globalRoot: null });
     assert.strictEqual(E.bridgeParts({ command: 'npx', args: ['-y', 'mcp-remote@0.16.0'] }), null);
     assert.strictEqual(E.renameTemplate('https://h/mcp/{A}/{B?}', { A: 'X', B: 'Y' }), 'https://h/mcp/{X}/{Y?}');
+});
+
+// ---- the sentry bridge (0.4.0) ----------------------------------------------------------------------------------------
+
+const roots = require('../scripts/roots.js');
+const bridgeWorld = () =>
+{
+    const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pt-bplan-')));
+    const project = path.join(d, 'shop');
+    const home = path.join(d, 'home');
+    fs.mkdirSync(project, { recursive: true });
+    fs.mkdirSync(home, { recursive: true });
+    return { d, project, home, proot: path.join(project, '.preferred-tools'), groot: path.join(home, '.preferred-tools'), clean: () => fs.rmSync(d, { recursive: true, force: true }) };
+};
+const bridgePlan = (b, pick) => plan(inv({ ...MAC, project: b.project }), pickOne('sentry', pick), { home: b.home, env: {}, machine: { docker: true } });
+const putSecrets = (dir, text) => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, '.mcps-secrets'), text); };
+
+test('a sentry bridge install writes helper and bridge, names the key and the URL names, and says a restart applies a change', () => {
+    const b = bridgeWorld();
+    try
+    {
+        const p = bridgePlan(b, { route: 'bridge', scope: 'project', urlNames: { SENTRY_ORG: 'SENTRY_SLUG' } });
+        assert.deepStrictEqual(p.errors, [], 'the project-scope guard passes a bridge route');
+        const ops = p.steps.map((s) => s.op);
+        assert.ok(ops.indexOf('write-helper') >= 0 && ops.indexOf('write-bridge') === ops.indexOf('write-helper') + 1, ops.join(', '));
+        assert.strictEqual(p.steps.find((s) => s.op === 'write-bridge').path, b.proot);
+        const names = p.steps.filter((s) => s.op === 'ensure-key-name');
+        assert.deepStrictEqual(names.map((s) => [s.file, s.names]), [[path.join(b.proot, '.mcps-secrets'), ['SENTRY_ACCESS_TOKEN', 'SENTRY_SLUG', 'SENTRY_PROJECT']]]);
+        const add = addStep(p);
+        assert.strictEqual(add.entry.headersHelper, undefined);
+        assert.strictEqual(add.entry.args[1], 'https://mcp.sentry.dev/mcp/{SENTRY_SLUG}/{SENTRY_PROJECT?}');
+        assert.strictEqual(add.filled, false);
+        assert.ok(p.notes.includes(`sentry: fill SENTRY_ACCESS_TOKEN and SENTRY_SLUG in ${path.join(b.proot, '.mcps-secrets')} (SENTRY_PROJECT is optional); the bridge reads them each time the server starts - after a change, restart Claude Code or reconnect it in /mcp`), p.notes.join('\n'));
+        assert.deepStrictEqual(p.reconnect, [], 'no reconnect line: no key goes through Claude Code');
+        assert.ok(!p.notes.some((n) => /child folder connects without this key/.test(n)));
+        assert.ok(!p.notes.some((n) => /mcp-headers\.js runs under it/.test(n)));
+        assert.strictEqual(p.notes.filter((n) => n === 'node must be on the PATH Claude Code starts with - mcp-bridge.js runs under it, as this plugin\'s commands do').length, 1);
+        assert.match(render(p), /writes .*mcp-bridge\.js {2}\(this plugin's URL bridge\)/);
+        putSecrets(b.proot, 'SENTRY_ACCESS_TOKEN=x\nSENTRY_SLUG=acme\n');
+        assert.strictEqual(addStep(bridgePlan(b, { route: 'bridge', scope: 'project', urlNames: { SENTRY_ORG: 'SENTRY_SLUG' } })).filled, true);
+    }
+    finally { b.clean(); }
+});
+
+test('a bridge names in the project root only what the chain has not filled', () => {
+    const b = bridgeWorld();
+    try
+    {
+        putSecrets(b.groot, 'SENTRY_ACCESS_TOKEN=x\n');
+        const namesOf = (p) => p.steps.filter((s) => s.op === 'ensure-key-name').map((s) => [s.file, s.names]);
+        const sec = path.join(b.proot, '.mcps-secrets');
+        assert.deepStrictEqual(namesOf(bridgePlan(b, { route: 'bridge', scope: 'project', urlNames: { SENTRY_ORG: 'SENTRY_SLUG' } })), [[sec, ['SENTRY_SLUG', 'SENTRY_PROJECT']]]);
+        assert.deepStrictEqual(namesOf(bridgePlan(b, { route: 'bridge', scope: 'project' })), [[sec, ['SENTRY_ORG', 'SENTRY_PROJECT']]]);
+        putSecrets(b.proot, 'SENTRY_ORG=acme\nSENTRY_PROJECT=web\n');
+        assert.deepStrictEqual(namesOf(bridgePlan(b, { route: 'bridge', scope: 'project' })), []);
+    }
+    finally { b.clean(); }
+});
+
+test('a root with helper 3 and no bridge gets both rewritten for a bridge; a newer bridge is left with a note', () => {
+    const b = bridgeWorld();
+    try
+    {
+        fs.mkdirSync(b.proot, { recursive: true });
+        fs.writeFileSync(path.join(b.proot, 'mcp-headers.js'), roots.helperSource().replace(/^\/\/ preferred-tools mcp-headers \d+/, '// preferred-tools mcp-headers 3'));
+        const ops = (p) => p.steps.map((s) => s.op);
+        assert.deepStrictEqual(ops(bridgePlan(b, { route: 'bridge', scope: 'project' })).filter((o) => o.startsWith('write-')), ['write-helper', 'write-bridge']);
+        const { BRIDGE_VERSION } = require('../scripts/mcp-bridge.js');
+        fs.writeFileSync(path.join(b.proot, 'mcp-bridge.js'), roots.shippedSource('bridge').replace(/^\/\/ preferred-tools mcp-bridge \d+/, `// preferred-tools mcp-bridge ${BRIDGE_VERSION + 1}`));
+        const p = bridgePlan(b, { route: 'bridge', scope: 'project' });
+        assert.ok(!ops(p).includes('write-bridge'));
+        assert.ok(p.notes.includes(`mcp-bridge.js in ${b.proot} is newer than this plugin - update preferred-tools`), p.notes.join('\n'));
+    }
+    finally { b.clean(); }
+});
+
+test("sentry's local route is still refused at project scope", () => {
+    const p = plan(inv(MAC), pickOne('sentry', { route: 'local', scope: 'project' }), opts('/h'));
+    assert.match(p.errors.join(), /its local route needs a key written into the registration, so it is not offered at project scope/);
 });

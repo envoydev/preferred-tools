@@ -13,7 +13,7 @@ const account = require('./account.js');
 const E = require('./entries.js');
 const helper = require('./mcp-headers.js');
 
-const FILES = { secrets: '.mcps-secrets', helper: 'mcp-headers.js', record: 'preferred-tools.json', map: 'roots.json' };
+const FILES = { secrets: '.mcps-secrets', helper: 'mcp-headers.js', record: 'preferred-tools.json', map: 'roots.json', bridge: 'mcp-bridge.js' };
 const GITIGNORE = '*\n!.gitignore\n!mcp-headers.js\n';
 const MAP_VERSION = 1;
 const RECORD_VERSION = 1;
@@ -237,6 +237,15 @@ function resolve(inv, answers, ctx)
 function pointsIntoRoot(reg, inv, ctx)
 {
     const P = pathFor(ctx.platform);
+    // a bridge (0.4.0): this plugin's when its file has a number line, or - no file yet - when its launch names a key
+    const bridge = E.bridgeParts(reg.entry);
+    if (bridge)
+    {
+        const abs = absOf(bridge.path, ctx);
+        const { state, number } = shippedState('bridge', abs, ctx.exists || ((p) => fs.existsSync(p)));
+        const ours = state === 'absent' ? Boolean(bridge.keyName && /^[A-Za-z_][A-Za-z0-9_]*$/.test(bridge.keyName)) : number !== null;
+        return ours ? P.dirname(abs) : null;
+    }
     const command = reg.entry && reg.entry.headersHelper;
     const file = helperPathOf(command);
     if (file)
@@ -379,28 +388,35 @@ function ignoreGap(root, family)
     return null;
 }
 
-const HELPER_LINE = /^\/\/ preferred-tools mcp-headers (\d+)\s*$/;
-let helperText = null;
-const helperSource = () => (helperText = helperText || fs.readFileSync(path.join(__dirname, FILES.helper), 'utf8'));
+// The two files this plugin copies into a root: the key helper (D4) and the URL bridge (0.4.0). Each carries its version
+// on its first line.
+const SHIPPED_LINE = { helper: /^\/\/ preferred-tools mcp-headers (\d+)\s*$/, bridge: /^\/\/ preferred-tools mcp-bridge (\d+)\s*$/ };
+const shippedVersion = (kind) => (kind === 'bridge' ? require('./mcp-bridge.js').BRIDGE_VERSION : helper.HELPER_VERSION);
+const shippedText = {};
+const shippedSource = (kind) => (shippedText[kind] = shippedText[kind] || fs.readFileSync(path.join(__dirname, FILES[kind]), 'utf8'));
+const helperSource = () => shippedSource('helper');
 
-// The helper at `file` against this plugin's (D4): 'absent', 'lower' (rewrite it), 'same', 'edited' (the same number with
-// other bytes, or no number line - a hand edit, left), 'higher' (a newer plugin wrote it - left). A CRLF copy of the same
-// text is the same helper (digestOf). -> { state, number }
-function helperState(file, exists = (p) => fs.existsSync(p))
+// The file at `file` against this plugin's copy of `kind` ('helper' or 'bridge'): 'absent', 'lower' (rewrite it), 'same',
+// 'edited' (the same number with other bytes, or no number line - a hand edit, left), 'higher' (a newer plugin wrote it -
+// left). A CRLF copy of the same text is the same file (digestOf). -> { state, number }
+function shippedState(kind, file, exists = (p) => fs.existsSync(p))
 {
     if (!exists(file)) return { state: 'absent', number: null };
     let text;
     try { text = fs.readFileSync(file, 'utf8'); }
     catch { return { state: 'absent', number: null }; }
-    const m = HELPER_LINE.exec(text.split('\n')[0]);
+    const m = SHIPPED_LINE[kind].exec(text.split('\n')[0]);
     if (!m) return { state: 'edited', number: null };
     const number = Number(m[1]);
-    if (number < helper.HELPER_VERSION) return { state: 'lower', number };
-    if (number > helper.HELPER_VERSION) return { state: 'higher', number };
-    return { state: helper.digestOf(text) === helper.digestOf(helperSource()) ? 'same' : 'edited', number };
+    const version = shippedVersion(kind);
+    if (number < version) return { state: 'lower', number };
+    if (number > version) return { state: 'higher', number };
+    return { state: helper.digestOf(text) === helper.digestOf(shippedSource(kind)) ? 'same' : 'edited', number };
 }
+const helperState = (file, exists) => shippedState('helper', file, exists);
 
 module.exports = {
     FILES, GITIGNORE, RECORD_VERSION, familyOf, readMap, mapKey, withRoot, inUse, options, resolveNamed, resolve, rootStrFor, recordFiles, readRecord,
     helperPathOf, registrationRoots, standard, pointsIntoRoot, absOf, recordKey, mergeRecord, recordFamily, ownOnly, gitIgnores, ignoreGap, helperState, helperSource,
+    shippedState, shippedSource,
 };

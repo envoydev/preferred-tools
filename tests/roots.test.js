@@ -205,3 +205,27 @@ test('recordFamily: user scope and a connector are global; project, local and a 
     const own = { name: 'a', scope: 'local', choice: 'own' };
     assert.deepStrictEqual(roots.ownOnly([own, { ...own, name: 'b', choice: 'manage' }, { connector: 'X', choice: 'add' }, null]), [own]);
 });
+
+test('shippedState reads the bridge like the helper: absent, lower, same, edited, higher', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pt-shipped-'));
+    try
+    {
+        const file = path.join(dir, roots.FILES.bridge);
+        assert.strictEqual(roots.FILES.bridge, 'mcp-bridge.js');
+        const src = roots.shippedSource('bridge');
+        const { BRIDGE_VERSION } = require('../scripts/mcp-bridge.js');
+        assert.deepStrictEqual(roots.shippedState('bridge', file), { state: 'absent', number: null });
+        fs.writeFileSync(file, src.replace(/^\/\/ preferred-tools mcp-bridge \d+/, '// preferred-tools mcp-bridge 0'));
+        assert.deepStrictEqual(roots.shippedState('bridge', file), { state: 'lower', number: 0 });
+        fs.writeFileSync(file, src);
+        assert.deepStrictEqual(roots.shippedState('bridge', file), { state: 'same', number: BRIDGE_VERSION });
+        fs.writeFileSync(file, `${src}// mine\n`);
+        assert.deepStrictEqual(roots.shippedState('bridge', file), { state: 'edited', number: BRIDGE_VERSION });
+        fs.writeFileSync(file, src.replace(/^\/\/ preferred-tools mcp-bridge \d+/, `// preferred-tools mcp-bridge ${BRIDGE_VERSION + 1}`));
+        assert.deepStrictEqual(roots.shippedState('bridge', file), { state: 'higher', number: BRIDGE_VERSION + 1 });
+        // the helper reads through the same function
+        assert.deepStrictEqual(roots.helperState(path.join(dir, 'none.js')), roots.shippedState('helper', path.join(dir, 'none.js')));
+        assert.strictEqual(roots.helperSource(), roots.shippedSource('helper'));
+    }
+    finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

@@ -29,6 +29,10 @@ const keys = require('./keys.js');
 const kept = require('./kept.js');
 const roots = require('./roots.js');
 const existing = require('./existing.js');
+const { templateNames } = require('./mcp-bridge.js');
+
+// 'A', 'A and B', 'A, B and C'
+const andList = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
 const mcpOrder = require('./mcp-order.js');
 const { installedOf, keyOf, targetOf, fromHere, otherWindowsMcp } = require('./inventory.js');
 const { blockingStdio } = require('./json-file.js');
@@ -244,7 +248,7 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     let entry;
     let fresh = !cur || cur.route !== routeId;
     if (fresh)
-        entry = E.buildEntry(row, routeId, { rootStr, scope, executablePath: wantExec, token: sendNow, keyName, params }, ctx, catalog.rules);
+        entry = E.buildEntry(row, routeId, { rootStr, scope, executablePath: wantExec, token: sendNow, keyName, params, urlNames: pick.urlNames }, ctx, catalog.rules);
     else
     {
         entry = JSON.parse(JSON.stringify(cur.entry));
@@ -298,13 +302,34 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     // key is written in by the apply from the stdio chain. The line names the files, never a value; a name found only in
     // a file 0.1.x read names that file.
     const keyed = ks && !(entry.headers && entry.headers.Authorization) ? ks : null;
+    // a bridge (0.4.0) reads its key and its URL names from the hosted chain each time the server starts, never through
+    // Claude Code
+    const bridge = E.bridgeParts(entry);
     let keyFile = null;
+    let keyNames = [keyName];
     if (keyed && !(keyed.kind === 'stdio' && scope === 'project'))
     {
         const filled = keys.filledNames(keyed.files).some((f) => f.names.includes(keyName));
-        out.keys.push({ row: row.id, name, scope, variable: keyName, kind: keyed.kind, files: keyed.files, filled, old: filled ? null : keys.oldHolding(ctx.project, ctx.home, keyName) });
+        out.keys.push({ row: row.id, name, scope, variable: keyName, kind: bridge ? 'bridge' : keyed.kind, files: keyed.files, filled, old: filled ? null : keys.oldHolding(ctx.project, ctx.home, keyName) });
         // a name filled nowhere in the chain is written, empty, into the chain's first file (D3)
         if (!filled) keyFile = keyed.files[0];
+    }
+    let bridgeFilled = null;
+    if (bridge && keyed)
+    {
+        // each name on its own (0.4.0 Ruling 9): one filled anywhere in the chain is not named again, the key's included
+        const have = new Set(keys.filledNames(keyed.files).flatMap((f) => f.names));
+        const all = [{ name: bridge.keyName, optional: false }, ...(templateNames(bridge.template) || [])];
+        const lack = all.filter((n) => !have.has(n.name));
+        keyNames = lack.map((n) => n.name);
+        keyFile = keyNames.length ? keyed.files[0] : null;
+        bridgeFilled = !lack.some((n) => !n.optional);
+        const required = lack.filter((n) => !n.optional).map((n) => n.name);
+        const optional = lack.filter((n) => n.optional).map((n) => n.name);
+        const after = 'each time the server starts - after a change, restart Claude Code or reconnect it in /mcp';
+        out.notes.push(required.length || optional.length
+            ? `${row.id}: fill ${andList(required.length ? required : optional)} in ${keyed.files[0]}${required.length && optional.length ? ` (${andList(optional)} ${optional.length > 1 ? 'are' : 'is'} optional)` : !required.length ? ` (optional)` : ''}; the bridge reads them ${after}`
+            : `${row.id}: the bridge reads its key and URL names from .mcps-secrets ${after}`);
     }
     // a stdio key at local or global scope: the apply writes it in from the stdio chain under the key's name (R7); configure
     // rewrites a registration whose key differs from the chosen name's filled value, even when nothing else changed
@@ -314,9 +339,11 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     const withKey = stepKey ? { key: stepKey } : {};
     // the helper's own conditions (spec D4): the folder's trust at project and local scope, the declaring folder only at
     // project scope, node on the PATH - each said once
-    if (keyed && keyed.kind === 'helper')
+    const once = (text) => { if (!out.notes.includes(text)) out.notes.push(text); };
+    // a bridge connects in a child folder too (F3) and sends no key through Claude Code: node is its one condition
+    if (bridge) once('node must be on the PATH Claude Code starts with - mcp-bridge.js runs under it, as this plugin\'s commands do');
+    if (keyed && keyed.kind === 'helper' && entry.headersHelper)
     {
-        const once = (text) => { if (!out.notes.includes(text)) out.notes.push(text); };
         if (scope !== 'user' && inv.trusted === false) once(`accept the trust dialog the next time Claude Code starts in ${ctx.project} - until then the server connects without its key`);
         // docs/sources.md M1: a parent folder's helper does not run in a child folder's session, named relative or absolute
         if (scope === 'project' && !asks.PARENT_HELPER_IN_CHILD) out.notes.push(`${row.id}: a session started in a child folder connects without this key - Claude Code does not run a parent folder's helper there; pick Global, or install it in that folder too`);
@@ -333,13 +360,15 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     // a launch the cache may not hold yet is fetched once it is written (entries.js fetchStep says why); a change that
     // keeps the package, such as a location or a name, fetches nothing
     const fetch = E.fetchStep(name, entry, row.id, cur && cur.entry);
-    const uses = { helper: Boolean(entry.headersHelper), keyFile, keyName, data: dataAbs };
+    const uses = { helper: Boolean(entry.headersHelper) || Boolean(bridge), bridge: Boolean(bridge), keyFile, keyName, keyNames, data: dataAbs };
+    // a bridge step says whether its names are filled: the apply's background start skips one that cannot start yet
+    const withFilled = bridge ? { filled: Boolean(bridgeFilled) } : {};
     if (!cur)
     {
         if (reconnect) out.reconnect.push(reconnect);
         useRoots(ctx, scope, uses);
         if (ensure) out.steps.push({ op: 'ensure-dir', path: ensure, why: `${row.id}: data folder, with a .gitignore holding * so the project's own .gitignore is never edited` });
-        out.steps.push({ op: 'mcp-add', name, scope, entry, row: row.id, route: routeId, ...withKey, why: `${row.id}: add (${routeId}) at ${scope} scope` });
+        out.steps.push({ op: 'mcp-add', name, scope, entry, row: row.id, route: routeId, ...withKey, ...withFilled, why: `${row.id}: add (${routeId}) at ${scope} scope` });
         if (fetch) out.steps.push(fetch);
         return undefined;
     }
@@ -352,25 +381,26 @@ function planMcp(row, pick, inv, ctx, catalog, out)
         out.notes.push(`${row.id}: the old data stays at ${cur.rootStr}; moving a location moves no data`);
     if (ensure && (!cur.rootStr || rootStr !== cur.rootStr)) out.steps.push({ op: 'ensure-dir', path: ensure, why: `${row.id}: new data folder` });
     if (moved)
-        out.steps.push({ op: 'mcp-move', from: { name: cur.name, scope: cur.scope }, to: { name, scope }, entry, old: cur.entry, row: row.id, route: routeId, ...withKey, why: `${row.id}: ${cur.name !== name ? `rename '${cur.name}' to '${name}'` : ''}${cur.name !== name && cur.scope !== scope ? ' and ' : ''}${cur.scope !== scope ? `move from ${cur.scope} to ${scope} scope` : ''} - add first, read back, then remove the old one` });
+        out.steps.push({ op: 'mcp-move', from: { name: cur.name, scope: cur.scope }, to: { name, scope }, entry, old: cur.entry, row: row.id, route: routeId, ...withKey, ...withFilled, why: `${row.id}: ${cur.name !== name ? `rename '${cur.name}' to '${name}'` : ''}${cur.name !== name && cur.scope !== scope ? ' and ' : ''}${cur.scope !== scope ? `move from ${cur.scope} to ${scope} scope` : ''} - add first, read back, then remove the old one` });
     else
-        out.steps.push({ op: 'mcp-replace', name, scope, entry, old: cur.entry, row: row.id, route: routeId, ...withKey, why: `${row.id}: rewrite '${name}' from the registration as read${staleKey && !edited && !fresh ? ` - writes in the key ${keyName} holds in ${chosen.file}` : ''}` });
+        out.steps.push({ op: 'mcp-replace', name, scope, entry, old: cur.entry, row: row.id, route: routeId, ...withKey, ...withFilled, why: `${row.id}: rewrite '${name}' from the registration as read${staleKey && !edited && !fresh ? ` - writes in the key ${keyName} holds in ${chosen.file}` : ''}` });
     if (fetch) out.steps.push(fetch);
     return undefined;
 }
 
-// The roots a registration step writes into (spec D2-D4): its helper's - the scope's family root - its key file's and its
-// data folder's. Only a step that is planned uses a root, so a plan with no change writes no file.
-function useRoots(ctx, scope, { helper, keyFile, keyName, data })
+// The roots a registration step writes into (spec D2-D4): its helper's - the scope's family root, with the bridge beside
+// it for a bridge route - its key file's and its data folder's. Only a step that is planned uses a root, so a plan with no
+// change writes no file. `keyNames` (a bridge's key and URL names) replaces the one `keyName` when given.
+function useRoots(ctx, scope, { helper, bridge, keyFile, keyName, keyNames, data })
 {
     const P = E.pathFor(ctx.platform);
     const r = ctx.roots || {};
     const inside = (root, p) => { if (!root || !p) return false; const rel = P.relative(root, p); return rel === '' || (!rel.startsWith('..') && !P.isAbsolute(rel)); };
     const familyOf = (p) => ['project', 'global'].find((f) => inside(r[f], p)) || null;
     const family = roots.familyOf(scope);
-    if (helper && r[family]) ctx.uses.push({ family, root: r[family], helper: true, committed: scope === 'project' });
+    if (helper && r[family]) ctx.uses.push({ family, root: r[family], helper: true, bridge: Boolean(bridge), committed: scope === 'project' });
     const kf = familyOf(keyFile);
-    if (kf) ctx.uses.push({ family: kf, root: r[kf], key: { file: keyFile, name: keyName } });
+    if (kf) ctx.uses.push({ family: kf, root: r[kf], key: { file: keyFile, name: keyName, names: keyNames || [keyName] } });
     const df = familyOf(data);
     if (df) ctx.uses.push({ family: df, root: r[df] });
 }
@@ -466,11 +496,12 @@ function fileSteps(inv, ctx, out)
     for (const family of ['project', 'global'])
         for (const u of ctx.uses.filter((x) => x.family === family))
         {
-            const r = byRoot.get(u.root) || { family, root: u.root, helper: false, keys: new Map() };
+            const r = byRoot.get(u.root) || { family, root: u.root, helper: false, bridge: false, keys: new Map() };
             byRoot.set(u.root, r);
             if (u.helper) r.helper = true;
+            if (u.bridge) r.bridge = true;
             if (u.committed) r.committed = true;
-            if (u.key) r.keys.set(u.key.file, [...new Set([...(r.keys.get(u.key.file) || []), u.key.name])]);
+            if (u.key) r.keys.set(u.key.file, [...new Set([...(r.keys.get(u.key.file) || []), ...(u.key.names || [u.key.name])])]);
         }
     const ignore = [];
     const helpers = [];
@@ -495,6 +526,14 @@ function fileSteps(inv, ctx, out)
                 helpers.push({ op: 'write-helper', path: r.root, why: `${r.root}: mcp-headers.js, which reads a hosted key from .mcps-secrets each time Claude Code connects` });
             else if (state === 'higher') out.notes.push(`mcp-headers.js in ${r.root} is newer than this plugin - update preferred-tools`);
             else if (state === 'edited') out.notes.push(`mcp-headers.js in ${r.root} changed since preferred-tools wrote it - left as it is; /preferred-tools:fix (helper-stale) rewrites it`);
+        }
+        if (r.bridge)
+        {
+            const { state } = roots.shippedState('bridge', P.join(r.root, roots.FILES.bridge), exists);
+            if (state === 'absent' || state === 'lower')
+                helpers.push({ op: 'write-bridge', path: r.root, why: `${r.root}: mcp-bridge.js, which fills a hosted URL from .mcps-secrets each time the server starts` });
+            else if (state === 'higher') out.notes.push(`mcp-bridge.js in ${r.root} is newer than this plugin - update preferred-tools`);
+            else if (state === 'edited') out.notes.push(`mcp-bridge.js in ${r.root} changed since preferred-tools wrote it - left as it is; /preferred-tools:fix (helper-stale) rewrites it`);
         }
         if (!gap || !gap.secrets)
             for (const [file, want] of r.keys)
@@ -726,11 +765,11 @@ function argvOf(step)
 // The plan's line for one key: who reads it, from which files, and whether its name is filled there - never a value.
 function keyLine(k)
 {
-    const reader = k.kind === 'helper' ? 'mcp-headers.js reads it each time Claude Code connects' : 'the apply writes it into the registration';
+    const reader = k.kind === 'helper' ? 'mcp-headers.js reads it each time Claude Code connects' : k.kind === 'bridge' ? 'mcp-bridge.js reads it each time the server starts' : 'the apply writes it into the registration';
     const parts = [`Key: ${k.name} (${k.scope} scope) - ${k.variable}; ${reader}, from ${k.files.join(', then ')}. The key is never printed.`];
     if (k.filled) parts.push('Filled.');
     else if (k.old) parts.push(`${k.variable} is in ${k.old}, which preferred-tools no longer reads: move it to ${k.files[0]}`);
-    else parts.push(`Not filled yet: add ${k.variable}=<your key> to ${k.files[0]}${k.kind === 'helper' ? ' - until then the server connects without its key' : ' before the apply, or after it run /preferred-tools:configure and keep the name - it writes the key in'}.`);
+    else parts.push(`Not filled yet: add ${k.variable}=<your key> to ${k.files[0]}${k.kind === 'helper' ? ' - until then the server connects without its key' : k.kind === 'bridge' ? ' - until then the server does not start' : ' before the apply, or after it run /preferred-tools:configure and keep the name - it writes the key in'}.`);
     return parts.join(' ');
 }
 
@@ -757,7 +796,8 @@ function render(p)
         else if (s.op === 'mcp-replace') lines.push(`   claude mcp remove ${shq(s.name)} -s ${s.scope}`, `   claude mcp add-json ${shq(s.name)} ${shq(JSON.stringify(s.entry))} -s ${s.scope}`, `   (the old entry is saved to rollback.json and re-added if the add fails)`);
         else if (s.op === 'ensure-dir') lines.push(`   writes ${s.path}/.gitignore  (contents: *)`);
         else if (s.op === 'root-ignore') lines.push(`   writes ${P.join(s.path, '.gitignore')}  (${roots.GITIGNORE.trim().split('\n').join(', ')} - or the lines it lacks, appended)`);
-        else if (s.op === 'write-helper') lines.push(`   writes ${P.join(s.path, roots.FILES.helper)}  (this plugin's header helper)`);
+        else if (s.op === 'write-helper') lines.push(`   writes ${P.join(s.path, roots.FILES.helper)}  (this plugin's header helper)`, `   (and package.json, type commonjs, when absent)`);
+        else if (s.op === 'write-bridge') lines.push(`   writes ${P.join(s.path, roots.FILES.bridge)}  (this plugin's URL bridge)`, `   (and package.json, type commonjs, when absent)`);
         else if (s.op === 'ensure-key-name') lines.push(`   writes ${s.file}  (names only: ${s.names.join(', ')} - you fill in each value)`);
         else if (s.op === 'record-clean') lines.push(s.entries.length || s.keep.length ? `   writes ${s.file}  (the servers left on their own)` : `   removes ${s.file}  (no server is left on its own)`);
         else if (s.op === 'order-mcp-json') lines.push(`   reorders ${s.file}  (no value changes)`);
