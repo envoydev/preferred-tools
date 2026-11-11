@@ -8,7 +8,8 @@
 //
 // It is copied into the root folder beside mcp-headers.js and runs outside the plugin, so it requires only node: modules
 // and ./mcp-headers.js, whose reader it shares (helper 4 or newer): the same .mcps-secrets chain, the first non-empty
-// value wins. A key reaches mcp-remote only as PT_BRIDGE_AUTH in its environment; the command line holds
+// value wins - but for an optional name the nearest file that has its line decides, even empty, so 'leave it empty for
+// the whole organization' holds whatever a farther file says. A key reaches mcp-remote only as PT_BRIDGE_AUTH in its environment; the command line holds
 // `Authorization:${PT_BRIDGE_AUTH}`, which mcp-remote expands itself (docs/sources.md, 'mcp-remote 0.16.0'). The bridge
 // prints nothing but its own one error line, which names variables and files, never a value - so it needs no
 // CLAUDE_CODE_MCP_SERVER_NAME guard.
@@ -115,10 +116,20 @@ function launch(argv, env, { dir, platform, helper } = {})
     const files = h.chainOf(dir, globalRoot ? path.resolve(globalRoot) : null, home);
     const key = h.valueIn(keyName, files);
     if (!key) return { error: `no value for ${keyName} in ${files.join(', ')}` };
+    // an optional name: the nearest file that has its line, even empty
+    const nearest = (name) =>
+    {
+        for (const file of files)
+        {
+            const all = h.readDotenv(file);
+            if (all && Object.hasOwn(all, name)) return all[name] ? { value: all[name], file } : null;
+        }
+        return null;
+    };
     const values = {};
     for (const n of names)
     {
-        const v = h.valueIn(n.name, files);
+        const v = n.optional ? nearest(n.name) : h.valueIn(n.name, files);
         if (!v)
         {
             if (n.optional) continue;
@@ -152,7 +163,7 @@ function main()
     try { helper = require('./mcp-headers.js'); }
     catch { helper = null; }
     const number = helper && Number.isInteger(helper.HELPER_VERSION) ? helper.HELPER_VERSION : 'missing';
-    if (!helper || !(helper.HELPER_VERSION >= NEEDS_HELPER) || typeof helper.valueIn !== 'function' || typeof helper.authValue !== 'function')
+    if (!helper || !(helper.HELPER_VERSION >= NEEDS_HELPER) || typeof helper.valueIn !== 'function' || typeof helper.readDotenv !== 'function' || typeof helper.authValue !== 'function')
         fail(`mcp-headers.js beside it is helper ${number} - the bridge needs ${NEEDS_HELPER}; run /preferred-tools:fix`);
     let r;
     try { r = launch(process.argv.slice(2), process.env, { dir: __dirname, platform: process.platform, helper }); }

@@ -128,7 +128,7 @@ const HELPER_SHA256 = {
 // mcp-bridge.js is copied into a root folder the same way (0.4.0): the same first-line and digest rule, node: modules and
 // ./mcp-headers.js only, and its CREDENTIAL is keys.js credentialName's test.
 const BRIDGE_SHA256 = {
-    1: '54ad80ac13270e71bd813206046e6dbce7a90c2a2acfc6abfc0ce26d319499a0', // 0.4.0
+    1: '533b56f560fb13f5d2ad39f609266f7503b83be12037c5573e7791c0f05eb88a', // 0.4.0
 };
 {
     const rel = path.join('scripts', 'mcp-bridge.js');

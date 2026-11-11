@@ -95,6 +95,26 @@ test('launch reads each name from the chain: the key from the global root, the s
     finally { w.clean(); }
 });
 
+test('an optional name left empty in the nearest file that has it ends the search: the whole organization (review I3)', () => {
+    const w = world();
+    const at = () => bridge().launch([T, K, 'Sentry-Bearer', PKG, w.global], { HOME: w.home }, { dir: w.root, platform: 'darwin' });
+    try
+    {
+        // the README's 'leave it empty for the whole organization', with another project's slug in the global root
+        put(sec(w.root), 'SENTRY_ORG=acme\nSENTRY_PROJECT=\n');
+        put(sec(w.global), `${K}=${KEY}\nSENTRY_PROJECT=other-web\n`);
+        assert.strictEqual(at().url, 'https://mcp.sentry.dev/mcp/acme');
+        // a file without the line does not end it
+        put(sec(w.root), 'SENTRY_ORG=acme\n');
+        assert.strictEqual(at().url, 'https://mcp.sentry.dev/mcp/acme/other-web');
+        // a required name, like the key, takes the first non-empty value
+        put(sec(w.root), 'SENTRY_ORG=\nSENTRY_PROJECT=\n');
+        put(sec(w.global), `${K}=${KEY}\nSENTRY_ORG=beta\nSENTRY_PROJECT=other-web\n`);
+        assert.strictEqual(at().url, 'https://mcp.sentry.dev/mcp/beta');
+    }
+    finally { w.clean(); }
+});
+
 test('launch refuses http to a host that is not loopback', () => {
     const w = world();
     try
