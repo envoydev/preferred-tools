@@ -60,16 +60,31 @@ async function authOnGet(s, cwd, name, env)
     return { auth: inits.length ? inits[inits.length - 1] : 'no request', inits, status: (res.out.split('\n').find((l) => /Status:/.test(l)) || '').trim(), exit: res.status };
 }
 
-// The catalog with github's hosted route pointed at a stub: its URL and the fingerprint the inventory matches it by
-function stubCatalog(port)
+// A copy of the catalog, `edit` applied to its raw rows
+function catalogWith(edit)
 {
     const c = catalogLib.load();
     const raw = JSON.parse(JSON.stringify({ ...c, reserved: [...c.reserved], byId: undefined }));
+    edit(raw);
+    return { ...raw, reserved: new Set(raw.reserved), byId: new Map(raw.tools.map((r) => [r.id, r])) };
+}
+
+// The catalog with github's hosted route pointed at a stub: its URL and the fingerprint the inventory matches it by
+const stubCatalog = (port) => catalogWith((raw) =>
+{
     const remote = raw.tools.find((r) => r.id === 'github').routes.remote;
     remote.url = `http://127.0.0.1:${port}/mcp/`;
     remote.fingerprints = [{ host: '127.0.0.1', pathPrefix: '/mcp' }];
-    return { ...raw, reserved: new Set(raw.reserved), byId: new Map(raw.tools.map((r) => [r.id, r])) };
-}
+});
+
+// The catalog with sentry's bridge route pointed at a stub (0.4.0): its URL template - http on 127.0.0.1, which
+// mcp-bridge.js and mcp-remote take - and the fingerprint the inventory matches it by
+const stubBridgeCatalog = (port) => catalogWith((raw) =>
+{
+    const bridge = raw.tools.find((r) => r.id === 'sentry').routes.bridge;
+    bridge.url = `http://127.0.0.1:${port}/mcp/{SENTRY_ORG}/{SENTRY_PROJECT?}`;
+    bridge.fingerprints = [{ bridge: `127.0.0.1:${port}/mcp/` }];
+});
 
 // A folder's trust, as the trust dialog writes it in the account file of a harness world (tests/harness.js)
 function trust(h, dir, on = true)
@@ -89,4 +104,4 @@ function fill(file, name, value)
     fs.writeFileSync(file, re.test(text) ? text.replace(re, () => `${name}=${value}`) : `${text}${text && !text.endsWith('\n') ? '\n' : ''}${name}=${value}\n`);
 }
 
-module.exports = { stub, claude, authOnGet, stubCatalog, trust, fill };
+module.exports = { stub, claude, authOnGet, stubCatalog, stubBridgeCatalog, trust, fill };
