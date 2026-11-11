@@ -464,10 +464,11 @@ test('update offers and rewrites a lower-numbered helper copy; leaves a higher o
         assert.strictEqual(cli.run(['mcp', 'add-json', 'github', JSON.stringify({ type: 'http', url: 'https://api.githubcopilot.com/mcp/', headersHelper: `node ${lower} GITHUB_PERSONAL_ACCESS_TOKEN Bearer` }), '-s', 'local'], { cwd: w.project, env: w.env }).status, 0);
         assert.strictEqual(cli.run(['mcp', 'add-json', 'sentry', JSON.stringify({ type: 'http', url: 'https://mcp.sentry.dev/mcp', headersHelper: `node ${higher} SENTRY_ACCESS_TOKEN Sentry-Bearer` }), '-s', 'user'], { cwd: w.project, env: w.env }).status, 0);
         helperAt(pt, 0);
-        helperAt(home, 2);
+        const HV = require('../scripts/mcp-headers.js').HELPER_VERSION;
+        helperAt(home, HV + 1);
         const c = await run(w, ['--check', '--no-refresh']);
         assert.strictEqual(c.code, 0, c.text);
-        assert.match(c.text, /Key helpers:\n {2}mcp-headers\.js in .*\.preferred-tools +0 -> 1/);
+        assert.match(c.text, new RegExp(`Key helpers:\\n {2}mcp-headers\\.js in .*\\.preferred-tools +0 -> ${HV}`));
         assert.match(c.text, /mcp-headers\.js in .*home.\.preferred-tools is newer than this plugin - update preferred-tools/);
         const q = JSON.parse((await run(w, ['--questions', '--no-refresh'])).text);
         const group = q.pick.flat().find((x) => x.id === 'update-helper');
@@ -476,7 +477,7 @@ test('update offers and rewrites a lower-numbered helper copy; leaves a higher o
         const a = await run(w, ['--apply', `helper:${lower}`]);
         assert.strictEqual(a.code, 0, a.text);
         assert.strictEqual(fs.readFileSync(lower, 'utf8'), roots.helperSource());
-        assert.match(fs.readFileSync(higher, 'utf8'), /^\/\/ preferred-tools mcp-headers 2/, 'a higher number is left');
+        assert.match(fs.readFileSync(higher, 'utf8'), new RegExp(`^// preferred-tools mcp-headers ${HV + 1}`), 'a higher number is left');
         assert.doesNotMatch((await run(w, ['--check', '--no-refresh'])).text, /Key helpers:/);
     }
     finally { w.clean(); }

@@ -1,6 +1,7 @@
 'use strict';
 // mcp-headers.js - the header helper a hosted registration names as `headersHelper` (spec D4). Each test copies it into
-// a throwaway root and runs it with its working folder elsewhere and HOME / USERPROFILE pointing into the throwaway world.
+// a throwaway root and runs it with its working folder elsewhere and HOME / USERPROFILE pointing into the throwaway world,
+// as Claude Code runs it: with CLAUDE_CODE_MCP_SERVER_NAME and _URL set. `{ byHand: true }` first runs it without them.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -24,7 +25,11 @@ function world()
     fs.copyFileSync(SOURCE, path.join(root, 'mcp-headers.js'));
     const run = (...argv) =>
     {
-        const r = spawnSync(process.execPath, [path.join(root, 'mcp-headers.js'), ...argv], { cwd: elsewhere, encoding: 'utf8', env: { ...process.env, HOME: home, USERPROFILE: home } });
+        const opts = argv[0] && typeof argv[0] === 'object' ? argv.shift() : {};
+        const env = { ...process.env, HOME: home, USERPROFILE: home, CLAUDE_CODE_MCP_SERVER_NAME: 'github', CLAUDE_CODE_MCP_SERVER_URL: 'https://api.githubcopilot.com/mcp/' };
+        if (opts.byHand) { delete env.CLAUDE_CODE_MCP_SERVER_NAME; delete env.CLAUDE_CODE_MCP_SERVER_URL; }
+        Object.assign(env, opts.env);
+        const r = spawnSync(process.execPath, [path.join(root, 'mcp-headers.js'), ...argv], { cwd: elsewhere, encoding: 'utf8', env });
         return { status: r.status, stdout: r.stdout, stderr: r.stderr, json: JSON.parse(r.stdout) };
     };
     return { dir, root, home, run, clean: () => fs.rmSync(dir, { recursive: true, force: true }) };
@@ -74,6 +79,24 @@ test('no value: {} on stdout and one stderr line naming the variable and the fil
         assert.strictEqual(lines.length, 1);
         assert.ok(lines[0].includes(G) && lines[0].includes(sec(w.root)), lines[0]);
         assert.ok(!r.stderr.includes('fake-other') && !r.stdout.includes('fake-other'));
+    }
+    finally { w.clean(); }
+});
+
+test('run by hand - no CLAUDE_CODE_MCP_SERVER_NAME - it prints {} and one stderr line, never the key', () => {
+    const w = world();
+    try
+    {
+        put(sec(w.root), `${G}=fake-1\n`);
+        const r = w.run({ byHand: true }, G, 'Bearer');
+        assert.strictEqual(r.status, 0);
+        assert.deepStrictEqual(r.json, {});
+        const lines = r.stderr.trim().split('\n');
+        assert.strictEqual(lines.length, 1);
+        assert.match(lines[0], /only when Claude Code runs it/);
+        assert.ok(!r.stdout.includes('fake-1') && !r.stderr.includes('fake-1'));
+        assert.deepStrictEqual(w.run({ env: { CLAUDE_CODE_MCP_SERVER_NAME: '' } }, G, 'Bearer').json, {}, 'an empty name is no Claude Code run');
+        assert.deepStrictEqual(w.run(G, 'Bearer').json, { Authorization: 'Bearer fake-1' }, 'run by Claude Code, the same call prints the header');
     }
     finally { w.clean(); }
 });

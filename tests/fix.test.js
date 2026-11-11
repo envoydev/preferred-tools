@@ -879,6 +879,7 @@ const localEntry = (w, name) => account.readAccount(w.env, w.project).local[name
 const ctxData = (w, data) => fix.makeCtx({ inv: inventory.buildInventory({ project: w.project, env: w.env, data }), env: w.env, machine: noMachine(), data });
 const logged = () => { const lines = []; return { lines, log: (...a) => lines.push(a.join(' ')), text: () => lines.join('\n') }; };
 const gitInit = (dir) => { fsx.mkdirSync(dir, { recursive: true }); assert.strictEqual(spawnx('git', ['init', '-q', dir]).status, 0); };
+const HV = require('../scripts/mcp-headers.js').HELPER_VERSION;
 const helperAt = (root, number, extra = '') => put(path.join(root, 'mcp-headers.js'), rootsLib.helperSource().replace(/^\/\/ preferred-tools mcp-headers \d+/, `// preferred-tools mcp-headers ${number}`) + extra);
 const shownOf = (d) => `${fix.render(d)}${JSON.stringify(d)}`;
 
@@ -971,20 +972,20 @@ test('helper-missing writes the helper; helper-stale rewrites a lower number, na
 
         helperAt(ptRoot(w), 0);
         const [lower] = detect(ctxOf(w)).found.filter((x) => x.id === 'helper-stale');
-        assert.match(lower.found, /helper 0 - this plugin's is 1/);
+        assert.match(lower.found, new RegExp(`helper 0 - this plugin's is ${HV}`));
         fix.applyFixes(ctxOf(w), ['helper-stale'], { log: () => {} });
         assert.strictEqual(fsx.readFileSync(file, 'utf8'), rootsLib.helperSource());
 
-        helperAt(ptRoot(w), 1, '// mine\n');
+        helperAt(ptRoot(w), HV, '// mine\n');
         const [edited] = detect(ctxOf(w)).found.filter((x) => x.id === 'helper-stale');
         assert.match(edited.found, /changed since preferred-tools wrote it/);
         assert.ok(!edited.blocked, 'a hand edit is rewritten on the confirmed plan');
 
-        helperAt(ptRoot(w), 2);
+        helperAt(ptRoot(w), HV + 1);
         const [higher] = detect(ctxOf(w)).found.filter((x) => x.id === 'helper-stale');
         assert.strictEqual(higher.blocked, `mcp-headers.js in ${ptRoot(w)} is newer than this plugin - update preferred-tools`);
         fix.applyFixes(ctxOf(w), ['helper-stale'], { log: () => {} });
-        assert.match(fsx.readFileSync(file, 'utf8'), /^\/\/ preferred-tools mcp-headers 2/, 'never rewritten');
+        assert.match(fsx.readFileSync(file, 'utf8'), new RegExp(`^// preferred-tools mcp-headers ${HV + 1}`), 'never rewritten');
     }
     finally { w.clean(); }
 });
@@ -1060,7 +1061,7 @@ test('root-ignore blocks a helper gap no appended line can close - a .gitignore 
         put(path.join(w.project, '.gitignore'), '.preferred-tools/\n');
         put(path.join(ptRoot(w), '.gitignore'), rootsLib.GITIGNORE);
         secretsAt(ptRoot(w), { [GK]: '' });
-        helperAt(ptRoot(w), 1);
+        helperAt(ptRoot(w), HV);
         seed(w, 'github', 'project', { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headersHelper: `node .preferred-tools/mcp-headers.js ${GK} Bearer` });
         const [f] = detect(ctxOf(w)).found.filter((x) => x.id === 'root-ignore');
         assert.ok(f, 'found');

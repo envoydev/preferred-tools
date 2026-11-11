@@ -1,4 +1,4 @@
-// preferred-tools mcp-headers 1
+// preferred-tools mcp-headers 2
 'use strict';
 // The header helper a hosted registration names as `headersHelper` (spec D4): `node <root>/mcp-headers.js <NAME> <SCHEME>
 // [<global root>]`. Claude Code runs it before it connects and sends the JSON it prints as request headers, so the key stays
@@ -8,6 +8,10 @@
 // ~/.alfred - the first non-empty value wins - and prints {"Authorization":"<SCHEME> <value>"}. With no value it prints {}
 // and one stderr line naming <NAME> and the files it read, never a value. It always exits 0 with JSON on stdout.
 //
+// It prints a header only when Claude Code runs it: Claude Code sets CLAUDE_CODE_MCP_SERVER_NAME for a headersHelper
+// (2.1.85+). Run by hand - a terminal, or an agent's shell tool - it reads no key file and prints {} and one stderr
+// line, so a key never lands in a terminal or a transcript.
+//
 // This file is copied into the user's root folder and runs outside the plugin, so it needs nothing but Node: `node:`
 // modules only, and its own copy of keys.js's dotenv grammar. Its bytes are pinned by tests/lint.js (HELPER_SHA256); a
 // change here bumps HELPER_VERSION and the first line together.
@@ -16,7 +20,7 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
-const HELPER_VERSION = 1;
+const HELPER_VERSION = 2;
 const SECRETS = '.mcps-secrets';
 const NAME_RULE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const SCHEME_RULE = /^[!-~]+$/;
@@ -61,6 +65,8 @@ const digestOf = (text) => crypto.createHash('sha256').update(String(text).repla
 
 function headers(argv, env)
 {
+    if (!env.CLAUDE_CODE_MCP_SERVER_NAME)
+        return { out: {}, note: 'mcp-headers: prints a header only when Claude Code runs it as a headersHelper (CLAUDE_CODE_MCP_SERVER_NAME is unset) - no key file read' };
     const [name, scheme, extraRoot] = argv;
     if (!name || !NAME_RULE.test(name) || !scheme || !SCHEME_RULE.test(scheme))
         return { out: {}, note: 'mcp-headers: usage: node mcp-headers.js <NAME> <SCHEME> [<root>]' };

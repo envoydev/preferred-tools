@@ -266,6 +266,9 @@ with, while the key sat in a file (the user's Windows workspace, 2026-11-10).
   Windows, which cmd, PowerShell and Git Bash all pass whole); the helper prints
   `{"Authorization":"<SCHEME> <value>"}`, or `{}` and one stderr line naming the variable and the files when it finds
   none. Project and local helpers run only after the folder's trust is accepted, and not in a child folder (measured).
+  Helper 2 prints a header only when Claude Code runs it - `CLAUDE_CODE_MCP_SERVER_NAME` is set (2.1.85+): run by hand,
+  from a terminal or an agent's shell tool, it reads no key file and prints `{}` with one stderr line, so a key never
+  lands in a transcript, with or without a secret guard installed (the user's ruling, 2026-11-11).
 - **D5 - Routes and scopes.** A hosted keyed route (github; context7 and sentry when a key is picked, sentry's scheme
   `Sentry-Bearer`) uses the helper at every scope and is recommended at global scope. A stdio keyed route (github's
   Docker, sentry's npm) is written in at local and global scope and not offered at project scope; context7's npm route

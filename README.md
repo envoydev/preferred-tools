@@ -57,7 +57,11 @@ in `docs/sources.md`.
 - Keys live in `.mcps-secrets` (`NAME=value` lines; a note goes after whitespace and `#`, or on its own `#` line),
   which you fill by hand: the plugin writes names only, and never asks for, prints or puts a key in a file a command
   names. A hosted route reads its key through `mcp-headers.js` each
-  time Claude Code connects, so the registration holds no key and no `${VAR}`; a Project-scope server's helper runs once
+  time Claude Code connects, so the registration holds no key and no `${VAR}`. The helper prints a key only for Claude
+  Code: run by hand, from a terminal or an agent's shell, it prints `{}`. That stops an accidental run, not a read of
+  the file: `.mcps-secrets` is plain text, and nothing in preferred-tools stops a command that reads it (`cat`) from
+  showing its keys in a session. A secret guard, such as alfred-code's, is what keeps the file itself out of a
+  session's output. A Project-scope server's helper runs once
   you accept the folder's trust prompt. A local route's key is written into the registration at Local and Global scope
   (`/preferred-tools:fix`, `token-sync`, writes it again after you change it); such a route is not offered at Project
   scope. Remote routes with no key prefer OAuth. Keys in 0.1.x's files (alfred-code's store, `.preferred-tools/.secrets`)

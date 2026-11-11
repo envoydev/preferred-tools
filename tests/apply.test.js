@@ -778,11 +778,12 @@ test('write-helper: absent is written; a lower number is rewritten; the same num
         let r = runSteps(w, [step]);
         assert.strictEqual(r.report.failed, null, r.text);
         assert.strictEqual(fs.readFileSync(dest, 'utf8'), src);
-        assert.ok(r.text.includes(`wrote ${dest} (helper 1)`), r.text);
+        const HV = require('../scripts/mcp-headers.js').HELPER_VERSION;
+        assert.ok(r.text.includes(`wrote ${dest} (helper ${HV})`), r.text);
         fs.writeFileSync(dest, src.replace(/^\/\/ preferred-tools mcp-headers \d+/, '// preferred-tools mcp-headers 0'));
         r = runSteps(w, [step]);
         assert.strictEqual(fs.readFileSync(dest, 'utf8'), src);
-        assert.ok(r.text.includes(`rewrote ${dest} (helper 0 -> 1)`), r.text);
+        assert.ok(r.text.includes(`rewrote ${dest} (helper 0 -> ${HV})`), r.text);
         r = runSteps(w, [step]);
         assert.ok(r.text.includes(`${dest} is up to date - left as it is`), r.text);
         const edited = `${src}// mine\n`;

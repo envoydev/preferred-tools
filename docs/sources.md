@@ -919,6 +919,13 @@ What 0.2.0's `mcp-headers.js` (D4) and the fix rows `key-to-helper`, `helper-mis
   server in a project `.mcp.json` Claude Code removes every variable whose name looks like a credential (`TOKEN`,
   `SECRET`, `PASSWORD`, `KEY`, `AUTH`) - 'have the script read its credential from a file or a credential store'. That
   is why the helper reads `.mcps-secrets` and D9 refuses a setting with such a name.
+- First release of the two variables - read 2026-11-11, https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md,
+  under 2.1.85: 'Added `CLAUDE_CODE_MCP_SERVER_NAME` and `CLAUDE_CODE_MCP_SERVER_URL` environment variables to MCP
+  `headersHelper` scripts'. Helper 2 prints a header only when the name is set, so a run by hand prints `{}`; 2.1.85 is
+  well before the 2.1.238 trust rule the helper already needs, so no supported Claude Code loses its key. MEASURED
+  2026-11-11 by `tests/probes/headers-helper.js` on helper 2 (Claude Code 2.1.322, macOS arm64): 14 of 14 pass - the
+  header reached the stub at project, local and user scope, so the name is set even where credential-like variables
+  are removed.
 - Trust, from the docs: for a project `.mcp.json` or local-scope server the helper runs only after the trust dialog is
   accepted for the project directory the server is declared in; a parent folder's trust does not count; until then the
   server connects with its static `headers` alone. `projects["<path>"].hasTrustDialogAccepted` in the account file is
