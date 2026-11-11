@@ -53,7 +53,7 @@ test('a fresh install writes through the CLI at each scope, and every add is rea
     const w = world();
     try
     {
-        const r = walk(w, { picks: { serena: { scope: 'local' }, 'playwright-chrome': { scope: 'user' }, context7: { route: 'remote', scope: 'project' } } });
+        const r = walk(w, { picks: { serena: { scope: 'local' }, 'playwright-chrome': { scope: 'user' }, context7: { route: 'remote', scope: 'project', token: false } } });
         assert.deepStrictEqual(r.p.errors, []);
         assert.strictEqual(r.report.failed, null, r.text);
         // local: the account file's project entry; user: the top level; project: .mcp.json
@@ -115,7 +115,7 @@ test('a failure mid-apply stops there, leaves the earlier steps in place and nam
     const w = world();
     try
     {
-        const r = walk(w, { picks: { context7: { route: 'remote', scope: 'project' }, gitlab: { scope: 'project' }, atlassian: { scope: 'project' } } }, { fail: 'add-json gitlab' });
+        const r = walk(w, { picks: { context7: { route: 'remote', scope: 'project', token: false }, gitlab: { scope: 'project', token: false }, atlassian: { scope: 'project', token: false } } }, { fail: 'add-json gitlab' });
         assert.ok(r.report.failed);
         assert.strictEqual(r.report.failed.op, 'mcp-add');
         assert.deepStrictEqual(Object.keys(mcpJson(w).mcpServers), ['context7'], 'the first add stays, the failed one and the one after it are absent');

@@ -116,17 +116,17 @@ function heldKey(entry, route)
     return typeof v === 'string' && v !== '' && !keys.PLACEHOLDER.test(v) ? v : null;
 }
 
-// local for a local route (its paths and Python are this machine's); for a hosted route, global when it will use a key
-// (spec D5, O7: a global helper has an absolute path, needs no folder trust and serves every session, a workspace child
-// included) - a required key, or an optional one whose name is filled in the global chain - else project. The scope is
-// asked before the key, so `keyState` is read at global scope.
-function recommendedScope(row, routeId, keyState = null)
+// local for a local route (its paths and Python are this machine's); for a hosted route that can send a key, the scope M1
+// settles (spec F2): global while a parent folder's helper does not run in a child folder's session (a global helper has
+// an absolute path, needs no folder trust and serves every session, a workspace child included), else project. A user
+// who then picks OAuth or no key keeps the scope picked. A hosted route with no key: project.
+function recommendedScope(row, routeId)
 {
     if (row.kind === 'plugin') return row.recommendedScope;
     if (routeId !== 'remote') return 'local';
     const route = row.routes[routeId];
     if (!route || !route.helper) return 'project';
-    return route.authMode === 'token' || Boolean(keyState && keyState.found) ? 'user' : 'project';
+    return PARENT_HELPER_IN_CHILD ? 'project' : 'user';
 }
 // an optional key is sent by default when a name D9 offers is filled in the chain the chosen scope reads
 const keyToSend = (keyState) => Boolean(keyState && keyState.found);
@@ -321,7 +321,7 @@ function scopeOrder(row, inv, { route, current = null, copyOf = [], ctx = null }
     const routeId = route || (current && current.route) || row.recommendedRoute;
     const all = scopesFor(row, routeId, ctx);
     const stranded = strandedScope(row, routeId, current, ctx);
-    const rec = current && !stranded ? current.scope : recommendedScope(row, routeId, keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled, 'user'));
+    const rec = current && !stranded ? current.scope : recommendedScope(row, routeId);
     const free = all.filter((s) => !copyOf.some((c) => c.scope === s));
     const scopes = free.length ? free : all;
     const order = [rec, ...SCOPE_ORDER.filter((s) => s !== rec)].filter((s) => scopes.includes(s));
@@ -494,6 +494,7 @@ function toolAsk(row, inv, { route, scope = null, name = null, current = null, c
     // what the registration has now goes first, so a configure walk recommends keeping it
     const first = (opts, keepFirst) => (keepFirst ? [opts[1], opts[0]] : opts).map((o, i) => ({ ...o, label: `${o.label}${i === 0 ? REC : ''}` }));
     const sameRoute = current && current.route === routeId;
+    // every extra that applies, in the spec's order: the browser binary, the host, the API key (spec F1)
     if (row.routes[routeId].optionalArgs && row.routes[routeId].optionalArgs.executablePath)
     {
         const has = Boolean(sameRoute && current.executablePath);
@@ -506,24 +507,7 @@ function toolAsk(row, inv, { route, scope = null, name = null, current = null, c
                 : first([engine, named]),
         });
     }
-    // an optional key (spec D5): asked at every scope but for a stdio route at project scope, which runs keyless
-    else if (row.routes[routeId].authMode === 'optional-token' && !(routeId !== 'remote' && at === 'project'))
-    {
-        const route = row.routes[routeId];
-        const ks = keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled, at || 'user');
-        const file = ks && ks.files[0];
-        const useKey = route.helper
-            ? { label: 'Use a key from .mcps-secrets', description: `mcp-headers.js reads it each time Claude Code connects${file ? `, from ${file} first` : ''} - never written into the registration` }
-            : { label: 'Use a key from .mcps-secrets', description: `the apply writes it into the registration from ${file || '.mcps-secrets'}, never printed` };
-        const noKey = route.keyless === 'oauth'
-            ? { label: 'Sign in with OAuth', description: 'run /mcp once in a session to log in' }
-            : { label: 'No key - lower rate limits', description: 'works anonymously' };
-        qs.push({
-            id: `token-${row.id}`, header: 'API key', multiSelect: false, question: `${row.label}: send an API key?`,
-            options: first([noKey, useKey], current ? Boolean(sameRoute && current.token) : keyToSend(ks)),
-        });
-    }
-    else if (row.params)
+    if (row.params)
     {
         const host = current && current.host && current.host !== row.params[0].default ? current.host : null;
         qs.push({
@@ -531,6 +515,25 @@ function toolAsk(row, inv, { route, scope = null, name = null, current = null, c
             options: host
                 ? first([{ label: `Keep ${host}`, description: 'the host it uses now' }, { label: row.params[0].default, description: 'the hosted service' }])
                 : first([{ label: row.params[0].default, description: 'the hosted service' }, { label: 'A self-managed host', description: 'your own GitLab host name, asked next' }]),
+        });
+    }
+    // an optional key (spec D5, F2): asked at every scope but for a stdio route at project scope, which runs keyless; the
+    // key first at install, what the registration has now first at configure
+    if (row.routes[routeId].authMode === 'optional-token' && !(routeId !== 'remote' && at === 'project'))
+    {
+        const route = row.routes[routeId];
+        const ks = keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled, at || 'user');
+        const file = ks && ks.files[0];
+        const hint = route.helper && route.helper.hint ? `; ${route.helper.hint}` : '';
+        const useKey = route.helper
+            ? { label: 'Use a key from .mcps-secrets', description: `mcp-headers.js reads it each time Claude Code connects${file ? `, from ${file} first` : ''} - never written into the registration${hint}` }
+            : { label: 'Use a key from .mcps-secrets', description: `the apply writes it into the registration from ${file || '.mcps-secrets'}, never printed` };
+        const noKey = route.keyless === 'oauth'
+            ? { label: 'Sign in with OAuth', description: 'run /mcp once in a session to log in' }
+            : { label: 'No key - lower rate limits', description: 'works anonymously' };
+        qs.push({
+            id: `token-${row.id}`, header: 'API key', multiSelect: false, question: `${row.label}: send an API key?`,
+            options: first([noKey, useKey], current ? Boolean(sameRoute && current.token) : true),
         });
     }
     return { first: located ? [scopeQ, nameQ].filter(Boolean) : null, questions: qs, answers, only };
@@ -557,6 +560,10 @@ const STATIC = {
     settings: { id: 'settings', header: 'Settings', multiSelect: false, question: 'How do you want to set the tools up?', options: [
         { label: `Use the recommended settings for all${REC}`, description: 'route, scope, name and location as recommended' },
         { label: 'Set each tool', description: 'ask route, scope, name and location per tool' } ] },
+    // one pick (spec F1): the same choice, about that tool alone
+    settingsOne: (tool) => ({ id: 'settings', header: 'Settings', multiSelect: false, question: `How do you want to set ${tool} up?`, options: [
+        { label: `Use the recommended settings for ${tool}${REC}`, description: 'route, scope, name and location as recommended' },
+        { label: `Set ${tool} up`, description: 'ask its route, scope, name and location' } ] }),
     apply: { id: 'apply', header: 'Apply', multiSelect: false, question: 'Apply this plan?', options: [
         { label: `Apply${REC}`, description: 'runs the calls above in order, stops at the first failure' },
         { label: 'Change something', description: 'go back to the answers' },
@@ -648,7 +655,7 @@ function rootsBlock(inv, picks, catalog, ctx)
 function all(inv, picks, catalog, { env = {}, home = null, connectors = null } = {})
 {
     const out = {
-        static: { ...STATIC, hud: STATIC.hud(0, 0, 0), prereqMissing: STATIC.prereqMissing('<tool>', '<prerequisite>') },
+        static: { ...STATIC, hud: STATIC.hud(0, 0, 0), prereqMissing: STATIC.prereqMissing('<tool>', '<prerequisite>'), settingsOne: STATIC.settingsOne('<tool>') },
         pick: pickQuestions(inv, catalog, picks && picks.existing, connectors), change: null, remove: removeQuestions(inv, catalog), tools: {}, targets: {},
     };
     // `exists` reads the disk: alfred-code's .alfred/.gitignore and its 2.x data decide which folders are offered
@@ -741,4 +748,122 @@ function all(inv, picks, catalog, { env = {}, home = null, connectors = null } =
     return out;
 }
 
-module.exports = { PARENT_HELPER_IN_CHILD, SCOPE_TEXT, keyNameQuestion, settingsQuestion, liveReader, heldKey, SCOPE_LABEL, scopeOfLabel, needsRoot, rootFamilies, rootQuestion, REC, recommendedScope, keyStateOf, keyToSend, alsoProvided, pickQuestions, changeQuestions, routeQuestion, toolQuestions, toolAsk, scopeQuestion, nameQuestion, locationQuestion, removeQuestions, packed, STATIC, all, chunk, scopesFor };
+// ---- the walk (spec F1) ---------------------------------------------------------------------------------------------
+
+// configure's first question for a registration (spec F4): who looks after it. `root`: the folder its family's record
+// would sit in. -> { question, answers: { <label as shown>: { key, choice } } }
+function ownStep(item, root)
+{
+    const P = /^(?:[A-Za-z]:[\\/]|\\\\)/.test(String(root)) ? path.win32 : path.posix;
+    const file = P.join(root, roots.FILES.record);
+    const where = item.scope === 'project' ? '; in .mcp.json it sits with your own servers, after the managed ones' : '';
+    const opts = [
+        { label: `preferred-tools${REC}`, description: 'configure, update and fix look after it', choice: 'manage' },
+        { label: 'Leave it on its own', description: `nothing in this plugin changes its entry again${where}; saved in ${file}`, choice: 'own' },
+    ];
+    return {
+        question: { id: `own-${item.key}`, header: 'Looked after', multiSelect: false, question: `Who looks after ${item.name}?`, options: opts.map(({ label, description }) => ({ label, description })) },
+        answers: Object.fromEntries(opts.map((o) => [o.label, { key: item.key, choice: o.choice }])),
+    };
+}
+
+// The tools in the order the pick lists show them: catalog group order, then catalog order.
+function pickOrder(catalog, ids)
+{
+    const rank = new Map();
+    for (const g of catalog.groups) for (const r of catalog.tools.filter((x) => x.group === g.id)) rank.set(r.id, rank.size);
+    return ids.filter((id) => rank.has(id)).sort((a, b) => rank.get(a) - rank.get(b));
+}
+
+// One step of the walk: the questions about one tool to ask now, or { id: 'done' } (spec F1). Install: `settings`, then
+// per tool its route, `first` (scope and name, for a tool with a data folder), its whole call (a tool without one), the
+// root of its family when this run has not answered it, its location and extras, its key name and settings. Configure:
+// per target, who looks after it, then the same - a root target is its root question, a server left on its own its own
+// question, a plugin its scope. A step with nothing to ask is passed over, but for one with a location to `set`. `picks`:
+// install.md's and configure.md's picks.json - `done` the step ids answered, `walk` the settings answer, `tokens` the
+// API key answers. `built`: the all() output, when the caller has it.
+// -> { id, tool, call, answers, set? } | { id: 'done' }
+function next(inv, picks, catalog, opts = {}, built = null)
+{
+    picks = picks || {};
+    const b = built || all(inv, picks, catalog, opts);
+    const done = new Set(picks.done || []);
+    const tokens = picks.tokens || {};
+    const steps = [];
+    const add = (id, tool, questions, answers = {}, set = null) =>
+    {
+        const call = questions.filter(Boolean);
+        const kept = Object.fromEntries(Object.entries(answers).filter(([qid]) => call.some((q) => q.id === qid)));
+        if (call.length || set) steps.push({ id, tool, call, answers: kept, ...(set ? { set } : {}) });
+    };
+    const keyStep = (t) =>
+    {
+        const k = tokens[t] === false ? null : b.keyNames[t];
+        const st = b.settings[t];
+        add(`${t}:keys`, t, [k && k.question, st && st.question], { ...(k ? { [k.question.id]: k.answers } : {}), ...(st ? { [st.question.id]: st.answers } : {}) });
+    };
+    const located = (t) => (t.first !== null && t.first !== undefined);
+    const toolSteps = (t, id, rootStep) =>
+    {
+        add(`${id}:route`, id, [t.route]);
+        if (located(t)) add(`${id}:first`, id, t.first);
+        else add(`${id}:questions`, id, t.questions || []);
+        if (rootStep) rootStep();
+        if (located(t))
+        {
+            const loc = (t.questions || []).find((q) => q.id.startsWith('location-'));
+            add(`${id}:questions`, id, t.questions || [], loc ? { [loc.id]: t.answers } : {}, t.only ? { location: t.only } : null);
+        }
+        keyStep(id);
+    };
+
+    if (picks.rows)
+    {
+        const rows = pickOrder(catalog, picks.rows);
+        if (rows.length)
+        {
+            const one = rows.length === 1 ? STATIC.settingsOne(catalog.byId.get(rows[0]).label) : STATIC.settings;
+            add('settings', null, [one], { settings: { [one.options[0].label]: 'recommended', [one.options[1].label]: 'each' } });
+            if (picks.walk === 'recommended') return done.has('settings') ? { id: 'done' } : steps[0];
+        }
+        const asked = new Set(Object.keys(picks.roots || {}));
+        for (const id of rows)
+        {
+            const row = catalog.byId.get(id);
+            const t = b.tools[id];
+            if (!t) continue;
+            const routeId = (picks.routes || {})[id] || row.recommendedRoute;
+            const rootStep = () =>
+            {
+                if (!needsRoot(row, routeId)) return;
+                const scope = (picks.scopes || {})[id] || scopeOrder(row, inv, { route: routeId, ctx: null, copyOf: installedOf(inv, id) })[0];
+                const family = roots.familyOf(scope);
+                if (asked.has(family)) return;
+                asked.add(family);
+                const q = b.roots.questions.find((x) => x.id === `root-${family}`);
+                if (q) add(`root:${family}`, id, [q], { [q.id]: b.roots.answers[q.id] });
+            };
+            toolSteps(t, id, rootStep);
+        }
+    }
+    for (const key of picks.targets || [])
+    {
+        const t = b.targets[key];
+        if (!t || t.error) continue;
+        if (t.kind === 'root') { add(key, key, [t.root.question], { [t.root.question.id]: t.root.answers }); continue; }
+        if (t.kind === 'own') { add(`${key}:own`, key, [t.own.question], { [t.own.question.id]: t.own.answers }); continue; }
+        if (t.kind === 'mcp')
+        {
+            const family = roots.familyOf(t.current.scope);
+            const root = rootInUse(inv, family, { home: opts.home, catalog });
+            const fallback = roots.resolve(inv, picks.roots, { project: inv.project, platform: inv.os, home: opts.home || require('./account.js').homeDir(process.env), catalog }).roots[family];
+            const o = ownStep({ key, name: t.current.name, scope: t.current.scope }, root ? root.path : fallback);
+            add(`${key}:own`, key, [o.question], { [o.question.id]: o.answers });
+            if ((picks.existing || {})[key] === 'own') continue;
+        }
+        toolSteps(t, key, null);
+    }
+    return steps.find((s) => !done.has(s.id)) || { id: 'done' };
+}
+
+module.exports = { PARENT_HELPER_IN_CHILD, ownStep, next, SCOPE_TEXT, keyNameQuestion, settingsQuestion, liveReader, heldKey, SCOPE_LABEL, scopeOfLabel, needsRoot, rootFamilies, rootQuestion, REC, recommendedScope, keyStateOf, keyToSend, alsoProvided, pickQuestions, changeQuestions, routeQuestion, toolQuestions, toolAsk, scopeQuestion, nameQuestion, locationQuestion, removeQuestions, packed, STATIC, all, chunk, scopesFor };

@@ -48,6 +48,8 @@ function walkQuestions()
             ...Object.values(q.targets).flatMap((t) => [...(t.first || []), ...(t.questions || []), ...(t.route ? [t.route] : [])]),
             ...Object.values(q.keyNames).flatMap(qOf), ...Object.values(q.settings).flatMap(qOf),
             ...items.flatMap((it) => qOf(existing.ownQuestion(it))),
+            // the walk's own question for each registration target (spec F4)
+            ...regs.map((r) => asks.ownStep({ key: `mcp:${r.name}~${r.scope}`, name: r.name, scope: r.scope }, `${base.project}${base.os === 'win32' ? '\\' : '/'}.preferred-tools`).question),
         ];
         for (const question of list) out.push({ where, question });
     }

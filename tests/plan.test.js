@@ -122,12 +122,14 @@ test('npx rows: pinned, with the cut-off in npm_config_before; native Windows ge
 });
 
 test('routes: context7, github and sentry each build both ways; the others have one', () => {
-    const c7r = addStep(plan(inv(MAC), pickOne('context7', { route: 'remote' }), opts('/h'))).entry;
+    const c7r = addStep(plan(inv(MAC), pickOne('context7', { route: 'remote', token: false }), opts('/h'))).entry;
     assert.deepStrictEqual(c7r, { type: 'http', url: 'https://mcp.context7.com/mcp' });
-    const c7k = addStep(plan(inv(MAC), pickOne('context7', { route: 'remote', token: true }), opts('/h'))).entry;
-    assert.deepStrictEqual(c7k, { type: 'http', url: 'https://mcp.context7.com/mcp', headersHelper: 'node /work/shop/.preferred-tools/mcp-headers.js CONTEXT7_API_KEY Bearer' });
+    // no key answer: the key is sent, from the global root (spec F2)
+    const c7k = addStep(plan(inv(MAC), pickOne('context7', { route: 'remote' }), opts('/h'))).entry;
+    assert.deepStrictEqual(c7k, { type: 'http', url: 'https://mcp.context7.com/mcp', headersHelper: 'node /h/.preferred-tools/mcp-headers.js CONTEXT7_API_KEY Bearer' });
+    // a stdio key whose name is filled nowhere: no key argument, never an empty one (spec F2)
     const c7l = addStep(plan(inv(MAC), pickOne('context7', { route: 'local', token: true }), opts('/h'))).entry;
-    assert.deepStrictEqual(c7l.args, ['-y', '@upstash/context7-mcp@4.5.0', '--api-key', '${CONTEXT7_API_KEY}']);
+    assert.deepStrictEqual(c7l.args, ['-y', '@upstash/context7-mcp@4.5.0']);
     const gh = addStep(plan(inv(MAC), pickOne('github', { route: 'local' }), opts('/h'))).entry;
     assert.deepStrictEqual(gh.args, ['run', '-i', '--rm', '-e', 'GITHUB_PERSONAL_ACCESS_TOKEN', 'ghcr.io/github/github-mcp-server:v2.1.0', 'stdio']);
     assert.deepStrictEqual(gh.env, { GITHUB_PERSONAL_ACCESS_TOKEN: '${GITHUB_PERSONAL_ACCESS_TOKEN}' });
@@ -136,7 +138,8 @@ test('routes: context7, github and sentry each build both ways; the others have 
     const ghr = addStep(plan(inv(MAC), pickOne('github', { route: 'remote' }), opts('/h'))).entry;
     assert.deepStrictEqual(ghr, { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headersHelper: 'node /h/.preferred-tools/mcp-headers.js GITHUB_PERSONAL_ACCESS_TOKEN Bearer' });
     const sr = addStep(plan(inv(MAC), pickOne('sentry', { route: 'remote' }), opts('/h'))).entry;
-    assert.deepStrictEqual(sr, { type: 'http', url: 'https://mcp.sentry.dev/mcp' });
+    assert.deepStrictEqual(sr, { type: 'http', url: 'https://mcp.sentry.dev/mcp', headersHelper: 'node /h/.preferred-tools/mcp-headers.js SENTRY_ACCESS_TOKEN Sentry-Bearer' });
+    assert.deepStrictEqual(addStep(plan(inv(MAC), pickOne('sentry', { route: 'remote', token: false }), opts('/h'))).entry, { type: 'http', url: 'https://mcp.sentry.dev/mcp' });
     const sl = addStep(plan(inv(MAC), pickOne('sentry', { route: 'local' }), opts('/h'))).entry;
     assert.strictEqual(sl.env.SENTRY_ACCESS_TOKEN, '${SENTRY_ACCESS_TOKEN}');
     assert.match(plan(inv(MAC), pickOne('gitlab', { route: 'local' }), opts('/h')).errors[0], /no local route/);
@@ -245,7 +248,7 @@ test('scopes: every scope writes absolute paths with ~ expanded; project scope t
 test('every MCP route offers user, project and local: recommended first, then user, project, local', () => {
     const scopes = (id, route, base = MAC, home = '/Users/me') => asks.scopeQuestion(catalog.byId.get(id), inv(base), { route, ctx: { project: base.project, platform: base.os, home, env: {}, exists: () => false } }).options.map((o) => asks.scopeOfLabel(o.label));
     assert.deepStrictEqual(scopes('serena', 'local'), ['local', 'user', 'project']);
-    assert.deepStrictEqual(scopes('context7', 'remote'), ['project', 'user', 'local']);
+    assert.deepStrictEqual(scopes('context7', 'remote'), ['user', 'project', 'local']);
     assert.deepStrictEqual(scopes('context7', 'local'), ['local', 'user', 'project']);
     assert.deepStrictEqual(scopes('claude-hud'), ['user', 'project', 'local']);
     assert.deepStrictEqual(scopes('typescript-lsp'), ['project', 'user', 'local']);
@@ -426,7 +429,7 @@ test('a location change edits only the paths and keeps the pin; the old data is 
 });
 
 test('a scope change moves the registration and rewrites its paths for the new scope', () => {
-    const r = installed('context7', { route: 'remote', scope: 'project' });
+    const r = installed('context7', { route: 'remote', scope: 'project', token: false });
     const p = plan(inv(MAC, { registrations: [r] }), changeOf(r, { route: 'remote', scope: 'user' }), opts('/h'));
     assert.deepStrictEqual(p.steps.map((s) => s.op), ['mcp-move']);
     assert.deepStrictEqual([p.steps[0].from.scope, p.steps[0].to.scope], ['project', 'user']);
@@ -439,7 +442,7 @@ test('a scope change moves the registration and rewrites its paths for the new s
 });
 
 test('changing the route rebuilds from the catalog; changing only the key adds the helper to the entry as read', () => {
-    const r = installed('context7', { route: 'remote' });
+    const r = installed('context7', { route: 'remote', scope: 'project', token: false });
     const key = plan(inv(MAC, { registrations: [r] }), changeOf(r, { token: true }), opts('/h'));
     assert.deepStrictEqual(key.steps.map((s) => s.op), ['root-ignore', 'write-helper', 'ensure-key-name', 'mcp-replace', 'record-root', 'order-mcp-json']);
     assert.deepStrictEqual(key.steps[3].entry, { type: 'http', url: 'https://mcp.context7.com/mcp', headersHelper: 'node /work/shop/.preferred-tools/mcp-headers.js CONTEXT7_API_KEY Bearer' });
@@ -447,10 +450,12 @@ test('changing the route rebuilds from the catalog; changing only the key adds t
     const toLocal = plan(inv(MAC, { registrations: [r] }), changeOf(r, { route: 'local' }), opts('/h'));
     assert.deepStrictEqual(toLocal.errors, []);
     assert.deepStrictEqual([toLocal.steps[0].op, toLocal.steps[0].scope, toLocal.steps[0].entry.command], ['mcp-replace', 'project', 'npx']);
+    // a keyed hosted one: the local launch, with no key argument while the name is filled nowhere (spec F2)
     const user = installed('context7', { route: 'remote', scope: 'user' });
     const local = plan(inv(MAC, { registrations: [user] }), changeOf(user, { route: 'local' }), opts('/h'));
-    assert.strictEqual(local.steps[0].op, 'mcp-replace');
-    assert.strictEqual(local.steps[0].entry.command, 'npx');
+    const replace = local.steps.find((x) => x.op === 'mcp-replace');
+    assert.deepStrictEqual([replace.entry.command, replace.entry.args.includes('--api-key')], ['npx', false]);
+    assert.ok(local.notes.some((n) => n.startsWith('context7: fill CONTEXT7_API_KEY in ')), local.notes.join('\n'));
     const moved = plan(inv(MAC, { registrations: [r] }), changeOf(r, { route: 'local', scope: 'local' }), opts('/h'));
     assert.deepStrictEqual(moved.steps.map((s) => s.op), ['mcp-move', 'fetch'], 'a hosted route had nothing in the cache');
 });
@@ -768,7 +773,7 @@ test('the scope question follows the route: its recommended scope first, then us
     const i = inv(MAC);
     const scopes = (id, route) => asks.scopeQuestion(catalog.byId.get(id), i, { route, ctx: { project: '/p', platform: 'darwin', home: '/h', env: {} } }).options.map((o) => asks.scopeOfLabel(o.label));
     assert.deepStrictEqual(scopes('serena', 'local'), ['local', 'user', 'project']);
-    assert.deepStrictEqual(scopes('context7', 'remote'), ['project', 'user', 'local']);
+    assert.deepStrictEqual(scopes('context7', 'remote'), ['user', 'project', 'local']);
     assert.deepStrictEqual(scopes('context7', 'local'), ['local', 'user', 'project']);
     assert.deepStrictEqual(scopes('claude-hud'), ['user', 'project', 'local']);
     assert.deepStrictEqual(scopes('typescript-lsp'), ['project', 'user', 'local']);
@@ -793,15 +798,16 @@ test('the CLI form prints a plan and writes it for apply.js', () => {
     try
     {
         fs.writeFileSync(path.join(d, 'inv.json'), JSON.stringify(inv(MAC)));
-        fs.writeFileSync(path.join(d, 'ans.json'), JSON.stringify(pickOne('atlassian')));
+        fs.writeFileSync(path.join(d, 'ans.json'), JSON.stringify(pickOne('atlassian', { token: false })));
         const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'plan.js'), path.join(d, 'inv.json'), path.join(d, 'ans.json'), '--out', path.join(d, 'plan.json')], { encoding: 'utf8' });
         assert.strictEqual(r.status, 0, r.stderr);
-        assert.match(r.stdout, /claude mcp add-json atlassian .*-s project/);
+        assert.match(r.stdout, /claude mcp add-json atlassian .*-s user/);
         assert.match(r.stdout, /OAuth: run \/mcp once/);
         assert.strictEqual(JSON.parse(fs.readFileSync(path.join(d, 'plan.json'), 'utf8')).steps[0].op, 'mcp-add');
         const q = spawnSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'plan.js'), '--questions', path.join(d, 'inv.json')], { encoding: 'utf8' });
         assert.strictEqual(q.status, 0, q.stderr);
         assert.ok(JSON.parse(q.stdout).pick.length >= 1);
+        assert.deepStrictEqual(JSON.parse(q.stdout).next, { id: 'done' }, 'no picks: nothing to walk');
     }
     finally { fs.rmSync(d, { recursive: true, force: true }); }
 });
@@ -832,7 +838,7 @@ test("hud: 'defer' plans the install and leaves the settings ask for after it; a
 test('--questions takes the route answered so far: it decides the recommended scope', () => {
     const i = inv(MAC);
     const scopes = (route) => asks.all(i, { rows: ['context7'], routes: { context7: route } }, catalog).tools.context7.questions.find((q) => q.id === 'scope-context7').options.map((o) => asks.scopeOfLabel(o.label));
-    assert.deepStrictEqual(scopes('remote'), ['project', 'user', 'local']);
+    assert.deepStrictEqual(scopes('remote'), ['user', 'project', 'local']);
     assert.deepStrictEqual(scopes('local'), ['local', 'user', 'project']);
     assert.strictEqual(asks.all(i, { rows: ['serena'] }, catalog).tools.serena.route, null, 'a one-route row has no route ask');
 });
@@ -1270,10 +1276,10 @@ test("the question's recommended folder and the plan's default write the same en
 
 test('scope options read Global, Project and Local, the recommended first; the value stays user, project or local', () => {
     const q = asks.all(inv(MAC), { rows: ['atlassian'] }, catalog).tools.atlassian.questions.find((x) => x.id === 'scope-atlassian');
-    assert.deepStrictEqual(q.options.map((o) => o.label), ['Project (Recommended)', 'Global', 'Local']);
-    assert.match(q.options[1].description, /every project on this machine \(Claude Code's user scope, in ~\/\.claude\.json\)/);
+    assert.deepStrictEqual(q.options.map((o) => o.label), ['Global (Recommended)', 'Project', 'Local']);
+    assert.match(q.options[0].description, /every project on this machine \(Claude Code's user scope, in ~\/\.claude\.json\)/);
     assert.match(q.options[2].description, /this project, only you \(~\/\.claude\.json, under this project\)/);
-    assert.deepStrictEqual(q.options.map((o) => asks.scopeOfLabel(o.label)), ['project', 'user', 'local']);
+    assert.deepStrictEqual(q.options.map((o) => asks.scopeOfLabel(o.label)), ['user', 'project', 'local']);
     assert.deepStrictEqual(asks.SCOPE_LABEL, { user: 'Global', project: 'Project', local: 'Local' });
     const step = addStep(plan(inv(MAC), pickOne('atlassian', { scope: 'user' }), opts('/Users/me')));
     assert.deepStrictEqual(argvOf(step).slice(-2), ['-s', 'user']);
@@ -1433,8 +1439,7 @@ test('the three typed values are asked next and no text the walk produces mentio
         assert.doesNotMatch(t, OTHER_RE, t);
         assert.doesNotMatch(t, /under Other/, t);
     }
-    // gitlab's key question takes the slot its host question had until the walk asks every extra (Task 7 of the 0.3.0 plan)
-    assert.deepStrictEqual(Object.keys(typed).sort(), ['A browser binary I name', 'Another space-free folder']);
+    assert.deepStrictEqual(Object.keys(typed).sort(), ['A browser binary I name', 'A self-managed host', 'Another space-free folder']);
     for (const [label, d] of Object.entries(typed)) assert.match(d, /asked next$/, label);
 });
 
@@ -1467,11 +1472,15 @@ test('D5: each keyed route at each scope', () => {
         const oauth = at('sentry', { route: 'remote', scope, token: false });
         assert.deepStrictEqual([helperOf(oauth, 'sentry'), oauth.oauth.map((x) => x.row)], [undefined, ['sentry']], scope);
         assert.match(helperOf(at('sentry', { route: 'remote', scope, token: true }), 'sentry'), /mcp-headers\.js SENTRY_ACCESS_TOKEN Sentry-Bearer$/, scope);
-        // gitlab and atlassian hosted: OAuth, unchanged
-        for (const id of ['gitlab', 'atlassian'])
+        // gitlab and atlassian hosted: the key by default (spec F2), OAuth when picked
+        for (const [id, v, scheme] of [['gitlab', 'GITLAB_TOKEN', 'Bearer'], ['atlassian', 'ATLASSIAN_API_TOKEN', 'Basic']])
         {
             const p = at(id, { scope });
-            assert.deepStrictEqual([p.errors, helperOf(p, id), p.oauth.map((x) => x.row)], [[], undefined, [id]], `${id} ${scope}`);
+            assert.deepStrictEqual(p.errors, [], `${id} ${scope}`);
+            assert.match(helperOf(p, id), new RegExp(`mcp-headers\\.js ${v} ${scheme}$`), `${id} ${scope}`);
+            assert.deepStrictEqual(p.oauth, [], `${id} ${scope}`);
+            const o = at(id, { scope, token: false });
+            assert.deepStrictEqual([o.errors, helperOf(o, id), o.oauth.map((x) => x.row)], [[], undefined, [id]], `${id} ${scope}`);
         }
     }
     // github Docker and sentry npm: not offered at project scope, written in at local and global scope
@@ -1488,7 +1497,13 @@ test('D5: each keyed route at each scope', () => {
     // context7 npm: keyless only at project scope, written in when picked at local and global scope
     assert.ok(!addStep(at('context7', { route: 'local', scope: 'project' })).entry.args.includes('--api-key'));
     assert.match(at('context7', { route: 'local', scope: 'project', token: true }).errors.join(), /keyless at project scope/);
-    for (const scope of ['local', 'user']) assert.ok(addStep(at('context7', { route: 'local', scope, token: true })).entry.args.includes('--api-key'), scope);
+    // picked at local and global scope with the name filled nowhere: no key argument, and the line to fill it (spec F2)
+    for (const scope of ['local', 'user'])
+    {
+        const p = at('context7', { route: 'local', scope, token: true });
+        assert.ok(!addStep(p).entry.args.includes('--api-key'), scope);
+        assert.ok(p.notes.some((n) => n.startsWith('context7: fill CONTEXT7_API_KEY in ')), scope);
+    }
 });
 
 test('the helper command per scope', () => {
@@ -1558,7 +1573,7 @@ test('a hosted keyed route recommends global; a stdio keyed route is not offered
     assert.strictEqual(plan(inv(MAC), pickOne('github', { route: 'remote' }), opts('/Users/me')).steps.find((s) => s.op === 'mcp-add').scope, 'user');
 });
 
-test('context7 hosted: global recommended when CONTEXT7_API_KEY is filled in ~/.preferred-tools/.mcps-secrets, project when no offered name is filled anywhere', () => {
+test('context7 hosted: global recommended and the key first, filled or not (spec F2, M1)', () => {
     const fs = require('node:fs');
     const { world } = require('./helpers.js');
     const w = world();
@@ -1568,11 +1583,12 @@ test('context7 hosted: global recommended when CONTEXT7_API_KEY is filled in ~/.
         const i = inv({ ...MAC, os: process.platform, project: w.project });
         const scopeOf = () => asks.scopeQuestion(catalog.byId.get('context7'), i, { route: 'remote', ctx: ctx() }).options[0].label;
         const keyQ = (scope) => asks.toolAsk(catalog.byId.get('context7'), i, { route: 'remote', scope, ctx: ctx(), catalog }).questions.find((q) => q.id === 'token-context7');
-        assert.strictEqual(scopeOf(), 'Project (Recommended)');
-        assert.deepStrictEqual(keyQ('project').options.map((o) => o.label), ['No key - lower rate limits (Recommended)', 'Use a key from .mcps-secrets']);
+        assert.strictEqual(scopeOf(), 'Global (Recommended)');
+        assert.deepStrictEqual(keyQ('project').options.map((o) => o.label), ['Use a key from .mcps-secrets (Recommended)', 'No key - lower rate limits']);
         const p0 = plan(i, pickOne('context7', { route: 'remote' }), { home: w.home, env: {} });
-        assert.deepStrictEqual([addStep(p0).scope, addStep(p0).entry.headersHelper], ['project', undefined]);
-        // a name the key question would offer, filled in the global chain
+        assert.strictEqual(addStep(p0).scope, 'user');
+        assert.match(addStep(p0).entry.headersHelper, /CONTEXT7_API_KEY Bearer$/);
+        // filled in the global chain: the same, and the value stays in the key file
         fs.mkdirSync(path.join(w.home, '.preferred-tools'), { recursive: true });
         fs.writeFileSync(path.join(w.home, '.preferred-tools', SECRETS_FILE), 'CONTEXT7_API_KEY=ctx7-fake\n');
         assert.strictEqual(scopeOf(), 'Global (Recommended)');
@@ -1585,12 +1601,12 @@ test('context7 hosted: global recommended when CONTEXT7_API_KEY is filled in ~/.
     finally { w.clean(); }
 });
 
-test('sentry: OAuth recommended; a key gives Sentry-Bearer', () => {
+test('sentry: a key recommended, with Sentry-Bearer; OAuth when picked', () => {
     const ctx = { project: '/work/shop', platform: 'darwin', home: '/Users/me', env: {}, exists: () => false };
     const q = asks.toolAsk(catalog.byId.get('sentry'), inv(MAC), { route: 'remote', scope: 'project', ctx, catalog }).questions.find((x) => x.id === 'token-sentry');
-    assert.deepStrictEqual(q.options.map((o) => o.label), ['Sign in with OAuth (Recommended)', 'Use a key from .mcps-secrets']);
-    const p = plan(inv(MAC), pickOne('sentry', { route: 'remote' }), opts('/Users/me'));
-    assert.deepStrictEqual([addStep(p).scope, addStep(p).entry.headersHelper, p.oauth.map((x) => x.row)], ['project', undefined, ['sentry']]);
+    assert.deepStrictEqual(q.options.map((o) => o.label), ['Use a key from .mcps-secrets (Recommended)', 'Sign in with OAuth']);
+    const p = plan(inv(MAC), pickOne('sentry', { route: 'remote', token: false }), opts('/Users/me'));
+    assert.deepStrictEqual([addStep(p).scope, addStep(p).entry.headersHelper, p.oauth.map((x) => x.row)], ['user', undefined, ['sentry']]);
     const keyed = plan(inv(MAC), pickOne('sentry', { route: 'remote', scope: 'user', token: true }), opts('/Users/me'));
     assert.strictEqual(addStep(keyed).entry.headersHelper, 'node /Users/me/.preferred-tools/mcp-headers.js SENTRY_ACCESS_TOKEN Sentry-Bearer');
     assert.deepStrictEqual(keyed.oauth, []);
@@ -1900,6 +1916,53 @@ test('an install at project scope ends with the order step; one at local scope h
     assert.deepStrictEqual(plan(inv(MAC, { registrations: [mine] }), pickOne('context7', { route: 'remote', scope: 'project' }), opts('/Users/me')).steps.at(-1).own, ['mine']);
     const local = plan(inv(MAC), pickOne('context7', { route: 'remote', scope: 'local' }), opts('/Users/me'));
     assert.ok(!local.steps.some((s) => s.op === 'order-mcp-json'), local.steps.map((s) => s.op).join());
+});
+
+test('install with no key answer: gitlab gets the helper, an empty name line and the fill line; OAuth gives no helper', () => {
+    const p = plan(inv(MAC), pickOne('gitlab'), opts('/Users/me'));
+    assert.deepStrictEqual(p.errors, []);
+    const add = p.steps.find((s) => s.op === 'mcp-add');
+    assert.strictEqual(add.scope, 'user');
+    assert.strictEqual(add.entry.headersHelper, 'node /Users/me/.preferred-tools/mcp-headers.js GITLAB_TOKEN Bearer');
+    assert.deepStrictEqual(p.steps.filter((s) => s.op === 'ensure-key-name').map((s) => [s.file, s.names]), [['/Users/me/.preferred-tools/.mcps-secrets', ['GITLAB_TOKEN']]]);
+    assert.match(render(p), /Not filled yet: add GITLAB_TOKEN=<your key> to \/Users\/me\/\.preferred-tools\/\.mcps-secrets/);
+    assert.deepStrictEqual(p.oauth, []);
+    const oauth = plan(inv(MAC), pickOne('gitlab', { token: false }), opts('/Users/me'));
+    const e = oauth.steps.find((s) => s.op === 'mcp-add').entry;
+    assert.ok(!e.headersHelper, JSON.stringify(e));
+    assert.deepStrictEqual(oauth.oauth.map((o) => o.row), ['gitlab']);
+    assert.ok(!oauth.steps.some((s) => s.op === 'ensure-key-name'));
+});
+
+test("context7's local route: keyless at project scope; at local scope an unfilled key leaves --api-key out", () => {
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const project = plan(inv(MAC), pickOne('context7', { route: 'local', scope: 'project' }), opts('/Users/me'));
+    assert.deepStrictEqual(project.errors, []);
+    assert.ok(!project.steps.find((s) => s.op === 'mcp-add').entry.args.includes('--api-key'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'c7-key-'));
+    try
+    {
+        const base = { ...MAC, project: dir };
+        const file = path.join(dir, '.preferred-tools', '.mcps-secrets');
+        const local = plan(inv(base), pickOne('context7', { route: 'local', scope: 'local' }), opts('/Users/me'));
+        assert.deepStrictEqual(local.errors, []);
+        const add = local.steps.find((s) => s.op === 'mcp-add');
+        assert.ok(!add.entry.args.includes('--api-key'), JSON.stringify(add.entry));
+        assert.strictEqual(add.key, undefined);
+        assert.deepStrictEqual(local.steps.filter((s) => s.op === 'ensure-key-name').map((s) => [s.file, s.names]), [[file, ['CONTEXT7_API_KEY']]]);
+        assert.ok(local.notes.includes(`context7: fill CONTEXT7_API_KEY in ${file}, then /preferred-tools:configure -> Use a key from .mcps-secrets writes it in`), local.notes.join('\n'));
+        // filled: the key goes in
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, 'CONTEXT7_API_KEY=v-not-printed\n');
+        const filled = plan(inv(base), pickOne('context7', { route: 'local', scope: 'local' }), opts('/Users/me', { exists: (p) => fs.existsSync(p) }));
+        assert.deepStrictEqual(filled.errors, []);
+        const f = filled.steps.find((s) => s.op === 'mcp-add');
+        assert.ok(f.entry.args.includes('--api-key'), JSON.stringify(f.entry));
+        assert.strictEqual(f.key.name, 'CONTEXT7_API_KEY');
+        assert.ok(!JSON.stringify(filled).includes('v-not-printed'));
+    }
+    finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("install plans no record when nothing is left on its own; a 0.2.0 record's manage and add entries are dropped and the file deleted", () => {

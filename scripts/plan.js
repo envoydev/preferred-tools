@@ -136,9 +136,8 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     const routeId = pick.route || (cur ? cur.route : row.recommendedRoute);
     const route = row.routes[routeId];
     if (!route) return out.errors.push(`${row.id}: no ${routeId} route (routes: ${Object.keys(row.routes).join(', ')})`);
-    // a fresh pick's scope follows where its key is (names only, never a value): read at global scope, as the scope
-    // question is asked before the key (spec D5, D8)
-    const scope = pick.scope || (cur ? cur.scope : asks.recommendedScope(row, routeId, asks.keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled, 'user')));
+    // a fresh pick's scope: the recommended one (spec D5, F2)
+    const scope = pick.scope || (cur ? cur.scope : asks.recommendedScope(row, routeId));
     if (!SCOPES.includes(scope)) return out.errors.push(`${row.id}: unknown scope '${scope}'`);
     // a stdio route that needs a key holds it written in, which the committed .mcp.json never carries (spec D5); a
     // registration already there is configure's to keep
@@ -185,12 +184,13 @@ function planMcp(row, pick, inv, ctx, catalog, out)
 
     // the answers that edit an entry
     const params = { host: row.params ? (pick.params && pick.params.host) || (cur && cur.host) || row.params[0].default : undefined, ...(pick.params || {}) };
-    // an optional key: sent when picked, else when a name D9 offers is filled in the chain the scope reads; a stdio route
-    // at project scope runs keyless (spec D5)
-    const keyless = scope === 'project' && routeId !== 'remote' && route.authMode === 'optional-token';
-    if (keyless && pick.token) return out.errors.push(`${row.id}: its local route runs keyless at project scope - the committed .mcp.json carries no key; pick local or global scope for a key, or the hosted route`);
-    let wantToken = pick.token === undefined ? (cur ? Boolean(cur.token) : route.authMode === 'optional-token' && asks.keyToSend(asks.keyStateOf(row, routeId, ctx, inv.alfredCodeEnabled, scope))) : Boolean(pick.token);
-    if (keyless && wantToken)
+    // an optional key: sent when picked; with no answer, sent at install (the recommended answer, spec F2) and kept as it is
+    // at configure. A stdio route at project scope runs keyless (spec D5) - named so it is never read as the catalog's
+    // `route.keyless`, the keyless way in
+    const keylessAtProject = scope === 'project' && routeId !== 'remote' && route.authMode === 'optional-token';
+    if (keylessAtProject && pick.token) return out.errors.push(`${row.id}: its local route runs keyless at project scope - the committed .mcp.json carries no key; pick local or global scope for a key, or the hosted route`);
+    let wantToken = pick.token === undefined ? (cur ? Boolean(cur.token) : route.authMode === 'optional-token' && !keylessAtProject) : Boolean(pick.token);
+    if (keylessAtProject && wantToken)
     {
         out.notes.push(`${row.id}: --api-key is left out - its local route runs keyless at project scope`);
         wantToken = false;
@@ -205,6 +205,12 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     const sameRoute = Boolean(cur) && cur.route === routeId;
     const liveKey = sameRoute && ks && ks.kind === 'stdio' ? asks.heldKey(ctx.readLive(cur.name, cur.scope) || {}, route) : null;
     const keyName = pick.keyName || (sameRoute && route.helper ? cur.keyName : null) || (liveKey ? keys.nameOfValue(ks.files, liveKey) : null) || keyVar;
+    // a stdio optional key whose name is filled nowhere in the chain (spec F2): written with no key argument, never as an
+    // empty one - a stdio key is read only when the registration is written. A registration that holds its key keeps it.
+    const unfilledStdio = Boolean(ks) && ks.kind === 'stdio' && route.authMode === 'optional-token' && scope !== 'project'
+        && !(sameRoute && cur.token) && !keys.filledNames(ks.files).some((f) => f.names.includes(keyName));
+    const sendNow = wantToken && !unfilledStdio;
+    if (unfilledStdio) out.notes.push(`${row.id}: fill ${keyName} in ${ks.files[0]}, then /preferred-tools:configure -> Use a key from .mcps-secrets writes it in`);
     // the server's settings (spec D9): pairs merged into a stdio route's env - never a key, and no machine path in the
     // committed file
     if (pick.settings)
@@ -237,7 +243,7 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     let entry;
     let fresh = !cur || cur.route !== routeId;
     if (fresh)
-        entry = E.buildEntry(row, routeId, { rootStr, scope, executablePath: wantExec, token: wantToken, keyName, params }, ctx, catalog.rules);
+        entry = E.buildEntry(row, routeId, { rootStr, scope, executablePath: wantExec, token: sendNow, keyName, params }, ctx, catalog.rules);
     else
     {
         entry = JSON.parse(JSON.stringify(cur.entry));
@@ -263,12 +269,12 @@ function planMcp(row, pick, inv, ctx, catalog, out)
             else if (header) out.notes.push(`${row.id}: '${cur.name}' sends its key from an Authorization header - /preferred-tools:fix moves it into .mcps-secrets, read by mcp-headers.js (key-to-helper)`);
             else entry.headersHelper = E.helperFor(route, scope, ctx, keyName);
         }
-        else if (route.authMode === 'optional-token' && wantToken !== cur.token)
+        else if (route.authMode === 'optional-token' && sendNow !== cur.token)
         {
             const args = (entry.args || []).slice();
             const i = args.indexOf('--api-key');
             if (i >= 0) args.splice(i, 2);
-            if (wantToken) args.push(...route.optionalArgs.token);
+            if (sendNow) args.push(...route.optionalArgs.token);
             entry.args = args;
         }
         if (row.params && cur.host && params.host !== cur.host) entry.url = E.subst(route.url, params);
@@ -301,7 +307,7 @@ function planMcp(row, pick, inv, ctx, catalog, out)
     }
     // a stdio key at local or global scope: the apply writes it in from the stdio chain under the key's name (R7); configure
     // rewrites a registration whose key differs from the chosen name's filled value, even when nothing else changed
-    const stepKey = keyed && keyed.kind === 'stdio' && scope !== 'project' ? { name: keyName, files: keyed.files } : null;
+    const stepKey = keyed && keyed.kind === 'stdio' && scope !== 'project' && !unfilledStdio ? { name: keyName, files: keyed.files } : null;
     const chosen = stepKey && cur ? keys.valueIn(stepKey.files, keyName) : null;
     const staleKey = Boolean(chosen) && chosen.value !== liveKey;
     const withKey = stepKey ? { key: stepKey } : {};
@@ -798,7 +804,10 @@ function main(argv)
         const picks = second ? read(second) : null;
         const catalog = catalogLib.load();
         // --connectors: the claude.ai connectors this session has loaded, named in the pick list (spec F4)
-        const q = asks.all(inv, picks, catalog, { env: process.env, home: account.homeDir(process.env), connectors: args.connectors !== null ? existing.parseConnectors(args.connectors) : null });
+        const qopts = { env: process.env, home: account.homeDir(process.env), connectors: args.connectors !== null ? existing.parseConnectors(args.connectors) : null };
+        const built = asks.all(inv, picks, catalog, qopts);
+        // the walk's one step: what to ask now, about one tool (spec F1)
+        const q = { ...built, next: asks.next(inv, picks, catalog, qopts, built) };
         console.log(JSON.stringify(q, null, 2));
         return 0;
     }
