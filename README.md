@@ -6,17 +6,18 @@ a short walk instead of a hunt through old notes.
 
 It installs nothing by itself. You drive it through four manual commands:
 
-- `/preferred-tools:install` - first asks once about each server already set up here that it knows (a registration, a
-  server another plugin provides, a claude.ai connector): leave it on its own, or let this plugin look after it. Then it
-  adds tools that are not installed in this project: pick them, then per tool the route (hosted or local, where the
-  tool has both) and the scope (Global, Project or Local, the recommended one first), the root folders, and the
-  registration name, the key's name and the settings. A tool you installed for every project can get this project's
-  own copy; the global one stays as it is. It shows one plan, applies it after one confirmation and reads the result
-  back.
+- `/preferred-tools:install` - adds tools that are not installed in this project, and asks nothing about the servers
+  already set up here: one it recognises is looked after by this plugin. Pick the tools, then answer 'Use the
+  recommended settings' or set them up one tool at a time - its route (hosted or local, where the tool has both), its
+  scope (Global, Project or Local, the recommended one first) and name, the root folder its scope uses, its location,
+  its key and the key's name, and its settings. A tool you installed for every project, or one that already reaches
+  you through claude.ai or another plugin, can get this project's own copy beside it. It shows one plan, applies it
+  after one confirmation and reads the result back.
 - `/preferred-tools:configure` - changes or removes what is installed: pick a registration or plugin, then change its
   route, scope, name, data location, key name or settings, or a plugin's scope, or claude-hud's settings; or move a
-  root folder; or hand a server left on its own back to this plugin. Every question recommends what
-  the tool has now, and a change keeps its pin and the args you added.
+  root folder. Its first question about a server is who looks after it: this plugin, or 'Leave it on its own', which
+  configure, update and fix then skip. Every question recommends what the tool has now, and a change keeps its pin and
+  the args you added.
 - `/preferred-tools:fix` - finds known problems in the installed tools and applies the recorded fix.
 - `/preferred-tools:update` - brings installed plugins, pinned servers, language servers and key helpers up to date
   when they are behind, offering only releases at least 7 days old.
@@ -42,8 +43,9 @@ in `docs/sources.md`.
 
 ## How it works
 
-- Every MCP server is a plain registration written by the `claude` CLI (`claude mcp add-json`, `remove`, `get`); no
-  script writes `.mcp.json` or `~/.claude.json`, and no launcher sits between Claude Code and the server.
+- Every MCP server is a plain registration written by the `claude` CLI (`claude mcp add-json`, `remove`, `get`), and no
+  launcher sits between Claude Code and the server. The one write of the plugin's own: after a change at Project scope
+  it puts `.mcp.json`'s catalog servers in a fixed order, your own servers after them, and changes no value.
 - A registration is recognised by what it launches (its package, or its URL host and path), not by its name, so a tool
   under a custom per-project name is still found, and a server of your own is never touched.
 - Scopes are Global (every project on this machine - Claude Code's user scope), Project (the committed `.mcp.json`)
@@ -51,9 +53,10 @@ in `docs/sources.md`.
 - Two root folders hold every file the plugin writes: the project root for Project and Local scope - `.alfred` where
   alfred-code is set up in the project, else `.preferred-tools`, or a folder you name inside the project - and the
   global root for Global scope - `~/.preferred-tools`, `~/.alfred` when it exists, or a folder you name. Each holds the
-  tools' data folders (`<root>/<name>`), the key file `.mcps-secrets`, the key helper `mcp-headers.js`, the record of
-  your answers `preferred-tools.json` and a `.gitignore` that keeps everything but itself and the helper out of git (alfred-code's own
-  `.gitignore` covers `.alfred`). Each root is asked once, not per tool; `/preferred-tools:configure` moves one.
+  tools' data folders (`<root>/<name>`), the key file `.mcps-secrets`, the key helper `mcp-headers.js`, the record
+  `preferred-tools.json` of the servers you left on their own (there is none until you leave one) and a `.gitignore`
+  that keeps everything but itself and the helper out of git (alfred-code's own `.gitignore` covers `.alfred`). Each
+  root is asked once, not per tool; `/preferred-tools:configure` moves one.
 - Keys live in `.mcps-secrets` (`NAME=value` lines; a note goes after whitespace and `#`, or on its own `#` line),
   which you fill by hand: the plugin writes names only, and never asks for, prints or puts a key in a file a command
   names. A hosted route reads its key through `mcp-headers.js` each
@@ -62,12 +65,16 @@ in `docs/sources.md`.
   the file: `.mcps-secrets` is plain text, and nothing in preferred-tools stops a command that reads it (`cat`) from
   showing its keys in a session. A secret guard, such as alfred-code's, is what keeps the file itself out of a
   session's output. A Project-scope server's helper runs once
-  you accept the folder's trust prompt. A local route's key is written into the registration at Local and Global scope
+  you accept the folder's trust prompt, and never in a session started in a child folder - so a hosted server with a
+  key is recommended at Global scope. A local route's key is written into the registration at Local and Global scope
   (`/preferred-tools:fix`, `token-sync`, writes it again after you change it); such a route is not offered at Project
-  scope. Remote routes with no key prefer OAuth. Keys in 0.1.x's files (alfred-code's store, `.preferred-tools/.secrets`)
+  scope. A key is the recommended way into every hosted server; with none, gitlab, atlassian and sentry sign in with
+  OAuth. Keys in 0.1.x's files (alfred-code's store, `.preferred-tools/.secrets`)
   are not read any more: the plan names where one still sits and where to move it.
-- A data folder written relative (project scope, for a tool measured to follow the folder it starts in) lands in each
-  folder Claude starts in; `/preferred-tools:fix` (`data-folder-ignore`) keeps it out of git in a child or a subfolder.
+- Every path the plugin writes is absolute, at Project scope too: one data folder whatever folder Claude starts in. So
+  `.mcp.json` names this machine's paths, and a teammate's clone points at yours. A 0.2.0 registration with relative
+  paths is rewritten by `/preferred-tools:fix` (`project-relative-path`); a copy a 0.2.0 session left in a child folder
+  is kept out of git by fix run there.
 - A new package is downloaded right after its registration is written, and the server is started once, in the
   background, so the first session start answers inside Claude Code's 30-second limit (memory's first start downloads
   an embedding model for about 2 minutes). Restart Claude Code once that reports. If it fails, nothing is undone and

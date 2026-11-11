@@ -1,6 +1,6 @@
 {
   "name": "preferred-tools",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Build and test scripts for the preferred-tools Claude Code plugin. The plugin has no runtime dependencies.",
   "license": "MIT",

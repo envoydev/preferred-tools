@@ -11,14 +11,14 @@ is listed in the `envoydev` marketplace, which lives in the alfred-code repo
 `main`'s tip, and a version bump merged to `main` is the release with no alfred-code change. So `main` stays
 release-only.
 
-- `/preferred-tools:install` - manual (`disable-model-invocation: true`); first asks once about each server already set
-  up here that matches a catalog row (a registration, a plugin's server, a claude.ai connector) and records the answer,
-  then adds only tools not installed in this project: pick tools, then route and scope, the root folders, then name,
-  location, the key's name and the settings per tool. A tool installed for every project is offered as this project's
-  own copy beside it; install never changes, moves or removes a registration.
+- `/preferred-tools:install` - manual (`disable-model-invocation: true`); adds only tools not installed in this project
+  and asks nothing about a server already set up (one it recognises is managed; a claude.ai connector or another
+  plugin's server is a label in the pick list): pick tools, then one tool at a time its route, scope and name, root,
+  location, key and key name, and settings. A tool installed for every project is offered as this project's own copy
+  beside it; install never changes, moves or removes a registration.
 - `/preferred-tools:configure` - manual; changes or removes what is installed, one registration or plugin at a time
   (keyed `mcp:<name>~<scope>` / `plugin:<id>~<scope>`), a server left on its own, or a root folder (`root:<family>`),
-  every question recommending what it has now. The user's
+  every question recommending what it has now; its first question about a server is who looks after it. The user's
   ruling (2026-10-27): install is install, configure is configure.
 - `/preferred-tools:fix` - manual; detects known problems and applies the recorded fix.
 - `/preferred-tools:update` - manual; updates installed plugins, pinned catalog servers, language servers and key
@@ -44,15 +44,18 @@ private project names, no absolute local paths, no tokens, nothing from a user's
   alfred-code absent. Reading what alfred-code left (its reserved names, its data folders) is fine; needing it is not.
 - **The `claude` CLI is the only writer** of `.mcp.json` and the account `.claude.json`: `claude mcp add-json`,
   `remove` and `get`, and `claude plugin install`, `update`, `uninstall` and `list --json`. Scripts read those files,
-  never write them.
+  never write them - with one exception (the user's ruling, 2026-11-11, 'Reorder-only write'): after its CLI calls,
+  `scripts/mcp-order.js` rewrites `.mcp.json` with the same servers and values in `catalog.order`, the user's own after
+  them, checks that nothing but the order changed, and writes through a temporary file.
 - **Plain registrations, no launcher** (the user's ruling, 2026-10-27, made twice). Per-machine values are resolved
   at install time, and `/preferred-tools:fix` repairs a changed machine.
 - **Identity is the launch, not the name.** A registration is matched to a catalog row by its fingerprint (the package
   in `args`, or the URL host plus path). That is how a custom per-project name works with no ledger. A registration
   that matches no row is the user's and is never touched. The two exceptions to 'no ledger' (the user's rulings,
-  2026-11-10): the record `<root>/preferred-tools.json` - each answer about a server already set up, so one left on its
-  own is skipped by install, configure, update and fix - and the roots map `${CLAUDE_PLUGIN_DATA}/roots.json`, which
-  finds a named root again. A record entry whose fingerprint changed is dropped and asked again.
+  2026-11-10): the record `<root>/preferred-tools.json` - since 0.3.0 only the servers left on their own (the user's
+  ruling, 2026-11-11, 'Managed by default'), which install, configure, update and fix skip; there is no file until one is
+  left - and the roots map `${CLAUDE_PLUGIN_DATA}/roots.json`, which finds a named root again. A record entry whose
+  fingerprint changed is dropped.
 - **A change starts from what is installed.** Only a fresh add builds from `catalog/tools.json`. A rename, a move, a
   fix or a re-run starts from the registration as read (its pin, its cut-off, the args or env the user added), so an
   updated pin is never downgraded.
@@ -62,12 +65,13 @@ private project names, no absolute local paths, no tokens, nothing from a user's
   helper `mcp-headers.js` each time Claude Code connects, and its registration holds neither the key nor a `${VAR}` for
   it. A stdio keyed route is written in by `apply.js` at local and global scope, and is not offered at project scope.
   The 0.1.x key files (alfred-code's store, `.preferred-tools/.secrets`) are read for names only. `scripts/keys.js` holds
-  the chains. No key in a file a command line names (`scripts/kept.js`), none printed, none asked for. Remote routes
-  with no key prefer OAuth.
-- **Paths by scope.** `project` scope (the committed `.mcp.json`) gets relative paths, and `${VAR}` for machine paths
-  only - never a key. `local` and `user` (Global) scope get absolute paths, with `~` expanded by the script. Every file
-  the plugin writes for a scope family sits in that family's root folder (project root: project and local scope;
-  global root: global scope).
+  the chains. No key in a file a command line names (`scripts/kept.js`), none printed, none asked for. A key is the
+  recommended way into every hosted route (2026-11-11), recommended at Global scope, since Claude Code runs no parent
+  folder's helper in a child folder; with no key, a route that has OAuth uses it.
+- **Paths absolute at every scope** (the user's ruling, 2026-11-11, 'Absolute, always'), `project` included, with `~`
+  expanded by the script: one data folder whatever folder Claude starts in, at the cost that the committed `.mcp.json`
+  names this machine's path. Never a key in `.mcp.json`. Every file the plugin writes for a scope family sits in that
+  family's root folder (project root: project and local scope; global root: global scope), memory's data included.
 - **`allowed-tools` pre-approves read-only calls only.** `apply.js`, `fetch.js`, `fix.js --apply`, `update.js --apply` and the
   `hud-statusline.js` writes are never listed, so Claude Code's own prompt guards a change beside the command's written ask. `tests/lint.js`
   enforces it.
