@@ -185,7 +185,8 @@ test('a user\'s own server under a catalog name is asked about, never overwritte
 
 test('.mcp.json missing, empty, {} and malformed: the first three install at project scope, the malformed one is named and left byte-identical', T, () =>
 {
-    const answers = { picks: { context7: { route: 'remote', scope: 'project' } } };
+    // no key: since 0.3.0 a key is recommended for every hosted route, and this case is about the file's shapes
+    const answers = { picks: { context7: { route: 'remote', scope: 'project', token: false } } };
     for (const [label, content] of [['missing', null], ['empty', ''], ['whitespace', '  \n'], ['braces', '{}']])
     {
         const p = h.project(`mcpjson-${label}`);

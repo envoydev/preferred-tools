@@ -10,8 +10,8 @@
 //   W4  keys: the project root and its ignores, a stdio key written in from .mcps-secrets, github's helper at local and
 //       project scope against a stub, token-sync, a 0.1.x header moved by key-to-helper; with alfred-code, the .alfred
 //       root, and a key left in a 0.1.x store named by the plan and never read
-//   W5  a root's project-scope tool in alfred-code's folder: inherited by the child, its ignores in a child and a
-//       subfolder (data-folder-ignore), and the environment a server starts with
+//   W5  a root's project-scope tool in alfred-code's folder, absolute: inherited by the child, a 0.2.0 copy found in
+//       a child (data-folder-ignore), and the environment a server starts with
 //
 // alfred-code's source is --alfred, else PREFERRED_TOOLS_ALFRED, else ../alfred-code (Global Constraints); a version it
 // cannot resolve is NOT RUN, named.
@@ -60,9 +60,11 @@ function noValueInTmp(h, values)
 
 // The W1 steps on a parent and its child: the parent's project server is seen inherited from the child, the child gets
 // its own local copy beside it, configure offers no inherited option, and the parent's file never changes.
+// No key on either side: since 0.3.0 a key is recommended for every hosted route, and a key writes a root folder that
+// configure would list beside the registration; this case is about inheritance.
 function inheritSteps(h, parent, child)
 {
-    const top = h.run(parent, { picks: { context7: { route: 'remote', scope: 'project' } } });
+    const top = h.run(parent, { picks: { context7: { route: 'remote', scope: 'project', token: false } } });
     noErrors(top);
     ok(top);
     const file = path.join(parent, '.mcp.json');
@@ -72,7 +74,7 @@ function inheritSteps(h, parent, child)
     assert.deepStrictEqual(inh.map((r) => [r.from, r.approval]), [[parent, 'pending']], 'listed inherited from the parent, pending here');
     const option = asks.pickQuestions(inv, catalog).flat().flatMap((q) => q.options).find((o) => o.label.startsWith('context7'));
     assert.strictEqual(option.label, 'context7 (inherited from .. as context7, pending)');
-    const mine = h.run(child, { picks: { context7: { route: 'remote', scope: 'local' } } });
+    const mine = h.run(child, { picks: { context7: { route: 'remote', scope: 'local', token: false } } });
     noErrors(mine);
     ok(mine);
     assert.ok(localOf(h, child).context7, "the child's own local copy");
@@ -311,7 +313,7 @@ test('W4 - keys with alfred-code: the root is .alfred, a key left in a 0.1.x sto
 
 // ---- W5 ---------------------------------------------------------------------------------------------------------------
 
-test('W5 - a root\'s project-scope tool in alfred-code\'s folder: the child inherits it, and the ignores in a child and a subfolder', T, (t) =>
+test('W5 - a root\'s project-scope tool in alfred-code\'s folder, absolute: the child inherits it, and a 0.2.0 copy in a child is found and ignored', T, (t) =>
 {
     const b = alfredWorld();
     if (b.notRun) return t.skip(`NOT RUN - ${b.notRun}`);
@@ -319,37 +321,30 @@ test('W5 - a root\'s project-scope tool in alfred-code\'s folder: the child inhe
     const lacking = [b.root, b.child].filter((d) => !fs.existsSync(path.join(d, '.alfred', '.gitignore')));
     if (lacking.length) return t.skip(`NOT RUN - alfred-code wrote no .alfred/.gitignore in ${lacking.map((d) => path.basename(d)).join(', ')}`);
     const h = b.harness;
-    const relative = catalog.byId.get('playwright-chrome').locations.relative === true;
     const r = h.run(b.root, { picks: { 'playwright-chrome': { scope: 'project' } } });
     noErrors(r);
     ok(r);
+    // 0.3.0 (spec F7): the project file names this machine's absolute folder in the root in use - alfred-code's here
     const args = readJson(path.join(b.root, '.mcp.json')).mcpServers['playwright-chrome'].args;
-    const homeVar = process.platform === 'win32' ? '${USERPROFILE}' : '${HOME}';
-    assert.strictEqual(args[args.indexOf('--user-data-dir') + 1], relative ? '.alfred/playwright-chrome' : `${homeVar}/.preferred-tools/playwright-chrome`, "alfred-code's folder when the row is proven relative, else the account folder");
+    assert.strictEqual(args[args.indexOf('--user-data-dir') + 1], path.join(b.root, '.alfred', 'playwright-chrome'), "alfred-code's folder, absolute");
     assert.ok(h.inventory(b.child).registrations.some((x) => x.scope === 'inherited' && x.name === 'playwright-chrome' && x.from === b.root), 'the child lists it inherited');
 
+    // a session started in a child or a subfolder uses the root's folder: no copy is made there, so nothing is found
     const ctxAt = (dir) => fix.makeCtx({ inv: h.inventory(dir), env: h.env });
     const findings = (dir) => fix.detectAll(ctxAt(dir), { only: 'data-folder-ignore' }).found;
-    assert.deepStrictEqual(findings(b.child), [], "the child's own .alfred/.gitignore covers it");
     const bare = gitDir(path.join(b.root, 'bare'));
     const src = path.join(b.child, 'src');
     fs.mkdirSync(src, { recursive: true });
-    if (!relative)
-    {
-        for (const d of [bare, src]) assert.deepStrictEqual(findings(d), [], `${path.basename(d)}: no relative folder anywhere`);
-        t.diagnostic('NOT RUN - the relative cases (a child without alfred-code, a subfolder): playwright-chrome is relative: false, so the root holds no relative folder');
-    }
-    else
-        for (const d of [bare, src])
-        {
-            const want = path.join(d, '.alfred', 'playwright-chrome');
-            assert.deepStrictEqual(findings(d).map((f) => f.proposal.path), [want], `${path.basename(d)}: found`);
-            const lines = [];
-            const res = fix.applyFixes(ctxAt(d), ['data-folder-ignore'], { tmp: path.join(h.root, 'tmp', 'fix-w5'), log: (...a) => lines.push(a.join(' ')) });
-            assert.strictEqual(res.failed, null, lines.join('\n'));
-            assert.strictEqual(fs.readFileSync(path.join(want, '.gitignore'), 'utf8'), '*\n', `${path.basename(d)}: read back from disk`);
-            assert.deepStrictEqual(findings(d), [], `${path.basename(d)}: covered after the fix`);
-        }
+    for (const d of [b.child, bare, src]) assert.deepStrictEqual(findings(d), [], `${path.basename(d)}: no copy of the root's folder`);
+    // a 0.2.0 copy left in a child that alfred-code does not cover: found once, and its .gitignore written
+    const want = path.join(bare, '.alfred', 'playwright-chrome');
+    fs.mkdirSync(want, { recursive: true });
+    assert.deepStrictEqual(findings(bare).map((f) => f.proposal.path), [want], 'the 0.2.0 copy is found');
+    const lines = [];
+    const res = fix.applyFixes(ctxAt(bare), ['data-folder-ignore'], { tmp: path.join(h.root, 'tmp', 'fix-w5'), log: (...a) => lines.push(a.join(' ')) });
+    assert.strictEqual(res.failed, null, lines.join('\n'));
+    assert.strictEqual(fs.readFileSync(path.join(want, '.gitignore'), 'utf8'), '*\n', 'read back from disk');
+    assert.deepStrictEqual(findings(bare), [], 'covered after the fix');
     ok(h.run(b.root, { remove: [{ kind: 'mcp', name: 'playwright-chrome', scope: 'project' }] }));
 });
 
