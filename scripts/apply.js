@@ -4,7 +4,8 @@
 //
 //   node apply.js <plan.json> [--tmp <dir>] [--data <plugin data dir>]
 //
-// The CLI is the only writer of .mcp.json and the account file; this file only reads them back. Everything applied
+// The CLI is the only writer of .mcp.json and the account file, but for the order-mcp-json step (mcp-order.js), which
+// reorders .mcp.json's servers and changes no value (the user's ruling, 2026-11-11); this file otherwise only reads them back. Everything applied
 // before a failure stays in place and is named. An empty plan makes no call at all and says so.
 //
 // A rewrite that could lose a server (same-name replace) saves the old JSON to <tmp>/rollback.json first and re-adds it
@@ -32,6 +33,7 @@ const keys = require('./keys.js');
 const catalogLib = require('./catalog.js');
 const tmpdir = require('./tmpdir.js');
 const roots = require('./roots.js');
+const mcpOrder = require('./mcp-order.js');
 
 const SCRIPTS = __dirname;
 const quote = (s) => (/^[A-Za-z0-9_\-./:=@,+]+$/.test(s) ? s : `'${s.replace(/'/g, "'\\''")}'`);
@@ -293,6 +295,8 @@ function runStep(step, ctx)
         case 'write-helper': return writeHelper(step.path);
         case 'ensure-key-name': return ensureKeyName(step.file, step.names);
         case 'record-clean': return recordClean(step.file, step.entries, step.keep, step.live);
+        // never fails the apply: a warning, and the file as it was (spec F8)
+        case 'order-mcp-json': return mcpOrder.orderFile(step.file, ctx.catalog, new Set(step.own || []));
         case 'record-root': return recordRoot(step, ctx.data);
         case 'mcp-add': return addAndVerify(call, ctx, step.name, step.scope, step.entry, rowOf(ctx, step));
         case 'mcp-remove': return removeAndVerify(call, ctx, step.name, step.scope);

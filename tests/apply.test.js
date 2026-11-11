@@ -985,6 +985,26 @@ test('record-clean writes own entries only, deletes an empty record, and never t
     finally { w.clean(); }
 });
 
+test('a failed order step warns and the apply still succeeds, its records written', () => {
+    const w = world();
+    try
+    {
+        const file = path.join(w.project, '.preferred-tools', 'preferred-tools.json');
+        const own = { name: 'o', scope: 'local', fingerprint: 'pkg:o', choice: 'own' };
+        const mcp = path.join(w.project, '.mcp.json');
+        fs.writeFileSync(mcp, '{ "mcpServers": { "a": { "command": "a" }, } }');
+        const r = runSteps(w, [
+            { op: 'record-clean', file, entries: [own], keep: [], live: { servers: { 'mcp:o~local': 'pkg:o' }, connectors: null } },
+            { op: 'order-mcp-json', file: mcp, own: [] },
+        ]);
+        assert.strictEqual(r.report.failed, null, r.text);
+        assert.deepStrictEqual(readJson(file).servers, [own]);
+        assert.match(r.text, /2\. ok +warning: .*\.mcp\.json.* left as it is - \/preferred-tools:fix \(mcp-order\) orders it/);
+        assert.strictEqual(fs.readFileSync(mcp, 'utf8'), '{ "mcpServers": { "a": { "command": "a" }, } }');
+    }
+    finally { w.clean(); }
+});
+
 test("record-clean keeps another project's own entry that live does not list (Ruling 10)", () => {
     const w = world();
     try

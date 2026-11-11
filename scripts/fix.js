@@ -30,6 +30,7 @@ const F = require('./fixes/index.js');
 const { realMachine, clone } = require('./fixes/common.js');
 const { deepEqual, useRoots, fileSteps } = require('./plan.js');
 const E = require('./entries.js');
+const mcpOrder = require('./mcp-order.js');
 
 function makeCtx({ inv, catalog = catalogLib.load(), env = process.env, machine, platform, arch, data = null })
 {
@@ -175,7 +176,7 @@ function applyFixes(ctx, ids, { only, input = {}, tmp, log = console.log, runCli
         const files = fileCtx.uses.length ? fileSteps(ctx.inv, fileCtx, { notes: fileNotes }) : { before: [] };
         for (const u of [...new Map(fileCtx.uses.map((x) => [x.root, x])).values()]) log(`the key helper goes in the ${u.family} root ${u.root}`);
         for (const n of fileNotes) log(`note: ${n}`);
-        const plan = { version: 1, project: ctx.inv.project, os: ctx.platform, alfredCodeEnabled: Boolean(ctx.inv.alfredCodeEnabled), steps: [...files.before, ...withFetch], notes: [], errors: [], expect: steps.map((s) => ({ kind: 'mcp', name: s.name, scope: s.scope, route: ctx.inv.registrations.find((r) => r.name === s.name && r.scope === s.scope).route })) };
+        const plan = { version: 1, project: ctx.inv.project, os: ctx.platform, alfredCodeEnabled: Boolean(ctx.inv.alfredCodeEnabled), steps: mcpOrder.withOrderStep([...files.before, ...withFetch], ctx.inv.project, mcpOrder.ownProjectNames(ctx.inv)), notes: [], errors: [], expect: steps.map((s) => ({ kind: 'mcp', name: s.name, scope: s.scope, route: ctx.inv.registrations.find((r) => r.name === s.name && r.scope === s.scope).route })) };
         res.tmp = tmp || fs.mkdtempSync(path.join(os.tmpdir(), 'preferred-tools-fix-'));
         const report = apply(plan, { env: ctx.env, tmp: res.tmp, runCli, log });
         res.fetchFile = report.fetchFile;

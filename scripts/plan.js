@@ -29,6 +29,7 @@ const keys = require('./keys.js');
 const kept = require('./kept.js');
 const roots = require('./roots.js');
 const existing = require('./existing.js');
+const mcpOrder = require('./mcp-order.js');
 const { installedOf, keyOf, targetOf, fromHere, otherWindowsMcp } = require('./inventory.js');
 const { blockingStdio } = require('./json-file.js');
 
@@ -589,7 +590,8 @@ function plan(inv, answers, opts = {})
     if (out.hud) out.steps.push({ op: 'hud', mode: out.hud, why: `claude-hud: ${out.hud === 'skip' ? 'statusLine only' : out.hud === 'replace' ? 'statusLine plus recommended settings, replacing differing keys' : 'statusLine plus recommended settings, add-only'}` });
     // the file steps first, the records last (D8): a failed add leaves files a re-run finds in place
     const files = fileSteps(inv, ctx, out);
-    out.steps = [...files.before, ...out.steps, ...files.after];
+    // .mcp.json in the catalog's order, last of all (spec F5, F8)
+    out.steps = mcpOrder.withOrderStep([...files.before, ...out.steps, ...files.after], inv.project, mcpOrder.ownProjectNames(inv, answers.existing));
     out.noop = out.steps.length === 0 && out.errors.length === 0;
     return out;
 }
@@ -736,6 +738,7 @@ function render(p)
         else if (s.op === 'write-helper') lines.push(`   writes ${P.join(s.path, roots.FILES.helper)}  (this plugin's header helper)`);
         else if (s.op === 'ensure-key-name') lines.push(`   writes ${s.file}  (names only: ${s.names.join(', ')} - you fill in each value)`);
         else if (s.op === 'record-clean') lines.push(s.entries.length || s.keep.length ? `   writes ${s.file}  (the servers left on their own)` : `   removes ${s.file}  (no server is left on its own)`);
+        else if (s.op === 'order-mcp-json') lines.push(`   reorders ${s.file}  (no value changes)`);
         else if (s.op === 'record-root') lines.push(`   writes ${roots.FILES.map} in the plugin's data folder  (the ${s.family} root: ${s.root})`);
         else if (s.op === 'fetch') lines.push(`   ${s.argv.map(shq).join(' ')}`, '   (after the apply, in the background: fills the cache only; if it fails the registration stays and the first start tries again)');
         else if (s.op === 'hud') lines.push(`   node scripts/hud-statusline.js ${s.mode === 'replace' ? '--replace' : s.mode === 'skip' ? '--statusline-only' : ''}`.trimEnd());

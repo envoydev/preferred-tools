@@ -441,7 +441,7 @@ test('a scope change moves the registration and rewrites its paths for the new s
 test('changing the route rebuilds from the catalog; changing only the key adds the helper to the entry as read', () => {
     const r = installed('context7', { route: 'remote' });
     const key = plan(inv(MAC, { registrations: [r] }), changeOf(r, { token: true }), opts('/h'));
-    assert.deepStrictEqual(key.steps.map((s) => s.op), ['root-ignore', 'write-helper', 'ensure-key-name', 'mcp-replace', 'record-root']);
+    assert.deepStrictEqual(key.steps.map((s) => s.op), ['root-ignore', 'write-helper', 'ensure-key-name', 'mcp-replace', 'record-root', 'order-mcp-json']);
     assert.deepStrictEqual(key.steps[3].entry, { type: 'http', url: 'https://mcp.context7.com/mcp', headersHelper: 'node /work/shop/.preferred-tools/mcp-headers.js CONTEXT7_API_KEY Bearer' });
     // remote at project scope becomes local there: the local launch replaces it in the committed file
     const toLocal = plan(inv(MAC, { registrations: [r] }), changeOf(r, { route: 'local' }), opts('/h'));
@@ -1889,6 +1889,18 @@ const PFILE = '/work/shop/.preferred-tools/preferred-tools.json';
 const GFILE = '/Users/me/.preferred-tools/preferred-tools.json';
 const GH_URL = { type: 'http', url: 'https://api.githubcopilot.com/mcp/' };
 const cleans = (p) => p.steps.filter((s) => s.op === 'record-clean').map((s) => [s.file, s.entries, s.keep]);
+
+test('an install at project scope ends with the order step; one at local scope has none', () => {
+    const p = plan(inv(MAC), pickOne('context7', { route: 'remote', scope: 'project' }), opts('/Users/me'));
+    assert.deepStrictEqual(p.errors, []);
+    assert.deepStrictEqual(p.steps.at(-1), { op: 'order-mcp-json', file: '/work/shop/.mcp.json', own: [], why: '.mcp.json: the catalog servers in your order, your own after them - no value changes' });
+    assert.ok(render(p).includes('reorders /work/shop/.mcp.json  (no value changes)'), render(p));
+    // a server left on its own at project scope is named, so it sorts with the user's own
+    const mine = reg('mine', 'project', { type: 'http', url: 'https://api.githubcopilot.com/mcp/' }, 'github', 'remote', { choice: 'own' });
+    assert.deepStrictEqual(plan(inv(MAC, { registrations: [mine] }), pickOne('context7', { route: 'remote', scope: 'project' }), opts('/Users/me')).steps.at(-1).own, ['mine']);
+    const local = plan(inv(MAC), pickOne('context7', { route: 'remote', scope: 'local' }), opts('/Users/me'));
+    assert.ok(!local.steps.some((s) => s.op === 'order-mcp-json'), local.steps.map((s) => s.op).join());
+});
 
 test("install plans no record when nothing is left on its own; a 0.2.0 record's manage and add entries are dropped and the file deleted", () => {
     const fresh = plan(inv(MAC), pickOne('playwright-chrome'), opts('/Users/me'));
