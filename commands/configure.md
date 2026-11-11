@@ -92,43 +92,54 @@ registration or plugin (a tool at two scopes is two options; your own servers ar
 group (servers left on their own, with a plugin or with claude.ai) and the 'Root folders' group. Turn each picked label
 into its key through `change.keys`. 'None of these', or nothing picked: say so and stop.
 
-## 5. Each pick
+## 5. Each pick, one step at a time
 
-Write `{"targets": [<picked keys>], "routes": {}}` to `<tmp>/picks.json` and run:
+Write `{"targets": [<picked keys>], "done": []}` to `<tmp>/picks.json` and run:
 
 ```
 node "${CLAUDE_PLUGIN_ROOT}/scripts/plan.js" --questions <tmp>/inventory.json <tmp>/picks.json --data "${CLAUDE_PLUGIN_DATA}"
 ```
 
-Its `targets.<key>` holds the tool's `row`, what it has now (`current`: name, scope, route) and the questions, each with
-what it has now first and recommended. A target with an `error` is not changed: say why. For each key in order:
+Its `targets.<key>` holds each pick's `row` and what it has now (`current`: name, scope, route); a target with an
+`error` is not changed - say why. Its `next` is the one step to ask now: `next.id`, `next.call` (the questions, as one
+`AskUserQuestion`), `next.answers` (what a label picked stands for) and, sometimes, `next.set`. Every question
+recommends what the pick has now. Until `next.id` is `done`:
 
-- **On its own** (`kind: "own"`): ask `targets.<key>.own.question`. Its answer is `own.answers.<label>`, a
-  `{key, choice}`: write `"existing": {<key>: <choice>}` into `<tmp>/answers.json`. 'Let preferred-tools manage it'
-  hands it to configure, update and fix from now on; for a plugin's server or a connector, the other option lets
-  install offer preferred-tools' own beside it.
-- **A root folder** (`kind: "root"`): ask `targets.<key>.root.question`, the root in use first. Its answer is
-  `root.answers.<label>`, a `{family, id, root}`; 'A folder you name' is asked next. A root other than the one in use
-  writes `"roots": {<family>: {"id": <id>}}` (or `{"id": "named", "path": "<typed>"}`) and `"rootChange": [<family>]`
-  into `answers.json`. The plan re-adds each registration of that family with its helper, and its data folder when it
-  sits in the old root, pointing into the new root; it moves no data and no key value, and names both.
-- **A registration or plugin**:
-  1. A target whose `route` is not null: ask that one question first. Record the answer under `routes.<key>` in
-     `picks.json` and run the command again, because the scope options depend on the route.
-  2. A target whose `targets.<key>.first` is not null (it has a data folder): ask those questions - scope and name - as
-     one call. Record the scope under `scopes.<key>` and the name under `names.<key>` in `picks.json` ('Keep ...' is
-     `"keep"`) and in the answers below, and run the command again, because the folder depends on both.
-  3. Ask `targets.<key>.questions` as one call, as printed. When it is empty, make no call. When `targets.<key>.only`
-     is set, one folder is left at the new scope and no location is asked: write it as the target's `"location"`, since
-     the folder it uses now cannot stay there.
-  4. Ask `keyNames.<key>.question` and `settings.<key>.question` as one call (either may be absent; leave out the key
-     name when the API key answer is now 'No key - lower rate limits' or 'Sign in with OAuth'). The name it uses now is
-     first. Another name is `keyNames.<key>.answers.<label>` - 'A name you choose' is asked next - and goes to
-     `"keyNames": {<key>: "<NAME>"}` at the top of `answers.json`. 'Change or add a setting' asks next for `NAME=value`
-     pairs, written to `"settings": {<key>: {"<NAME>": "<value>"}}`; 'Keep these settings' writes nothing.
+1. Ask `next.call` as printed. When `next.call` is empty, make no call.
+2. Record each answer as below, in `<tmp>/picks.json` and in `<tmp>/answers.json`.
+3. Write `next.set` when it is there: `{"location": ...}` is the one folder left at the new scope, written as the
+   target's `"location"`, since the folder it uses now cannot stay there.
+4. Append `next.id` to `"done"` in `picks.json` and run the command again.
 
-  Write the answers into `<tmp>/answers.json` as `{"change": {<key>: {"row": <targets.<key>.row>, ...}}}`, mapped as
-  below, and leave out every answer that keeps what the tool has now - the plan reads a missing key as 'keep':
+What each step is, and where its answer goes:
+
+- **On its own** (a server left on its own, a plugin's server or a connector): the question is the one the record
+  asked. Its answer is `next.answers.<question id>.<label>`, a `{key, choice}`: write `"existing": {<key>: <choice>}`
+  into `answers.json`. 'Let preferred-tools manage it' hands it to configure, update and fix from now on; for a plugin's
+  server or a connector, the other option lets install offer preferred-tools' own beside it.
+- **A root folder** (`root:project`, `root:global`): the root in use first. Its answer is
+  `next.answers.<question id>.<label>`, a `{family, id, root}`; 'A folder you name' is asked next. A root other than
+  the one in use writes `"roots": {<family>: {"id": <id>}}` (or `{"id": "named", "path": "<typed>"}`) and
+  `"rootChange": [<family>]` into `answers.json`. The plan re-adds each registration of that family with its helper,
+  and its data folder when it sits in the old root, pointing into the new root; it moves no data and no key value, and
+  names both.
+- **A registration**: its first question is 'Who looks after <name>?', a `{key, choice}` in `next.answers`. Write
+  `"existing": {<key>: <choice>}` into both files.
+  - 'Leave it on its own' ends this pick: it gets no `change` entry, and the plan saves it in the record named in the
+    option, so configure, update and fix skip it from now on.
+  - 'preferred-tools' goes on to its route, its scope and name, its location and extras, then its key name and
+    settings. Record a route under `"routes": {<key>: ...}`, a scope under `"scopes"`, a name under `"names"` ('Keep
+    ...' is `"keep"`) and the API key under `"tokens": {<key>: true | false}` in `picks.json`, and each answer that
+    changes something in the target's `change` entry, mapped by the table below.
+- **A plugin**: one question, its scope.
+
+The key name is `next.answers.<question id>.<label>` - the name it uses now first, 'A name you choose' asked next - and
+another name goes to `"keyNames": {<key>: "<NAME>"}` at the top of `answers.json`. The walk leaves the key name out when
+the API key answer is now 'No key - lower rate limits' or 'Sign in with OAuth'. 'Change or add a setting' asks next for
+`NAME=value` pairs, written to `"settings": {<key>: {"<NAME>": "<value>"}}`; 'Keep these settings' writes nothing.
+
+Write the answers into `<tmp>/answers.json` as `{"change": {<key>: {"row": <targets.<key>.row>, ...}}}`, mapped as
+below, and leave out every answer that keeps what the tool has now - the plan reads a missing key as 'keep':
 
 | Answer | Entry |
 |---|---|
@@ -137,7 +148,7 @@ what it has now first and recommended. A target with an `error` is not changed: 
 | name 'Keep ...' | nothing |
 | name 'Use `x`', or a name typed | `"name": "x"` |
 | location 'The folder it uses now' | nothing |
-| location, another label | `"location":` the entry `targets.<key>.answers` gives for the label picked |
+| location, another label | `"location":` the entry `next.answers` gives for the label picked |
 | location 'Another ...folder', asked next | `"location": {"side": "path", "path": "<typed>"}` |
 | browser 'A browser binary I name', asked next | `"executablePath": "<typed>"` |
 | browser 'Default for this engine', when it is not first | `"executablePath": ""` (drops `--executable-path`) |
@@ -188,8 +199,12 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/plan.js" <tmp>/inventory.json <tmp>/answers.
 ```
 
 Paste the output verbatim in a fenced block: every CLI call, every file it writes (a root's `.gitignore`,
-`mcp-headers.js`, the key names in `.mcps-secrets`, the record), the `Key:` line of each route that uses a key (never a
-value), the sign-in a remote route will ask for, and the tools that can run code. A move to Project scope takes no key
+`mcp-headers.js`, the key names in `.mcps-secrets`), the `Key:` line of each route that uses a key (never a value) and
+the line under it that says how the server connects once the key is there, the sign-in a remote route will ask for,
+and the tools that can run code. `writes` or `removes <root>/preferred-tools.json` is the record of the servers left on
+their own - a server handed back to preferred-tools leaves it, and the file is removed once none is left.
+`reorders <project>/.mcp.json (no value changes)` follows a change at Project scope: the catalog servers in the user's
+order, the user's own servers and those left on their own after them. A move to Project scope takes no key
 in `.mcp.json`; one whose entry holds a credential anywhere else - a header of its own, a userinfo URL - is a plan error
 naming the field, never written. A rename or a scope move adds the new registration first, reads it back, then removes
 the old one; a route, location, key name, settings or root change rewrites it in place and keeps the old entry to put
@@ -222,8 +237,11 @@ the line that puts a registration back (`RESTORE BY HAND`): give it to the user 
 
 Then report each changed tool as the read-back printed it (name, scope, route). A moved data folder or root moves no
 data: the plan named the old folder, so name it again. Keys: relay each `key:` line as printed (the name and its file,
-never a value); for a name not filled yet, name the file to fill and what the plan's `Key:` line says happens once it is
-there.
+never a value). After the read-back the apply prints one line per hosted server that takes a key - relay each as
+printed: 'connects with its key at the next session start' with the `/mcp -> <name> -> Reconnect` path for a session
+already running; 'fill <NAME> in <file>, then Reconnect it in /mcp' when the key is not there yet; or 'the server
+refused the key in <NAME>' with what that server takes, when it answered 401 or 403 to the key it was sent - the user
+fixes the value in the file and reconnects.
 
 **Fetch.** A change that launches a different package - a hosted route made local, say - prints `Fetch next, in the
 background (...): <file>`. Run, with the Bash tool's `run_in_background`:
@@ -232,7 +250,7 @@ background (...): <file>`. Run, with the Bash tool's `run_in_background`:
 node "${CLAUDE_PLUGIN_ROOT}/scripts/fetch.js" "<file>"
 ```
 
-It is `/preferred-tools:install` step 9, word for word: one server at a time, it fills the runtime's cache and starts the
+It is `/preferred-tools:install` step 8, word for word: one server at a time, it fills the runtime's cache and starts the
 server once with no 30-second limit, so its first-run work (memory's model download) is done before the next session,
 then prints each changed server's status (`claude mcp get`); Claude Code asks permission for it. Tell the user to
 restart only once it reports, paste its output when it finishes, and say a `warn` line changes nothing. An npx server

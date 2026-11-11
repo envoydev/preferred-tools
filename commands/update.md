@@ -13,7 +13,9 @@ language servers on PATH, and the key helper (`mcp-headers.js`) in each root fol
   Code asks permission for that call itself - `--apply` is deliberately not in `allowed-tools`.
 - **The `claude` CLI is the only writer** of `.mcp.json` and the account file; the script calls it. Never edit those files.
 - **A pin moves only to a release at least 7 days old.** A newer, younger release is listed as held back, never offered.
-  The rewrite keeps the registration's name, scope, args and env; only the pin and the cut-off beside it move.
+  The rewrite keeps the registration's name, scope, args and env; only the pin and the cut-off beside it move. A rewrite
+  at Project scope keeps `.mcp.json` in order: the catalog servers in the user's order, the user's own after them, no
+  value changed.
 - **A registration that matches no catalog row is the user's.** The script never looks at it. A server left on its own
   at install is listed as 'on its own - not checked' and never offered.
 - **Every ask is data.** Ask exactly the options printed, in the order printed; `AskUserQuestion` adds 'Other' itself.

@@ -23,6 +23,21 @@ server left on its own at install is listed as 'on its own - not checked'; `/pre
 A `note:` line (a Project-scope key helper waiting for the trust prompt, say) is advice, not a fix: relay it. A row
 named 'Held' is an open decision, not a problem; mention it in one line and leave it.
 
+Three rows look after what 0.2.0 wrote at Project scope:
+
+- `project-relative-path` - a data folder or the key helper named relative, or through `${HOME}` / `${USERPROFILE}`, in
+  this folder's `.mcp.json`. The fix writes those paths absolute, from the entry as read; it moves no data, and names
+  any old folder left behind (serena's on Windows, with its one-time download of about 327MB).
+- `mcp-order` - the catalog servers in `.mcp.json` out of the user's order. The fix puts them in order, the user's own
+  servers after them, and changes no value.
+- `helper-child-folder` - advice only: a hosted server inherited from a parent folder's `.mcp.json` connects here
+  without its key, since Claude Code does not run a parent folder's key helper in a child folder.
+
+A finding about a parent folder's `.mcp.json` ends 'NOT APPLICABLE: run /preferred-tools:fix in <folder>': that file
+is the parent's, and fix run there repairs it. `data-folder-ignore` also finds a 0.2.0 copy a session made in this
+folder (`.alfred/playwright-chrome`, say) that no server uses any more: its fix writes the copy's `.gitignore`, and its
+data is left, never moved or deleted.
+
 If it says 'No known problem found.', say so in one line and stop.
 
 ## 2. Ask
@@ -54,7 +69,8 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/fix.js" --apply <id,id | all> --data "${CLAU
 Claude Code asks permission for this call itself - `--apply` is deliberately not in `allowed-tools`. It rewrites each registration through the `claude` CLI (remove, then add with the same name and scope) from the entry as
 it is now, so the user's pin, cut-off and added args stay. Several fixes on one registration are one rewrite. A key moved out of
 a registration (`key-to-helper`) first writes the root's files - its `.gitignore`, `mcp-headers.js` - then rewrites the
-registration to read its key through the helper. A machine fix (a global npm install, a data folder's or a root's
+registration to read its key through the helper. After a rewrite of a hosted server that takes a key, the script prints
+how it connects - with its key at the next session start, or 'fill <NAME> in <file>' first - relay it. A machine fix (a global npm install, a data folder's or a root's
 `.gitignore`, the key helper written or brought current, or a broken npx cache folder removed - also for a server a
 parent folder's `.mcp.json` gives this folder, since that cache is the machine's) runs after. Each fix is read back by running its detector again.
 

@@ -13,7 +13,7 @@ changed or removed with `/preferred-tools:configure`; say so whenever the user a
 
 ## Rules
 
-- **Nothing is applied before one confirmation** (step 7). Every earlier step reads and asks.
+- **Nothing is applied before one confirmation** (step 6). Every earlier step reads and asks.
 - **The `claude` CLI is the only writer** of `.mcp.json` and the account file; `apply.js` calls it. Never edit those
   files by hand.
 - **A registration that matches no catalog row is the user's.** It is listed, never touched.
@@ -52,7 +52,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/table.js" <tmp>/inventory.json
 Paste the output verbatim in a fenced block. It is the whole catalog for this OS, numbered, with what is installed at
 each scope as `name [route, pin]`.
 
-## 3. Servers already set up
+## 3. Pick
 
 ```
 node "${CLAUDE_PLUGIN_ROOT}/scripts/plan.js" --questions <tmp>/inventory.json --data "${CLAUDE_PLUGIN_DATA}" --connectors "<Name>,<Name>"
@@ -60,73 +60,64 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/plan.js" --questions <tmp>/inventory.json --
 
 `<Name>,<Name>`: the claude.ai connectors this session has loaded - each `<Name>` in your own tool names
 `mcp__claude_ai_<Name>__<tool>`, once each (`mcp__claude_ai_Context7__query-docs` gives `Context7`); `""` when there are
-none. The call reads the registrations and runs fix's detectors read-only; it starts no server.
+none. The call reads the registrations and starts no server; it asks nothing about servers already set up.
 
-Its `existing.calls` ask about each server already set up here with no recorded answer: a registration that matches a
-catalog tool, a server a plugin provides, a connector. Ask each call as printed. Each answer is
-`existing.answers.<question id>.<label picked>`, a `{key, choice}`: put `"existing": {<key>: <choice>}` into
-`<tmp>/picks.json` and into `<tmp>/answers.json`. No calls: go on.
+Its `pick` holds only the tools not installed here, without a server left on its own. When it is empty, say every
+catalog tool for this OS is installed or left on its own, point to `/preferred-tools:configure` to change or remove one,
+and stop.
 
-## 4. Pick
+If the argument is a tool id from the table: installed, say where (from the table) and point to
+`/preferred-tools:configure <id>`, then stop; not installed, take it as the only pick and go to step 4.
 
-When step 3 asked anything, run its command again without `--connectors` and with `<tmp>/picks.json` after the inventory
-file, so the picks honour the answers:
+Otherwise ask each `pick` call as printed - one `AskUserQuestion` of up to four multi-select questions of 2 to 4
+options, grouped Code, Docs and forges, Browsers, Machine - and collect the labels picked; each label is the tool id,
+then what it already has:
+
+- `(installed for every project ...)` - a copy is installed at Global scope. The pick gets this project's own copy
+  beside it; the one for every project is never changed or removed. Its questions leave out the scope it already has
+  (and the scope question itself when one scope is left). Under the same name, the copy is the one Claude Code uses in
+  this project. A tool whose data defaults to the global root (memory) defaults to the project root for a copy, so it
+  starts empty and the global data is not seen here; 'Keep' at the location question shares that data instead. Say
+  this when such a tool is picked.
+- `(also connected through claude.ai)` or `(also provided by the <plugin> plugin)` - the same server reaches this
+  session another way. The pick adds this project's own registration beside it, and the plan names the two servers.
+
+'None of these', or nothing picked: say so and stop.
+
+## 4. Settings, one tool at a time
+
+Write `{"rows": [<picked ids>], "done": []}` to `<tmp>/picks.json` and run:
 
 ```
 node "${CLAUDE_PLUGIN_ROOT}/scripts/plan.js" --questions <tmp>/inventory.json <tmp>/picks.json --data "${CLAUDE_PLUGIN_DATA}"
 ```
 
-Its `pick` holds only the tools not installed here, without a tool left on its own or with a plugin or claude.ai in
-step 3. When step 3 collected answers, every stop in this step goes to step 7 instead, with `<tmp>/answers.json` holding
-only `existing`: the plan records them, so they are never asked again and a server left on its own is skipped by update
-and fix. When it is empty, say every catalog tool for this OS is installed or looked after elsewhere, point to
-`/preferred-tools:configure` to change or remove one, and stop.
+Its `next` is the one step to ask now: `next.id`, the `next.tool` it belongs to, `next.call` (the questions, as one
+`AskUserQuestion`), `next.answers` (what a label picked stands for) and, sometimes, `next.set`. The first step is the
+settings question; every step after it is one tool's, and one tool's steps come one after another - its route, scope and
+name, the root folder its scope uses when this run has not asked it yet, its location and extras, then its key name and
+settings. Until `next.id` is `done`:
 
-If the argument is a tool id from the table: installed, say where (from the table) and point to
-`/preferred-tools:configure <id>`, then stop; not installed, take it as the only pick and go to step 5.
+1. Ask `next.call` as printed. When `next.call` is empty, make no call.
+2. Record each answer in `<tmp>/picks.json` and in the tool's entry in `<tmp>/answers.json` (`{"picks": {<id>: {...}}}`),
+   mapped by the table below. In `picks.json`:
+   - the settings answer is `next.answers.settings.<label>`, written as `"walk"`: `"recommended"` or `"each"`;
+   - a route goes under `"routes": {<id>: ...}`, a scope under `"scopes"`, a name under `"names"` ('Keep ...' is
+     `"keep"`) and the API key under `"tokens": {<id>: true | false}`;
+   - a root folder is `next.answers.<question id>.<label>`, a `{family, id, root}`: write `"roots": {<family>: {"id":
+     <id>}}` in both files; 'A folder you name' is asked next and recorded as `{"id": "named", "path": "<typed>"}`.
+3. Write `next.set` when it is there: `{"location": ...}` is the one folder left for the tool, written as its
+   `"location"` in `answers.json`.
+4. Append `next.id` to `"done"` in `picks.json` and run the command again.
 
-Otherwise ask each `pick` call as printed - one `AskUserQuestion` of up to four multi-select questions of 2 to 4
-options, grouped Code, Docs and forges, Browsers, Machine - and collect the labels picked; each label is the tool id,
-then `(installed for every project ...)` when a copy is installed at Global scope. 'None of these', or nothing picked:
-say so and stop.
+'Use the recommended settings' ends the walk at once: every pick is `{}` in the answers file, and the recommended route,
+scope, roots, key names and settings are used. A tool already installed in this project is never offered, so either
+answer only adds: nothing installed is changed.
 
-A pick installed for every project gets this project's own copy beside it; the one for every project is never changed
-or removed. Its questions leave out the scope it already has (and the scope question itself when one scope is left).
-Under the same name, the copy is the one Claude Code uses in this project. A tool whose data defaults to the global
-root (memory) defaults to the project root for a copy, so it starts empty and the global data is not seen here; 'Keep'
-at the location question shares that data instead. Say this when such a tool is picked.
-
-## 5. Settings
-
-```ask settings
-How do you want to set the tools up?
-- 'Use the recommended settings for all (Recommended)' - route, scope, name and location as recommended
-- 'Set each tool' - ask route, scope, name and location per tool
-```
-
-'Use the recommended settings for all': every pick is `{}` in the answers file, and nothing more is asked - the
-recommended roots, key names and settings are used. A tool already installed in this project is never offered, so this
-adds only: nothing installed is changed.
-
-'Set each tool': write `{"rows": [<picked ids>], "routes": {}, "existing": {...}}` to `<tmp>/picks.json` and run the
-step 4 command. Each run's output is read the same way; after an answer below, record it in `picks.json` and in the
-tool's entry in `<tmp>/answers.json` (`{"picks": {<id>: {...}}}`, mapped by the table), and run the command again.
-
-1. **Route.** For each pick whose `tools.<id>.route` is not null, ask that one question. Record it under `routes`.
-2. **Scope and name.** For each pick, ask `tools.<id>.first` as one call when it is not null (a tool with a data
-   folder), else `tools.<id>.questions` (its scope, name and extras). Record the scope under `scopes` and the name under
-   `names` (`{"scopes": {<id>: "local"}, "names": {<id>: "keep"}}`).
-3. **Roots.** Ask `roots.questions` as one call (one question per root the picks use), when it is not empty. Each
-   answer is `roots.answers.<question id>.<label picked>`, a `{family, id, root}`: record `"roots": {<family>: {"id":
-   <id>}}` in both files; 'A folder you name' is asked next and recorded as `{"id": "named", "path": "<typed>"}`.
-4. **The rest.** For each pick with `first`, ask `tools.<id>.questions` as one call. When it is empty, make no call.
-   When `tools.<id>.only` is set, one folder is left and no location is asked: write it as the tool's `"location"`.
-   Then, for each pick, ask `keyNames.<id>.question` and `settings.<id>.question` as one call (either may be absent;
-   leave out the key name when its API key answer was 'No key - lower rate limits' or 'Sign in with OAuth'). The key
-   name is `keyNames.<id>.answers.<label>`: a name goes to `"keyNames": {<id>: "<NAME>"}` at the top of
-   `answers.json`; `named` - 'A name you choose' - is asked next. Settings 'Keep these settings' or 'No settings' write
-   nothing; 'Change or add a setting' asks next for `NAME=value` pairs, written to `"settings": {<id>: {"<NAME>":
-   "<value>"}}`.
+The key name is `next.answers.<question id>.<label>`: a name goes to `"keyNames": {<id>: "<NAME>"}` at the top of
+`answers.json`; `named` - 'A name you choose' - is asked next. The walk leaves the key name out when the API key answer
+was 'No key - lower rate limits' or 'Sign in with OAuth'. Settings 'Keep these settings' or 'No settings' write nothing;
+'Change or add a setting' asks next for `NAME=value` pairs, written to `"settings": {<id>: {"<NAME>": "<value>"}}`.
 
 | Answer | Entry |
 |---|---|
@@ -134,20 +125,21 @@ tool's entry in `<tmp>/answers.json` (`{"picks": {<id>: {...}}}`, mapped by the 
 | scope 'Global' / 'Project' / 'Local' | `"scope": "user"` / `"project"` / `"local"` |
 | name 'Keep ...' | `"name": "keep"` |
 | name 'Use `x`', or a name typed | `"name": "x"` |
-| location | `"location":` the entry `tools.<id>.answers` gives for the label picked |
+| location | `"location":` the entry `next.answers` gives for the label picked |
 | location 'Another ...folder', asked next | `"location": {"side": "path", "path": "<typed>"}` |
 | browser 'A browser binary I name', asked next | `"executablePath": "<typed>"` |
-| API key 'Use a key from .mcps-secrets' / 'No key - lower rate limits' or 'Sign in with OAuth', when it is not first | `"token": true` / `"token": false` |
+| API key 'Use a key from .mcps-secrets' / 'No key - lower rate limits' or 'Sign in with OAuth' | `"token": true` / `"token": false`, for every answer |
 | host 'A self-managed host', asked next | `"params": {"host": "<typed>"}` |
 | key name, a name or one asked next | top-level `"keyNames": {<id>: "<NAME>"}` |
 | settings, pairs asked next | top-level `"settings": {<id>: {"<NAME>": "<value>"}}` |
 | root, an option or a folder asked next | top-level `"roots": {<family>: {"id": <id>}}`, or `{"id": "named", "path": "<typed>"}` |
 
-Skip a key the user left at its default; the plan reads a missing key as the recommendation. A name must match
+Skip any other answer the user left at its default; the plan reads a missing key as the recommendation. The API key is
+the exception: write it either way, since a key is the recommended way into every hosted server. A name must match
 `^[A-Za-z_][A-Za-z0-9_]*$`, and a setting whose name looks like a credential is refused by the plan - a key goes in
 `.mcps-secrets` and is picked as the key's name, never typed here.
 
-## 6. Prerequisites
+## 5. Prerequisites
 
 ```
 node "${CLAUDE_PLUGIN_ROOT}/scripts/prereq.js" <tmp>/answers.json --audit
@@ -156,11 +148,11 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/prereq.js" <tmp>/answers.json --json
 
 Paste the first output verbatim. It checks `uvx`, `npx`, Node 22.22.2 or newer, Docker or the github binary,
 `typescript-language-server` with TypeScript 6, `csharp-ls`, the Android SDK and a JDK, only for the picks that need them,
-and runs `npm audit` on appium's package. The audit lines go into step 7's confirmation as they are; an 'audit not run'
+and runs `npm audit` on appium's package. The audit lines go into step 6's confirmation as they are; an 'audit not run'
 line is not a pass.
 
 From the second (JSON) output, copy `machine` into `<tmp>/answers.json` under `"machine"`; it is how the plan knows
-whether Docker is there. For each tool with a missing prerequisite, ask once (up to four tools per call):
+whether Docker is there. For each tool with a missing prerequisite, ask once, one tool per call, as the walk asks:
 
 ```ask prereqMissing
 <tool> needs <prerequisite>, which is missing. What now?
@@ -173,7 +165,7 @@ whether Docker is there. For each tool with a missing prerequisite, ask once (up
 it gave only a page, give the user that page, wait for them to say it is done, and run `prereq.js` again. 'Register
 anyway': keep it, and say in the confirmation that it will not start yet.
 
-## 7. Plan, then one confirmation
+## 6. Plan, then one confirmation
 
 When claude-hud is picked, set `"hud": "defer"` in the answers: its settings are asked after the install (see
 'claude-hud').
@@ -182,12 +174,20 @@ When claude-hud is picked, set `"hud": "defer"` in the answers: its settings are
 node "${CLAUDE_PLUGIN_ROOT}/scripts/plan.js" <tmp>/inventory.json <tmp>/answers.json --out <tmp>/plan.json --data "${CLAUDE_PLUGIN_DATA}" --connectors "<Name>,<Name>"
 ```
 
-`--connectors` names the same connectors as step 3, so a recorded connector that is gone is dropped. Paste the output
-verbatim in a fenced block: every CLI call, every file it writes (the root's `.gitignore`, `mcp-headers.js`, the key
-names in `.mcps-secrets`, the record), the `Key:` line of each route that uses a key (the name, the files it is read
-from, filled or not - never a value), the sign-in a remote route will ask for, the folders a session started elsewhere
-creates, and the tools that can run code. Exit 1 means the plan has errors; show them and go back to the ask that causes
-them, never around them. Add the audit and 'register anyway' lines from step 6. Then:
+`--connectors` names the same connectors as step 3, so a recorded connector that is gone is dropped and a server also
+connected through claude.ai is named beside this project's own. Paste the output verbatim in a fenced block: every CLI
+call, every file it writes (the root's `.gitignore`, `mcp-headers.js`, the key names in `.mcps-secrets`), the `Key:`
+line of each route that uses a key (the name, the files it is read from, filled or not - never a value) and the line
+under it that says how the server connects once the key is there, the sign-in a remote route will ask for, and the tools
+that can run code. Two kinds of step may read new:
+
+- `writes` or `removes <root>/preferred-tools.json` - the servers left on their own; a managed server has no entry, so
+  the file is removed once none is left.
+- `reorders <project>/.mcp.json (no value changes)` - after a change at Project scope, the catalog servers in the user's
+  order, the user's own servers after them; no entry is changed.
+
+Exit 1 means the plan has errors; show them and go back to the ask that causes them, never around them. Add the audit
+and 'register anyway' lines from step 5. Then:
 
 ```ask apply
 Apply this plan?
@@ -198,7 +198,7 @@ Apply this plan?
 
 An empty plan says 'Nothing to apply'; show that and stop without asking.
 
-## 8. Apply
+## 7. Apply
 
 ```
 node "${CLAUDE_PLUGIN_ROOT}/scripts/apply.js" <tmp>/plan.json --tmp <tmp> --data "${CLAUDE_PLUGIN_DATA}"
@@ -206,21 +206,30 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/apply.js" <tmp>/plan.json --tmp <tmp> --data
 
 Run it with the Bash tool's `timeout: 600000` (10 minutes, the most it allows by default). It writes the root's files
 first, then makes the CLI calls and their read-back - seconds a tool, a plugin install a little more - then the records,
-and leaves every download to step 9, so it ends well inside the limit and its report comes back in this turn. Claude
+and leaves every download to step 8, so it ends well inside the limit and its report comes back in this turn. Claude
 Code asks permission for this call itself - `apply.js` is deliberately not in `allowed-tools` - so a skipped ask still
 cannot change anything. It runs the steps in order, reads each back, and stops at the first failure, leaving what was
 applied in place and naming it; a re-run reuses the files already written. Paste the output verbatim. A failure prints
 the line that puts a registration back (`RESTORE BY HAND`): give it to the user as written. A key in it shows as
 `${PREFERRED_TOOLS_KEPT}`, never its value: the user puts their key back there.
 
-Then report each picked tool as the read-back printed it (name, scope, route). Start step 9, and while it runs, continue
+Then report each picked tool as the read-back printed it (name, scope, route). Start step 8, and while it runs, continue
 with 'claude-hud' if the plan set `hudAfter`. Keys: relay each `key:` line as printed (the name and its file, never a
-value); for a name not filled yet, name the file to fill and what the plan's `Key:` line says happens once it is there.
-A Project-scope server with a key helper connects with its key only
-once the trust prompt is accepted - say so. Close with one line: a later rename, move, route, location, key name,
-settings or root folder change, or a remove, is `/preferred-tools:configure`.
+value). After the read-back the apply prints one line per hosted server that takes a key - relay each as printed:
 
-## 9. Fetch
+- `<name>: connects with its key at the next session start; in a session already running, /mcp -> <name> -> Reconnect`
+  - the key is filled;
+- `<name>: fill <NAME> in <file>, then Reconnect it in /mcp - ...` - it is not, and the line says how the server runs
+  until then;
+- `<name>: the server refused the key in <NAME> - <hint>` - the server answered 401 or 403 to the key it was sent: the
+  value is wrong for that server, and the hint says what it takes (gitlab a fine-grained token, atlassian
+  `email:api_token`). The user fixes the value in the file and reconnects; nothing here reads it.
+
+A Project- or Local-scope server with a key helper connects with its key only once the trust prompt is accepted - say
+so. Close with one line: a later rename, move, route, location, key name, settings or root folder change, or a remove,
+is `/preferred-tools:configure`.
+
+## 8. Fetch
 
 With no `Fetch next` line there is nothing to download (hosted routes and plugins only): the apply printed each server's
 status itself, so end with the restart line below. When the apply output has `Fetch next, in the background (...):

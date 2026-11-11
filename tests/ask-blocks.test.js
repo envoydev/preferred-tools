@@ -50,16 +50,16 @@ test('the commands hold every ask block to the limits', () =>
     });
     walk(path.join(root, 'commands'));
     walk(path.join(root, 'skills'));
-    assert.ok(seen >= 10, `${seen} ask blocks found; install.md has four, configure.md five, update.md one`);
+    assert.ok(seen >= 9, `${seen} ask blocks found; install.md has three, configure.md five, update.md one`);
 });
 
-test('the walks write the one location left (`only`) and make no call for an empty question list', () => {
+test('the walks write what the step sets (`next.set`, the one location left) and make no call for an empty one', () => {
     const root = path.join(__dirname, '..');
-    for (const [file, at] of [['install.md', 'tools.<id>'], ['configure.md', 'targets.<key>']])
+    for (const file of ['install.md', 'configure.md'])
     {
-        const text = fs.readFileSync(path.join(root, 'commands', file), 'utf8');
-        assert.ok(text.includes(`\`${at}.only\``), `${file} names ${at}.only`);
-        assert.match(text, /When it is empty, make no call/, `${file} skips an empty call`);
+        const text = fs.readFileSync(path.join(root, 'commands', file), 'utf8').replace(/\s+/g, ' ');
+        assert.ok(text.includes('`next.set`'), `${file} names next.set`);
+        assert.match(text, /When `next\.call` is empty, make no call/, `${file} skips an empty call`);
     }
 });
 
@@ -71,12 +71,10 @@ test("install maps both API key answers: 'No key' is written, since 'Use a key f
     assert.ok(row.includes('"token": true') && row.includes('"token": false'), row);
 });
 
-test("install plans step 3's answers when the walk stops before the plan, so they are recorded and never asked again", () => {
+test('install has no step for servers already set up', () => {
     const text = fs.readFileSync(path.join(__dirname, '..', 'commands', 'install.md'), 'utf8');
-    const step4 = text.slice(text.indexOf('## 4. Pick'), text.indexOf('## 5. Settings'));
-    assert.match(step4.replace(/\s+/g, ' '), /When step 3 collected answers, every stop in this step goes to step 7 instead, with `<tmp>\/answers\.json` holding only `existing`/);
-    // every stop in step 4 is one the rule covers
-    assert.strictEqual((step4.match(/\bstop\b/g) || []).length, 4, step4);
+    assert.deepStrictEqual(text.split('\n').filter((l) => /^## /.test(l) && /already set up/.test(l)), []);
+    assert.ok(!text.includes('existing.calls'));
 });
 
 test('asks.js never requires plan.js: the shared readers (currentOf, logicalRoot) live in entries.js, so there is no require cycle', () => {

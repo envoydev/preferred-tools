@@ -81,6 +81,16 @@ for (const file of textFiles)
     });
 }
 
+// install asks only about the tools picked (0.3.0, spec F1, F4): no step about servers already set up, and a missing
+// prerequisite is asked one tool per call, as the walk asks one tool at a time
+{
+    const rel = path.join('commands', 'install.md');
+    const text = fs.readFileSync(path.join(root, rel), 'utf8');
+    if (/^## .*already set up/m.test(text) || text.includes('existing.calls')) problems.push(`${rel}: no step asks about servers already set up (spec F4) - no 'already set up' heading, no existing.calls`);
+    const prereq = /^## \d+\. Prerequisites\n([\s\S]*?)(?=^## )/m.exec(text);
+    if (!prereq || !/one tool per call/.test(prereq[1].replace(/\s+/g, ' '))) problems.push(`${rel}: the Prerequisites step asks a missing prerequisite one tool per call`);
+}
+
 // No text sends the user to the Other field (spec D8): every question the walk can put (tests/ask-texts.js, Task 4's
 // four fixtures), and every line of a command or skill, its ask blocks included - the model repeats what a command says.
 const { sendsToOther, walkTexts } = require('./ask-texts.js');
