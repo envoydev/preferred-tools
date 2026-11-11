@@ -86,28 +86,21 @@ function expandVars(text, env)
     return { value, unset };
 }
 
-// The string written into the registration at a scope. `project` scope (the committed .mcp.json) gets relative paths and
-// ${VAR} only; `local` and `user` get absolute paths, with `~` expanded here, never left for the server. `backslash`:
-// serena's home on Windows, whose SERENA_HOME must be in backslashes even as ${USERPROFILE}\.serena.
-function formatRoot(root, scope, ctx, { backslash = false } = {})
+// The string written into the registration: an absolute path at every scope, project scope included (the user's ruling,
+// 2026-11-11: the .mcp.json names this machine's paths), with `~` expanded here, never left for the server. `scope` is
+// kept for the callers that pass it.
+function formatRoot(root, scope, ctx)
 {
     const P = pathFor(ctx.platform);
-    if (scope === 'project')
-    {
-        if (root.kind === 'abs') return { error: `the project scope is a committed file: ${root.path} is absolute. Use a path under the project, or the account folder (written as ${homeVar(ctx.platform)}/...)` };
-        if (root.kind === 'home') return { value: backslash ? `${homeVar(ctx.platform)}\\${root.rel.replace(/\//g, '\\')}` : `${homeVar(ctx.platform)}/${root.rel}` };
-        return { value: root.rel };
-    }
     if (root.kind === 'abs') return { value: P.normalize(root.path) };
     if (root.kind === 'home') return { value: P.join(ctx.home, ...root.rel.split('/')) };
     return { value: P.resolve(ctx.project, ...root.rel.split('/')) };
 }
 
-// root + sub, in the written form
+// root + sub, in the written form: joined with the OS's separator at every scope
 function withSub(rootStr, sub, scope, ctx)
 {
     if (!sub) return rootStr;
-    if (scope === 'project') return `${rootStr}/${sub}`;
     return pathFor(ctx.platform).join(rootStr, sub);
 }
 
@@ -162,8 +155,8 @@ const ALFRED_ENTRIES = ['docs', 'state', 'statistics', 'workspace', 'flow'];
 
 // alfred-code is set up in this project: enabled for it AND <project>/.alfred/.gitignore is there, the file that keeps
 // its data out of git.
-// A value that names this machine: an absolute path (POSIX, a drive, UNC) or ~, with no ${VAR} in it. The committed
-// .mcp.json carries none (project scope gets relative paths and ${VAR} only).
+// A value that names this machine: an absolute path (POSIX, a drive, UNC) or ~, with no ${VAR} in it. Every scope
+// takes one since 0.3.0 (project scope names this machine's paths); fix rows still read it to tell such a value apart.
 function machinePath(value)
 {
     if (typeof value !== 'string' || value.includes('${')) return false;
@@ -200,30 +193,15 @@ function rootOf(family, ctx)
     return family === 'global' ? P.join(ctx.home, '.preferred-tools') : P.join(ctx.project, '.preferred-tools');
 }
 
-// The location side recommended for a row at a scope (spec D2): the data folder sits in the root of the scope's family -
-// 'project' (the project root) at project and local scope, 'account' (the global root) at global scope. memory keeps one
-// memory for every project: the global root's - at project scope only where the committed file can name it, under the
-// home folder - and a copy beside a registration at another scope gets the project root's. serena on Windows needs an
-// absolute, space-free home: a root with a space gives 'default' (the profile's .serena, else a space-free folder), and
-// project scope always does (${USERPROFILE}\.serena).
-function recommendedSide(row, scope, ctx, { copy = false } = {})
+// The location side recommended for a row at a scope (spec D2, F6): the data folder sits in the root of the scope's
+// family - 'project' (the project root) at project and local scope, 'account' (the global root) at global scope. serena
+// on Windows needs an absolute, space-free home: a root with a space gives 'default' (the profile's .serena, else a
+// space-free folder).
+function recommendedSide(row, scope, ctx)
 {
-    const loc = row.locations;
-    if (loc.windowsAbsolute && ctx.platform === 'win32')
-    {
-        if (scope === 'project') return 'default';
-        const side = scope === 'user' ? 'account' : 'project';
-        return validWindowsSerenaHome(rootOf(side === 'account' ? 'global' : 'project', ctx)) ? side : 'default';
-    }
-    if (scope === 'user') return 'account';
-    if (scope === 'project' && loc.relative !== true) return 'account';
-    if (loc.defaultSide === 'account')
-    {
-        if (copy) return 'project';
-        if (scope === 'project' && logicalRoot(rootOf('global', ctx), ctx).kind === 'abs') return 'project';
-        return 'account';
-    }
-    return 'project';
+    const side = scope === 'user' ? 'account' : 'project';
+    if (row.locations.windowsAbsolute && ctx.platform === 'win32') return validWindowsSerenaHome(rootOf(side === 'account' ? 'global' : 'project', ctx)) ? side : 'default';
+    return side;
 }
 
 // A tool's folder in a root, as a logical root: 'account' - the global root's, else the project root's (spec D2).
@@ -367,15 +345,10 @@ function helperParts(command)
     return at < 0 ? null : { path: argv[at], args: argv.slice(at + 1) };
 }
 
-// Where a registration at `scope` finds the helper: relative to the project at project scope (it runs in the folder whose
-// .mcp.json declares it), else absolute - in the root of the scope's family.
+// Where a registration at `scope` finds the helper: absolute at every scope, in the root of the scope's family (F7).
 function helperPathFor(scope, ctx)
 {
-    const P = pathFor(ctx.platform);
-    const root = rootOf(scope === 'user' ? 'global' : 'project', ctx);
-    if (scope !== 'project') return P.join(root, 'mcp-headers.js');
-    const rel = P.relative(ctx.project, root).split(P.sep).join('/');
-    return `${rel ? `${rel}/` : ''}mcp-headers.js`;
+    return pathFor(ctx.platform).join(rootOf(scope === 'user' ? 'global' : 'project', ctx), 'mcp-headers.js');
 }
 
 // The helper's third argument: the global root, at local scope only and only when it is a named folder - the helper reads
@@ -391,7 +364,7 @@ function helperNameOf(command)
 
 // The helper command a hosted keyed route gets at `scope`: the key's name (`keyName`, else the catalog's default) and
 // the route's scheme.
-const helperFor = (route, scope, ctx, keyName = null) => helperCommand({ helperPath: helperPathFor(scope, ctx), name: keyName || route.helper.var, scheme: route.helper.scheme, globalRoot: helperGlobalRoot(scope, ctx), style: scope === 'project' ? 'portable' : ctx.platform === 'win32' ? 'win32' : 'posix' });
+const helperFor = (route, scope, ctx, keyName = null) => helperCommand({ helperPath: helperPathFor(scope, ctx), name: keyName || route.helper.var, scheme: route.helper.scheme, globalRoot: helperGlobalRoot(scope, ctx), style: ctx.platform === 'win32' ? 'win32' : 'posix' });
 
 // A fresh entry from the catalog. `a` = { rootStr, scope, executablePath, token, keyName, params }. A hosted route that
 // sends a key gets `headersHelper` and no `headers`: the key stays in .mcps-secrets (spec D4).

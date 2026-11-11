@@ -33,8 +33,6 @@ const { installedOf, keyOf, targetOf, fromHere, otherWindowsMcp } = require('./i
 const { blockingStdio } = require('./json-file.js');
 
 const SCOPES = ['local', 'project', 'user'];
-// the SDK homes appium-sdk-env writes into a local or user registration (scripts/fixes/registration.js)
-const { APPIUM_SDK_ENV } = E;
 const deepEqual = (a, b) => JSON.stringify(sortKeys(a)) === JSON.stringify(sortKeys(b));
 function sortKeys(v)
 {
@@ -71,14 +69,14 @@ function resolveName(pick, row, cur, ctx)
     return n;
 }
 
-// `copy`: an install beside a registration of the same row at another scope (see E.recommendedSide). A data folder is
-// `<root>/<name>` in the root of the scope's family (spec D2): side 'project' - the project root, 'account' - the global
-// root; 'default' is the recommended side (serena on Windows: its profile's .serena, or a space-free folder).
-function wantedRoot(row, pick, cur, name, scope, ctx, copy = false)
+// A data folder is `<root>/<name>` in the root of the scope's family (spec D2): side 'project' - the project root,
+// 'account' - the global root; 'default' is the recommended side (serena on Windows: its profile's .serena, or a
+// space-free folder).
+function wantedRoot(row, pick, cur, name, scope, ctx)
 {
     const serenaWin = row.locations.windowsAbsolute && ctx.platform === 'win32';
-    let loc = pick.location || { side: cur ? 'keep' : E.recommendedSide(row, scope, ctx, { copy }) };
-    if (loc.side === 'default' && !serenaWin) loc = { side: E.recommendedSide(row, scope, ctx, { copy }) };
+    let loc = pick.location || { side: cur ? 'keep' : E.recommendedSide(row, scope, ctx) };
+    if (loc.side === 'default' && !serenaWin) loc = { side: E.recommendedSide(row, scope, ctx) };
     // an .alfred project root holds alfred-code's own entries: a registration of this family is never given a name
     // that is one (a registration already under that name keeps it)
     const P = E.pathFor(ctx.platform);
@@ -86,17 +84,6 @@ function wantedRoot(row, pick, cur, name, scope, ctx, copy = false)
     {
         const problem = E.alfredNameProblem(name, ctx);
         if (problem) return { error: problem };
-    }
-    // serena on Windows at project scope: the committed file names the profile's .serena as ${USERPROFILE}\.serena, the
-    // one absolute, space-free folder it can name without a machine path
-    if (serenaWin && scope === 'project')
-    {
-        const d = E.serenaWindowsHome(ctx);
-        if (d.needsInput) return { error: `at project scope serena on Windows takes only \${USERPROFILE}\\.serena, and ${d.needsInput}` };
-        const profileHome = E.formatRoot({ kind: 'home', rel: '.serena' }, 'local', ctx).value;
-        const keeps = loc.side === 'keep' && cur && cur.rootStr && [profileHome.toLowerCase(), '${userprofile}\\.serena'].includes(cur.rootStr.toLowerCase());
-        if (!['default', 'account'].includes(loc.side) && !keeps) return { error: 'at project scope serena on Windows takes only ${USERPROFILE}\\.serena - pick the account folder' };
-        return { root: { kind: 'home', rel: '.serena' }, existing: false, backslash: true };
     }
     let root;
     let existing = false;
@@ -134,10 +121,6 @@ function wantedRoot(row, pick, cur, name, scope, ctx, copy = false)
             return { error: `serena's home on Windows must be absolute, in backslashes and space-free (fix row serena-windows-home); '${text || loc.path}' is not` };
         return { root: { kind: 'abs', path: text }, existing };
     }
-    // project scope writes a relative folder, which lands wherever Claude starts: only for a row proven to follow it (a
-    // pick with no location is never here - its recommended side there is the account folder)
-    if (scope === 'project' && root.kind === 'project' && row.locations.relative !== true)
-        return { error: 'project scope writes a folder relative to where Claude starts, which this tool is not proven to follow (locations.relative) - pick the account folder' };
     return { root, existing };
 }
 
@@ -231,45 +214,23 @@ function planMcp(row, pick, inv, ctx, catalog, out)
             if (!keys.NAME_RULE.test(k)) return out.errors.push(`${row.id}: '${k}' is not a setting name - a name matches ${keys.NAME_RULE.source}`);
             if (keys.credentialName(k)) return out.errors.push(`${row.id}: ${k} looks like a key - keep a key in .mcps-secrets and pick it as the key's name`);
             if (kept.looksLikeKey(v)) return out.errors.push(`${row.id}: ${k}'s value looks like a key - keep a key in .mcps-secrets and pick its name as the key's name`);
-            if (scope === 'project' && E.machinePath(String(v))) return out.errors.push(`${row.id}: ${k} - the committed .mcp.json takes no machine path - use \${VAR}`);
         }
     }
-    let wantExec = pick.executablePath === undefined ? (cur ? cur.executablePath : undefined) : (pick.executablePath || undefined);
-    // the committed .mcp.json carries no machine path: a binary named there is refused, one a move carries is left out
-    if (scope === 'project' && E.machinePath(wantExec))
-    {
-        if (pick.executablePath !== undefined) return out.errors.push(`${row.id}: --executable-path ${wantExec} is a machine path, which the committed .mcp.json must not carry - use the engine's default, a \${VAR} path, or local scope`);
-        out.notes.push(`${row.id}: --executable-path ${wantExec} is left out - a machine path the committed .mcp.json must not carry; the engine's default browser runs`);
-        wantExec = undefined;
-    }
+    const wantExec = pick.executablePath === undefined ? (cur ? cur.executablePath : undefined) : (pick.executablePath || undefined);
     let rootStr;
     let ensure = null;
     let dataAbs = null;
     if (row.locations)
     {
-        const w = wantedRoot(row, pick, cur, name, scope, ctx, !cur && here.length > 0);
+        const w = wantedRoot(row, pick, cur, name, scope, ctx);
         if (w.error) return out.errors.push(`${row.id}: ${w.error}`);
-        const f = E.formatRoot(w.root, scope, ctx, { backslash: w.backslash });
-        if (f.error) return out.errors.push(`${row.id}: ${f.error}`);
-        rootStr = f.value;
-        dataAbs = E.formatRoot(w.root, 'local', ctx).value;
+        rootStr = E.formatRoot(w.root, scope, ctx).value;
+        dataAbs = rootStr;
         if (!w.existing) ensure = dataAbs;
-        // a relative folder in the committed file lands wherever Claude starts; the plan creates and ignores only this one
-        if (scope === 'project' && w.root.kind === 'project')
-        {
-            out.notes.push(`${row.id}: a session started in another folder - a child or a subfolder - creates ${rootStr} there; run /preferred-tools:fix once in each such folder where alfred-code's .alfred/.gitignore does not cover it`);
-            // a root's .gitignore keeps itself and the helper in git (roots.GITIGNORE), so another clone has it once it is
-            // committed; ignoring the root folder instead would hide the helper a committed server runs
-            const rel = w.root.rel.replace(/\\/g, '/');
-            if (!(rel.startsWith('.alfred/') && ctx.alfredHere))
-            {
-                const PP = E.pathFor(ctx.platform);
-                const top = ctx.roots && ctx.roots.project ? PP.relative(ctx.project, ctx.roots.project).split(PP.sep).join('/') : null;
-                if (top && !top.startsWith('..') && rel.startsWith(`${top}/`))
-                    out.notes.push(`${row.id}: commit ${top}/.gitignore with the project - another clone then keeps ${rootStr} out of git; never add ${top}/ to the project's .gitignore, which would hide mcp-headers.js`);
-                else out.notes.push(`${row.id}: another clone of this project creates ${rootStr} unignored: add ${rel}/ to the project's .gitignore, or run /preferred-tools:fix there`);
-            }
-        }
+        // an absolute --user-data-dir: every session under this folder opens the same persistent profile, which one
+        // browser at a time can hold (docs/sources.md 'Playwright MCP')
+        if (scope === 'project' && row.id.startsWith('playwright-'))
+            out.notes.push(`${row.id}: one browser profile for every session under this folder - two sessions at once cannot both open it`);
     }
 
     let entry;
@@ -323,19 +284,6 @@ function planMcp(row, pick, inv, ctx, catalog, out)
         const held = kept.credentialPaths(entry, row).filter((p) => !own.has(p));
         const viaFix = route.helper && held.every((p) => /^headers\.authorization$/i.test(p));
         if (held.length) return out.errors.push(`${row.id}: '${cur.name}' holds a credential in ${held.join(', ')}, which the committed .mcp.json must not carry - keep it at ${cur.scope} scope, or ${viaFix ? 'run /preferred-tools:fix first: key-to-helper moves the key into mcp-headers.js' : `take it out of ${held.join(', ')} first`}`);
-        // nor a machine path: appium's SDK homes (appium-sdk-env writes them in at local and user scope) are read from
-        // the environment Claude Code starts with there; any other is the user's to replace
-        const env = { ...(entry.env || {}) };
-        const dropped = (row.id === 'appium' ? APPIUM_SDK_ENV : []).filter((k) => E.machinePath(env[k]));
-        for (const k of dropped) delete env[k];
-        const machine = Object.keys(env).filter((k) => E.machinePath(env[k]));
-        if (machine.length) return out.errors.push(`${row.id}: '${cur.name}' holds a machine path in ${machine.map((k) => `env.${k}`).join(', ')}, which the committed .mcp.json must not carry - keep it at ${cur.scope} scope, or put a \${VAR} there first`);
-        if (dropped.length)
-        {
-            entry.env = env;
-            const many = dropped.length > 1;
-            out.notes.push(`${row.id}: ${dropped.join(' and ')} ${many ? 'are' : 'is'} left out - machine paths the committed .mcp.json must not carry; there the server reads ${many ? 'them' : 'it'} from the environment Claude Code starts with (/preferred-tools:fix appium-sdk-env checks it)`);
-        }
     }
 
     // the key (spec D3-D5): a hosted route's helper reads the hosted chain each time Claude Code connects, a stdio route's

@@ -17,15 +17,13 @@ const ROUTE_WORD = { remote: 'hosted', local: 'local' };
 const HEADER = { code: 'Code', docs: 'Docs, forges', browsers: 'Browsers', machine: 'Machine', own: 'On their own', roots: 'Root folders' };
 const SCOPE_TEXT = {
     local: 'this project, only you (~/.claude.json, under this project)',
-    project: "this project, for everyone who opens it (the committed .mcp.json - relative paths and ${VAR} only)",
+    project: "the .mcp.json in this folder - every session started here or below it; it names this machine's paths, so a teammate's clone points at yours, and never holds a key",
     user: "every project on this machine (Claude Code's user scope, in ~/.claude.json)",
 };
 // Only words change (spec D1): the value stays user, project or local in picks, answers, the plan and on the CLI.
 const SCOPE_LABEL = { user: 'Global', project: 'Project', local: 'Local' };
 const scopeOfLabel = (label) => Object.keys(SCOPE_LABEL).find((s) => SCOPE_LABEL[s] === String(label).replace(/ \(Recommended\)$/, '')) || null;
-// project scope for a route that runs on this machine: what the committed file then carries
-const PROJECT_LOCAL_TEXT = "the committed .mcp.json - every session in this folder or below it; data folders follow the folder Claude starts in, a subfolder included; it holds this machine's launch (cmd /c on Windows, the x64 Python on Windows ARM64)";
-const scopeText = (s, row, routeId) => (s === 'project' && row.kind === 'mcp' && routeId === 'local' ? PROJECT_LOCAL_TEXT : SCOPE_TEXT[s]);
+const scopeText = (s) => SCOPE_TEXT[s];
 // every scope question lists the recommended scope first, then the others in this order (the user's ruling, 2026-11-10)
 const SCOPE_ORDER = ['user', 'project', 'local'];
 
@@ -295,11 +293,10 @@ function routeQuestion(row, current = null)
 function scopesFor(row, routeId, ctx = null)
 {
     if (row.kind === 'plugin') return ['project', 'local', 'user'];
-    const serenaWin = row.locations && row.locations.windowsAbsolute && ctx && ctx.platform === 'win32';
-    // a stdio route that needs a key holds it written in, which the committed .mcp.json never carries (spec D5)
+    // a stdio route that needs a key holds it written in, which the .mcp.json in this folder never carries (spec D5)
     const route = row.routes && row.routes[routeId];
     const stdioKey = routeId !== 'remote' && route && route.authMode === 'token';
-    return ['local', 'project', 'user'].filter((s) => s !== 'project' || (!stdioKey && !(serenaWin && E.serenaWindowsHome(ctx).needsInput)));
+    return ['local', 'project', 'user'].filter((s) => s !== 'project' || !stdioKey);
 }
 
 // The scopes offered, the recommended one first. `current` is the registration configure changes; for an install,
@@ -330,7 +327,7 @@ function scopeQuestion(row, inv, { route, current = null, copyOf = [], ctx = nul
     return {
         id: `scope-${row.id}`, header: 'Scope', multiSelect: false,
         question: current ? `${row.label}: which scope? Another one moves '${current.name || row.label}' there; /preferred-tools:install adds a second copy instead.` : `${row.label}: which scope?`,
-        options: order.slice(0, 4).map((s, i) => ({ label: `${SCOPE_LABEL[s]}${i === 0 ? REC : ''}`, description: s === strandedScope(row, routeId, current, ctx) ? STRANDED_TEXT : scopeText(s, row, routeId) })),
+        options: order.slice(0, 4).map((s, i) => ({ label: `${SCOPE_LABEL[s]}${i === 0 ? REC : ''}`, description: s === strandedScope(row, routeId, current, ctx) ? STRANDED_TEXT : scopeText(s) })),
     };
 }
 
@@ -379,15 +376,10 @@ const MEMORY_TAIL = { project: "this project's own memory", account: 'one memory
 // downloads them once per project
 const SERENA_PER_PROJECT = 'its language servers (about 327MB) download once per project';
 
-// The folder a root lands in, as the description says it: absolute at local and user scope; at project scope the written
-// form and what it is from here.
-function placeText(root, scope, ctx, backslash = false)
+// The folder a root lands in, as the description says it: absolute at every scope (F7).
+function placeText(root, ctx)
 {
-    const abs = E.formatRoot(root, 'local', ctx).value;
-    if (scope !== 'project') return abs;
-    const written = E.formatRoot(root, 'project', ctx, { backslash }).value;
-    if (root.kind === 'home') return `\`${written}\` - on this machine ${abs}`;
-    return `\`${written}\` - from ${ctx.project}: ${abs}; from a child or a subfolder: its own`;
+    return E.formatRoot(root, 'local', ctx).value;
 }
 
 // The location question for a row with a data folder, at a known scope and registration name (the folder is named
@@ -400,14 +392,8 @@ function locationQuestion(row, inv, { scope, name = null, current = null, copyOf
     const loc = row.locations;
     const folder = name || (current ? current.name : row.name);
     const serenaWin = Boolean(loc.windowsAbsolute && ctx.platform === 'win32');
-    // the committed file names serena's Windows home only as ${USERPROFILE}\.serena (plan.js wantedRoot)
-    if (serenaWin && scope === 'project') return { question: null, answers: {}, only: { side: 'default' } };
-    // project scope writes a folder under the project relative, so only for a row proven to follow its start folder; a
-    // folder outside the project and the home folder it cannot name at all
-    const writable = (root) => scope !== 'project' || root.kind === 'home' || (root.kind === 'project' && loc.relative === true);
     const winValid = (root) => !serenaWin || E.validWindowsSerenaHome(E.formatRoot(root, 'local', ctx).value);
-    const copy = !current && copyOf.length > 0;
-    const natural = E.recommendedSide(row, scope, ctx, { copy });
+    const natural = E.recommendedSide(row, scope, ctx);
 
     const places = [];
     const own = scope === 'user' ? null : { side: 'project', root: E.otherPlace(row, folder, 'project', ctx) };
@@ -419,7 +405,7 @@ function locationQuestion(row, inv, { scope, name = null, current = null, copyOf
         places.push(own);
         if (loc.defaultSide === 'account' || natural === 'account') places.push(shared);
     }
-    const usable = places.filter((p) => writable(p.root) && winValid(p.root));
+    const usable = places.filter((p) => winValid(p.root));
     if (serenaWin && usable.length < places.length)
     {
         // a root with a space: the profile's .serena when it is space-free, else a space-free folder, or one typed next
@@ -432,16 +418,15 @@ function locationQuestion(row, inv, { scope, name = null, current = null, copyOf
         }
     }
     const old = !current && !serenaWin ? E.alfredRoot(row, ctx) : null;
-    if (old && writable(old)) usable.push({ side: 'alfred', root: old });
+    if (old) usable.push({ side: 'alfred', root: old });
 
     // configure: the folder it uses now, when it can stay at this scope; a place that is the same folder is not repeated
     let keep = null;
     if (current && current.rootStr)
     {
-        const root = E.logicalRoot(current.rootStr, ctx);
-        if (current.scope === scope || writable(root)) keep = { side: 'keep', root };
+        keep = { side: 'keep', root: E.logicalRoot(current.rootStr, ctx) };
     }
-    const at = (p) => E.formatRoot(p.root, scope, ctx, { backslash: serenaWin }).value;
+    const at = (p) => E.formatRoot(p.root, scope, ctx).value;
     const listed = keep ? [keep, ...usable.filter((p) => at(p) !== at(keep))] : usable;
     if (serenaWin && listed.some((p) => p.side === 'default')) listed.push({ side: 'path', label: 'Another space-free folder', description: 'an absolute folder without spaces, asked next' });
 
@@ -451,7 +436,7 @@ function locationQuestion(row, inv, { scope, name = null, current = null, copyOf
     const describe = (p) =>
     {
         if (p.description) return p.description;
-        const text = placeText(p.root, scope, ctx, serenaWin);
+        const text = placeText(p.root, ctx);
         if (p.side === 'keep') return text;
         const base = row.id === 'memory' && MEMORY_TAIL[p.side] ? MEMORY_TAIL[p.side] : SIDE_TAIL[p.side];
         const tail = row.id === 'serena' && p.side === 'project' ? `${base}; ${SERENA_PER_PROJECT}` : base;
@@ -496,15 +481,12 @@ function toolAsk(row, inv, { route, scope = null, name = null, current = null, c
     const sameRoute = current && current.route === routeId;
     if (row.routes[routeId].optionalArgs && row.routes[routeId].optionalArgs.executablePath)
     {
-        // the committed .mcp.json carries no machine path: at project scope a binary is a ${VAR} path, and one the
-        // registration has now is not kept (plan.js leaves it out)
-        const committed = at === 'project';
         const has = Boolean(sameRoute && current.executablePath);
-        const named = { label: 'A browser binary I name', description: committed ? 'a ${VAR} path - the committed .mcp.json takes no machine path; asked next' : 'sets --executable-path to the binary you name, asked next' };
+        const named = { label: 'A browser binary I name', description: 'sets --executable-path to the binary you name, asked next' };
         const engine = { label: 'Default for this engine', description: has ? 'drops --executable-path' : row.id.endsWith('chrome') || row.id.endsWith('msedge') ? 'the branded browser installed on this machine' : "Playwright's own build" };
         qs.push({
             id: `browser-${row.id}`, header: 'Browser', multiSelect: false, question: `${row.label}: which browser binary?`,
-            options: has && !(committed && E.machinePath(current.executablePath))
+            options: has
                 ? first([{ label: `Keep \`${current.executablePath}\``, description: 'the binary it uses now' }, engine])
                 : first([engine, named]),
         });
@@ -753,4 +735,4 @@ function all(inv, picks, catalog, { env = {}, home = null, connectors = null } =
     return out;
 }
 
-module.exports = { PARENT_HELPER_IN_CHILD, keyNameQuestion, settingsQuestion, liveReader, heldKey, SCOPE_LABEL, scopeOfLabel, needsRoot, rootFamilies, rootQuestion, REC, recommendedScope, keyStateOf, keyToSend, pickQuestions, changeQuestions, routeQuestion, toolQuestions, toolAsk, scopeQuestion, nameQuestion, locationQuestion, removeQuestions, packed, STATIC, all, chunk, scopesFor };
+module.exports = { PARENT_HELPER_IN_CHILD, SCOPE_TEXT, keyNameQuestion, settingsQuestion, liveReader, heldKey, SCOPE_LABEL, scopeOfLabel, needsRoot, rootFamilies, rootQuestion, REC, recommendedScope, keyStateOf, keyToSend, pickQuestions, changeQuestions, routeQuestion, toolQuestions, toolAsk, scopeQuestion, nameQuestion, locationQuestion, removeQuestions, packed, STATIC, all, chunk, scopesFor };

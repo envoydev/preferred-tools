@@ -110,12 +110,8 @@ test('serena-windows-home: slashes keep the folder, a space needs another one, a
     // relative -> the project folder
     [f] = homes(mk('.serena\\home'));
     assert.deepStrictEqual(f.proposal, { SERENA_HOME: 'C:\\proj\\.serena\\home' });
-    // the project scope reads ${USERPROFILE} from the environment fix runs in: unset, it is named; set, the forward slash
-    // still fails serena's rule
-    [f] = homes(mk('${USERPROFILE}/.serena', {}, { scope: 'project' }));
-    assert.match(f.blocked, /USERPROFILE.*does not set/);
-    [f] = detect(ctxFor({ platform: 'win32', env: { USERPROFILE: 'C:\\Users\\dev' }, registrations: [reg('serena', { command: 'uvx', args: [], env: { SERENA_HOME: '${USERPROFILE}/.serena' } }, { scope: 'project' })] })).found.filter((x) => x.id === 'serena-windows-home');
-    assert.match(f.blocked, /write it under \$\{USERPROFILE\}\\/);
+    // a ${VAR} form at project scope is 0.2.0's: project-relative-path writes it out absolute, not this row
+    assert.deepStrictEqual(homes(mk('${USERPROFILE}/.serena', {}, { scope: 'project' })), []);
     // not Windows, or no SERENA_HOME at all: nothing
     assert.deepStrictEqual(detect(ctxFor({ platform: 'darwin', registrations: [reg('serena', { command: 'uvx', args: [], env: { SERENA_HOME: 'C:/x' } })] })).found.filter((x) => x.id === 'serena-windows-home'), []);
     assert.deepStrictEqual(detect(ctxFor({ platform: 'win32', registrations: [reg('serena', { command: 'uvx', args: ['--python', '3.13'], env: { SERENA_USAGE_REPORTING: 'false' } })] })).found, []);
@@ -136,9 +132,9 @@ test('serena-windows-home: no SERENA_HOME is serena\'s default <profile>\\.seren
     assert.deepStrictEqual(f.proposal, { SERENA_HOME: 'D:\\serena-home' });
     assert.match(f.note, /not moved/);
     assert.deepStrictEqual(F.serenaWindowsHomeFix(bare().entry, f, spaced).env, { SERENA_USAGE_REPORTING: 'false', SERENA_HOME: 'D:\\serena-home' });
-    // project scope: the committed file takes no machine path - named, never applied
+    // project scope: named, with the Location question to pick a space-free folder
     const [p] = homes(ctxFor({ platform: 'win32', home: 'C:\\Users\\Jo Doe', registrations: [bare('project')] }));
-    assert.match(p.blocked, /move it to local/);
+    assert.match(p.blocked, /pick a space-free folder with \/preferred-tools:configure, Location/);
     assert.deepStrictEqual(homes(ctxFor({ platform: 'darwin', home: '/Users/Jo Doe', registrations: [bare()] })), [], 'not Windows');
 });
 
@@ -272,10 +268,9 @@ test('appium-sdk-env: ANDROID_HOME and JAVA_HOME are looked up on the machine an
     assert.deepStrictEqual(detect(ctxFor({ machine, registrations: [reg('appium', set, { name: 'appium-mcp' })] })).found, []);
     const partly = { ...appium, env: { ...appium.env, ANDROID_HOME: '/mine' } };
     assert.deepStrictEqual(Object.keys(detect(ctxFor({ home: '/Users/dev', machine, registrations: [reg('appium', partly, { name: 'appium-mcp' })] })).found[0].proposal), ['JAVA_HOME']);
-    // a committed file takes no machine path: the variables come from the environment Claude Code starts with
-    const committed = detect(ctxFor({ machine, registrations: [reg('appium', appium, { name: 'appium-mcp', scope: 'project' })] })).found[0];
-    assert.match(committed.blocked, /environment Claude Code starts with/);
-    assert.doesNotMatch(committed.blocked, /committed file and cannot hold/);
+    // project scope holds this machine's paths too: the same proposal
+    const committed = detect(ctxFor({ home: '/Users/dev', machine, registrations: [reg('appium', appium, { name: 'appium-mcp', scope: 'project' })] })).found[0];
+    assert.deepStrictEqual(committed.proposal, { ANDROID_HOME: '/Users/dev/Library/Android/sdk', JAVA_HOME: '/opt/jdk-21' });
 });
 
 // ---- serena-telemetry -----------------------------------------------------------------------------------------------
@@ -1170,43 +1165,6 @@ test('fix notes an untrusted declaring folder', () =>
     assert.ok(!at(false, 'local').found.some((f) => /trust/.test(f.id)), 'not a fix');
 });
 
-test('serena-windows-home at project scope: ${USERPROFILE}\\.serena passes on a space-free profile, an unset variable blocks', () => {
-    const entry = { ...fresh('serena', 'win32'), env: { SERENA_HOME: '${USERPROFILE}\\.serena' } };
-    const ok = ctxFor({ platform: 'win32', registrations: [reg('serena', entry, { scope: 'project' })], env: { USERPROFILE: 'C:\\Users\\dev' } });
-    assert.deepStrictEqual(ids(detect(ok, 'serena-windows-home').found), []);
-    const unset = ctxFor({ platform: 'win32', registrations: [reg('serena', entry, { scope: 'project' })], env: {} });
-    assert.match(detect(unset, 'serena-windows-home').found[0].blocked, /USERPROFILE/);
-    const fallback = { ...entry, env: { SERENA_HOME: '${NOPE:-C:\\serena}' } };
-    assert.deepStrictEqual(ids(detect(ctxFor({ platform: 'win32', registrations: [reg('serena', fallback, { scope: 'project' })] }), 'serena-windows-home').found), []);
-    // a profile folder with a space: no ${USERPROFILE} path can work, so the advice is local scope, never that path
-    const spaced = ctxFor({ platform: 'win32', registrations: [reg('serena', entry, { scope: 'project' })], env: { USERPROFILE: 'C:\\Users\\Jane Doe' } });
-    const [f] = detect(spaced, 'serena-windows-home').found;
-    assert.doesNotMatch(f.blocked, /write it under \$\{USERPROFILE\}/);
-    assert.match(f.blocked, /C:\\Users\\Jane Doe has a space, so no \$\{USERPROFILE\} path works.*local/);
-});
-
-test('appium-sdk-env at project scope: the variables in the environment count; a missing one is blocked, never written', () => {
-    const at = (env) => detect(ctxFor({ registrations: [reg('appium', fresh('appium'), { scope: 'project' })], env }), 'appium-sdk-env').found;
-    assert.deepStrictEqual(at({ ANDROID_HOME: '/sdk', JAVA_HOME: '/jdk' }), []);
-    const [f] = at({ ANDROID_HOME: '/sdk' });
-    assert.match(f.blocked, /JAVA_HOME.*environment Claude Code starts with/);
-    assert.strictEqual(f.proposal, undefined);
-});
-
-test('appium-sdk-env at project scope: a machine path written into the committed entry is found - removed when the environment has it, else blocked', () => {
-    const entry = { ...fresh('appium'), env: { ANDROID_HOME: '/Users/me/Library/Android/sdk', JAVA_HOME: '${JAVA_HOME:-/jdk}' } };
-    const at = (env) => detect(ctxFor({ registrations: [reg('appium', entry, { scope: 'project' })], env }), 'appium-sdk-env').found;
-    const [f] = at({ ANDROID_HOME: '/sdk', JAVA_HOME: '/jdk' });
-    assert.ok(f, 'a machine path in the committed .mcp.json is a finding');
-    assert.match(f.found, /ANDROID_HOME is a machine path in the committed \.mcp\.json/);
-    assert.deepStrictEqual(f.proposal, { remove: ['ANDROID_HOME'] });
-    const fixed = F.appiumSdkEnvFix(entry, f);
-    assert.deepStrictEqual(fixed.env, { JAVA_HOME: '${JAVA_HOME:-/jdk}' }, 'only the machine path goes; a ${VAR} stays');
-    const [b] = at({ JAVA_HOME: '/jdk' });
-    assert.match(b.blocked, /set ANDROID_HOME in the environment Claude Code starts with.*then/);
-    assert.strictEqual(b.proposal, undefined);
-});
-
 test('expandVars: ${NAME} from the environment, ${NAME:-fallback} when unset, null when a bare name is unset', () => {
     const C = require('../scripts/fixes/common.js');
     assert.strictEqual(C.expandVars('${A}\\x', { A: 'C:\\a' }), 'C:\\a\\x');
@@ -1240,4 +1198,31 @@ test('fix: a registration on its own is not checked and is listed once', () =>
     const text = fix.render(own);
     assert.deepStrictEqual(text.split('\n').filter((l) => l.includes('on its own - not checked')), ['context7 (local): on its own - not checked']);
     assert.deepStrictEqual(detect(ctxFor({ platform: 'win32', registrations: [r] })).own, []);
+});
+
+// ---- 0.3.0: project scope holds this machine's absolute paths (F7, Optional 3) ----------------------------------------
+
+test('serena-windows-home at project scope: an absolute bad home is fixed in place; a spaced root says pick a space-free folder', () =>
+{
+    const homes = (ctx) => detect(ctx).found.filter((f) => f.id === 'serena-windows-home');
+    const at = (home, extra = {}) => ctxFor({ platform: 'win32', ...extra, registrations: [reg('serena', { command: 'uvx', args: ['--python', '3.13'], env: home === undefined ? {} : { SERENA_HOME: home } }, { scope: 'project' })] });
+    let [f] = homes(at('C:/work/shop/.preferred-tools/serena'));
+    assert.deepStrictEqual(f.proposal, { SERENA_HOME: 'C:\\work\\shop\\.preferred-tools\\serena' });
+    assert.ok(!f.blocked);
+    [f] = homes(at(undefined, { home: 'C:\\Users\\Jo Doe' }));
+    assert.ok(f.blocked.includes('pick a space-free folder with /preferred-tools:configure, Location'), f.blocked);
+    // a ${VAR} value is project-relative-path's to convert
+    assert.deepStrictEqual(homes(at('${USERPROFILE}/.serena', { env: { USERPROFILE: 'C:\\Users\\dev' } })), []);
+});
+
+test('appium-sdk-env at project scope finds and proposes the SDK homes as at local scope', () =>
+{
+    const appium = fresh('appium', 'darwin', 'x64', 'project');
+    const machine = noMachine({ exists: (p) => ['/Users/dev/Library/Android/sdk', '/opt/jdk-21', '/opt/jdk-21/bin/java'].includes(p), run: (cmd) => (cmd === '/usr/libexec/java_home' ? { status: 0, stdout: '/opt/jdk-21\n' } : { status: 1 }) });
+    const [f] = detect(ctxFor({ platform: 'darwin', home: '/Users/dev', machine, registrations: [reg('appium', appium, { name: 'appium-mcp', scope: 'project' })] })).found.filter((x) => x.id === 'appium-sdk-env');
+    assert.deepStrictEqual(f.proposal, { ANDROID_HOME: '/Users/dev/Library/Android/sdk', JAVA_HOME: '/opt/jdk-21' });
+    assert.ok(!f.blocked);
+    // a machine path there is kept, not taken out
+    const held = { ...appium, env: { ...appium.env, ANDROID_HOME: '/opt/sdk', JAVA_HOME: '/opt/jdk' } };
+    assert.deepStrictEqual(detect(ctxFor({ platform: 'darwin', home: '/Users/dev', env: { ANDROID_HOME: '/opt/sdk', JAVA_HOME: '/opt/jdk' }, machine, registrations: [reg('appium', held, { name: 'appium-mcp', scope: 'project' })] })).found.filter((x) => x.id === 'appium-sdk-env'), []);
 });

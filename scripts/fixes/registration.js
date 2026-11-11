@@ -32,37 +32,28 @@ function serenaWindowsHomeDetect(ctx)
         // profile path like any other; the space-free folder install offers takes its place
         if (value === undefined) return unsetSerenaHome(reg, ctx);
         if (typeof value !== 'string' || E.validWindowsSerenaHome(value)) return null;
-        // the committed file names the home through the environment (${USERPROFILE}\.serena): read it as a session would
-        if (reg.scope === 'project')
-        {
-            const expanded = C.expandVars(value, ctx.env);
-            if (expanded === null) return C.finding('serena-windows-home', reg, `SERENA_HOME is '${value}'`, { blocked: `SERENA_HOME names \${${C.firstUnset(value, ctx.env)}}, which this environment does not set` });
-            if (E.validWindowsSerenaHome(expanded)) return null;
-            // a profile folder with a space puts one in every ${USERPROFILE} path: only another scope's folder can work
-            const profile = ctx.env.USERPROFILE;
-            const spaced = /\$\{USERPROFILE\}/.test(value) && /\s/.test(profile || '');
-            return C.finding('serena-windows-home', reg, `SERENA_HOME is '${value}' (${expanded} on this machine)`, {
-                blocked: spaced
-                    ? `serena's home on Windows must be space-free, and ${profile} has a space, so no \${USERPROFILE} path works - move it to local (/preferred-tools:configure, Scope), which takes a space-free folder on this machine`
-                    : 'serena\'s home on Windows must be absolute, in backslashes and space-free: write it under ${USERPROFILE}\\..., or move it to local (/preferred-tools:configure, Scope)',
-            });
-        }
+        // a ${VAR} form in this folder's .mcp.json is 0.2.0's: project-relative-path writes it out absolute
+        if (reg.scope === 'project' && value.includes('${')) return null;
         const faults = [!path.win32.isAbsolute(value) && 'not absolute', value.includes('/') && 'forward slashes', /\s/.test(value) && 'a space'].filter(Boolean);
         const what = `SERENA_HOME is '${value}' (${faults.join(', ')})`;
         const same = windowsHomeOf(value, ctx);
         if (E.validWindowsSerenaHome(same)) return C.finding('serena-windows-home', reg, what, { proposal: { SERENA_HOME: same }, note: `same folder, written absolute with backslashes: ${same}` });
         const fresh = E.serenaWindowsHome({ home: ctx.home });
         if (fresh.root) return C.finding('serena-windows-home', reg, what, { proposal: { SERENA_HOME: fresh.root.path }, note: `a new home, ${fresh.root.path} - serena's data in '${value}' is not moved and its language servers download again (~327MB)` });
+        if (reg.scope === 'project') return C.finding('serena-windows-home', reg, what, { blocked: SPACED_PROJECT });
         return C.finding('serena-windows-home', reg, what, { input: { id: 'serenaHome', prompt: fresh.needsInput } });
     });
 }
+
+// serena's home in this folder's .mcp.json when no space-free folder is in reach (F7)
+const SPACED_PROJECT = "serena's home on Windows must be space-free - pick a space-free folder with /preferred-tools:configure, Location";
 
 function unsetSerenaHome(reg, ctx)
 {
     const profile = ctx.home || '';
     if (!/\s/.test(profile)) return null;
     const what = `no SERENA_HOME: serena's default home, ${path.win32.join(profile, '.serena')}, has a space`;
-    if (reg.scope === 'project') return C.finding('serena-windows-home', reg, what, { blocked: `the committed .mcp.json takes no machine path, and no \${USERPROFILE} path is space-free here - move it to local (/preferred-tools:configure, Scope), which takes a space-free folder` });
+    if (reg.scope === 'project') return C.finding('serena-windows-home', reg, what, { blocked: SPACED_PROJECT });
     const free = E.serenaSpaceFree(ctx).path;
     return C.finding('serena-windows-home', reg, what, { proposal: { SERENA_HOME: free }, note: `a new home, ${free} - serena's data in ${path.win32.join(profile, '.serena')} is not moved and its language servers download again (~327MB)` });
 }
@@ -189,19 +180,10 @@ function appiumSdkEnvDetect(ctx)
     return eachReg(ctx, 'appium-sdk-env', (reg) =>
     {
         const env = reg.entry.env || {};
-        // the committed file holds no machine path: there the server reads them from the environment Claude Code starts with
-        const machine = reg.scope === 'project' ? SDK_ENV.filter((k) => E.machinePath(env[k])) : [];
-        if (machine.length)
-        {
-            const what = `${machine.join(' and ')} ${machine.length > 1 ? 'are machine paths' : 'is a machine path'} in the committed .mcp.json`;
-            const unset = machine.filter((k) => !ctx.env[k]);
-            if (unset.length) return C.finding('appium-sdk-env', reg, what, { blocked: `set ${unset.join(' and ')} in the environment Claude Code starts with (the account settings.json "env" reaches every start), then run this fix again to take the machine path out` });
-            return C.finding('appium-sdk-env', reg, what, { proposal: { remove: machine }, note: 'taken out: the server reads it from the environment Claude Code starts with, which has it' });
-        }
-        const missing = SDK_ENV.filter((k) => !env[k] && !(reg.scope === 'project' && ctx.env[k]));
+        // every scope holds this machine's SDK homes since 0.3.0, this folder's .mcp.json included
+        const missing = SDK_ENV.filter((k) => !env[k]);
         if (!missing.length) return null;
         const what = `${missing.join(' and ')} not set in the registration`;
-        if (reg.scope === 'project') return C.finding('appium-sdk-env', reg, `${missing.join(' and ')} not set`, { blocked: `${missing.join(' and ')} ${missing.length > 1 ? 'are' : 'is'} not set in this shell - set ${missing.length > 1 ? 'them' : 'it'} in the environment Claude Code starts with (the account settings.json "env" reaches every start); the committed .mcp.json holds no machine path` });
         const lookup = { ANDROID_HOME: missing.includes('ANDROID_HOME') ? androidSdk(ctx) : null, JAVA_HOME: missing.includes('JAVA_HOME') ? javaHome(ctx) : null };
         const proposal = Object.fromEntries(Object.entries(lookup).filter(([, v]) => v));
         const notFound = missing.filter((k) => !proposal[k]);
@@ -212,12 +194,6 @@ function appiumSdkEnvDetect(ctx)
 
 function appiumSdkEnvFix(entry, f)
 {
-    if (f.proposal.remove)
-    {
-        const env = { ...(entry.env || {}) };
-        for (const k of f.proposal.remove) delete env[k];
-        return { ...entry, env };
-    }
     return { ...entry, env: { ...(entry.env || {}), ...f.proposal } };
 }
 

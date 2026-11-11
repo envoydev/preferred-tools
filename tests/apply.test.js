@@ -329,7 +329,7 @@ test('no token value reaches any file the install wrote', () => {
             for (const [name, value] of Object.entries(tokens)) assert.ok(!body.includes(value), `${name} value found in ${path.relative(w.dir, f)}`);
         }
         // a hosted key is read by mcp-headers.js when Claude Code connects: the committed entry names the helper, no key
-        assert.deepStrictEqual(mcpJson(w).mcpServers.github, { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headersHelper: 'node .preferred-tools/mcp-headers.js GITHUB_PERSONAL_ACCESS_TOKEN Bearer' });
+        assert.deepStrictEqual(mcpJson(w).mcpServers.github, { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headersHelper: `node ${path.join(w.project, '.preferred-tools', 'mcp-headers.js')} GITHUB_PERSONAL_ACCESS_TOKEN Bearer` });
         assert.strictEqual(accountDoc(w).mcpServers.sentry.env.SENTRY_ACCESS_TOKEN, '', 'a key in the shell is never written in: the apply reads .mcps-secrets only');
     }
     finally { w.clean(); }
@@ -534,14 +534,14 @@ test('a stdio key at local scope is written in from the key file, a hosted route
         assert.deepStrictEqual(r.p.errors, []);
         assert.strictEqual(r.report.failed, null, r.text);
         assert.strictEqual(accountDoc(w).projects[accountKey(w.project)].mcpServers.sentry.env[S], s, 'the value, as the file holds it');
-        assert.deepStrictEqual(mcpJson(w).mcpServers.github, { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headersHelper: `node .preferred-tools/mcp-headers.js ${G} Bearer` }, 'the committed file names the helper');
+        assert.deepStrictEqual(mcpJson(w).mcpServers.github, { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headersHelper: `node ${path.join(w.project, '.preferred-tools', 'mcp-headers.js')} ${G} Bearer` }, 'the project file names the helper by absolute path');
         assert.ok(r.text.includes(`${S} for 'sentry' (local) from ${path.join(w.project, '.preferred-tools', '.mcps-secrets')}`), r.text);
         noValueIn(w, r, [s, g]);
     }
     finally { w.clean(); }
 });
 
-test('a configure move local -> project of a github remote re-adds its helper with a relative path and no ${VAR}; an old Authorization header is refused there', () => {
+test('a configure move local -> project of a github remote re-adds its helper with an absolute path and no ${VAR}; an old Authorization header is refused there', () => {
     const w = world();
     try
     {
@@ -550,7 +550,7 @@ test('a configure move local -> project of a github remote re-adds its helper wi
         const r = keptWalk(w, { change: { 'mcp:github~local': { scope: 'project' } } });
         assert.deepStrictEqual(r.p.errors, []);
         assert.strictEqual(r.report.failed, null, r.text);
-        assert.deepStrictEqual(mcpJson(w).mcpServers.github, { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headersHelper: helper('.preferred-tools/mcp-headers.js') });
+        assert.deepStrictEqual(mcpJson(w).mcpServers.github, { type: 'http', url: 'https://api.githubcopilot.com/mcp/', headersHelper: helper(path.join(w.project, '.preferred-tools', 'mcp-headers.js')) });
         assert.ok(!fs.readFileSync(path.join(w.project, '.mcp.json'), 'utf8').includes('${'));
         assert.strictEqual((accountDoc(w).projects[accountKey(w.project)].mcpServers || {}).github, undefined, 'the local one is gone');
         // a 0.1.x registration holding the key in its header: never carried into the committed file (fix moves it first)
