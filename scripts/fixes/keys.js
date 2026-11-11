@@ -10,6 +10,7 @@ const E = require('../entries.js');
 const keys = require('../keys.js');
 const roots = require('../roots.js');
 const { HELPER_VERSION } = require('../mcp-headers.js');
+const { BRIDGE_VERSION } = require('../mcp-bridge.js');
 const C = require('./common.js');
 
 // What roots.js needs to place a root, from a fix ctx.
@@ -75,56 +76,76 @@ function keyToHelperFix(entry, f, ctx)
 }
 
 // ---- helper-missing, helper-stale -----------------------------------------------------------------------------------
-// The helper files the managed registrations name, each once: [{ file, root, reg }]. A project-scope path is relative to
-// the project, the folder whose .mcp.json declares it.
-function helperFiles(ctx, fixId)
+// The files this plugin copied that the managed registrations name, each once: [{ file, root, kind, reg }]. A
+// `headersHelper` names its helper; a bridge registration (0.4.0) its mcp-bridge.js and the mcp-headers.js beside it,
+// which the bridge requires. A project-scope path is relative to the project, the folder whose .mcp.json declares it.
+const SHIPPED = { helper: { word: 'helper', version: HELPER_VERSION }, bridge: { word: 'bridge', version: BRIDGE_VERSION } };
+function shippedFiles(ctx, fixId)
 {
     const P = E.pathFor(ctx.platform);
     const seen = new Map();
+    const add = (file, kind, reg) => { if (!seen.has(file)) seen.set(file, { file, root: P.dirname(file), kind, reg }); };
     for (const reg of C.registrationsOf(ctx, fixId))
     {
         const named = roots.helperPathOf(reg.entry && reg.entry.headersHelper);
-        if (!named) continue;
-        const file = roots.absOf(named, rootCtx(ctx));
-        if (!seen.has(file)) seen.set(file, { file, root: P.dirname(file), reg });
+        if (named) add(roots.absOf(named, rootCtx(ctx)), 'helper', reg);
+        const bridge = E.bridgeParts(reg.entry);
+        if (!bridge) continue;
+        const file = roots.absOf(bridge.path, rootCtx(ctx));
+        add(file, 'bridge', reg);
+        add(P.join(P.dirname(file), roots.FILES.helper), 'helper', reg);
     }
     return [...seen.values()];
 }
 
-const helperFinding = (fixId, h, what, extra = {}) => ({ ...C.finding(fixId, h.reg, what, extra), name: h.file, path: h.file });
+const helperFinding = (fixId, h, what, extra = {}) => ({ ...C.finding(fixId, h.reg, what, extra), name: h.file, path: h.file, shipped: h.kind });
+const nameOf = (h) => roots.FILES[h.kind];
+// the file this finding writes: 'helper' or 'bridge' (a finding from before 0.4.0 carries none: a helper)
+const kindOf = (f) => (f.shipped === 'bridge' ? 'bridge' : 'helper');
+// a fix that writes a file says CommonJS beside it (apply.js ensureCommonjs, 0.4.0 Ruling 12)
+const withCommonjs = (root, r) =>
+{
+    const pkg = require('../apply.js').ensureCommonjs(root);
+    return { ...r, detail: [r.detail, pkg.wrote ? `wrote ${path.join(root, 'package.json')} (type commonjs)` : null, pkg.note].filter(Boolean).join('; ') };
+};
 
 function helperMissingDetect(ctx)
 {
-    return helperFiles(ctx, 'helper-missing').filter((h) => !fs.existsSync(h.file))
-        .map((h) => helperFinding('helper-missing', h, `mcp-headers.js is missing - ${h.reg.name} (${h.reg.scope}) connects without its key`));
+    return shippedFiles(ctx, 'helper-missing').filter((h) => !fs.existsSync(h.file))
+        .map((h) => helperFinding('helper-missing', h, `${nameOf(h)} is missing - ${h.reg.name} (${h.reg.scope}) ${E.bridgeParts(h.reg.entry) ? 'does not start' : 'connects without its key'}`));
 }
 
 function helperMissingFix(f)
 {
+    const kind = kindOf(f);
     fs.mkdirSync(path.dirname(f.path), { recursive: true });
-    fs.writeFileSync(f.path, roots.helperSource());
-    return { ok: roots.helperState(f.path).state === 'same', detail: `wrote ${f.path} (helper ${HELPER_VERSION})`, restart: false };
+    fs.writeFileSync(f.path, roots.shippedSource(kind));
+    return withCommonjs(path.dirname(f.path), { ok: roots.shippedState(kind, f.path).state === 'same', detail: `wrote ${f.path} (${SHIPPED[kind].word} ${SHIPPED[kind].version})`, restart: false });
 }
 
 function helperStaleDetect(ctx)
 {
     const out = [];
-    for (const h of helperFiles(ctx, 'helper-stale').filter((x) => fs.existsSync(x.file)))
+    for (const h of shippedFiles(ctx, 'helper-stale').filter((x) => fs.existsSync(x.file)))
     {
-        const { state, number } = roots.helperState(h.file);
-        if (state === 'lower') out.push(helperFinding('helper-stale', h, `mcp-headers.js is helper ${number} - this plugin's is ${HELPER_VERSION}`, { from: number }));
-        else if (state === 'edited' && number === null) out.push(helperFinding('helper-stale', h, 'mcp-headers.js has no preferred-tools number line', { blocked: `${h.file} has no preferred-tools number line - it is not this plugin's helper, and fix never overwrites it: rename yours, or delete it and run /preferred-tools:fix` }));
-        else if (state === 'edited') out.push(helperFinding('helper-stale', h, "mcp-headers.js changed since preferred-tools wrote it - the fix puts this plugin's copy back"));
-        else if (state === 'higher') out.push(helperFinding('helper-stale', h, `mcp-headers.js is helper ${number} - newer than this plugin's ${HELPER_VERSION}`, { blocked: `mcp-headers.js in ${h.root} is newer than this plugin - update preferred-tools` }));
+        const { state, number } = roots.shippedState(h.kind, h.file);
+        const name = nameOf(h);
+        const { word, version } = SHIPPED[h.kind];
+        if (state === 'lower') out.push(helperFinding('helper-stale', h, `${name} is ${word} ${number} - this plugin's is ${version}`, { from: number }));
+        else if (state === 'edited' && number === null) out.push(helperFinding('helper-stale', h, `${name} has no preferred-tools number line`, { blocked: `${h.file} has no preferred-tools number line - it is not this plugin's ${word}, and fix never overwrites it: rename yours, or delete it and run /preferred-tools:fix` }));
+        else if (state === 'edited') out.push(helperFinding('helper-stale', h, `${name} changed since preferred-tools wrote it - the fix puts this plugin's copy back`));
+        else if (state === 'higher') out.push(helperFinding('helper-stale', h, `${name} is ${word} ${number} - newer than this plugin's ${version}`, { blocked: `${name} in ${h.root} is newer than this plugin - update preferred-tools` }));
     }
     return out;
 }
 
 function helperStaleFix(f)
 {
-    if (roots.helperState(f.path).state === 'higher') return { ok: false, detail: `${f.path} is newer than this plugin - left; update preferred-tools`, restart: false };
-    fs.writeFileSync(f.path, roots.helperSource());
-    return { ok: roots.helperState(f.path).state === 'same', detail: `rewrote ${f.path} (helper ${f.from === undefined ? 'edited' : f.from} -> ${HELPER_VERSION})`, restart: false };
+    const kind = kindOf(f);
+    const { word, version } = SHIPPED[kind];
+    if (roots.shippedState(kind, f.path).state === 'higher') return { ok: false, detail: `${f.path} is newer than this plugin - left; update preferred-tools`, restart: false };
+    fs.writeFileSync(f.path, roots.shippedSource(kind));
+    return withCommonjs(path.dirname(f.path), { ok: roots.shippedState(kind, f.path).state === 'same', detail: `rewrote ${f.path} (${word} ${f.from === undefined ? 'edited' : f.from} -> ${version})`, restart: false });
 }
 
 // ---- root-ignore ----------------------------------------------------------------------------------------------------

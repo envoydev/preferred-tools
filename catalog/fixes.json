@@ -238,7 +238,7 @@
         "win32"
       ],
       "kind": "machine",
-      "symptom": "an npx server fails at every start with ENOENT reading <npm cache>/_npx/<hash>/package.json: two first installs of one package at once - a session started while the fetch runs - left npx's cache folder without it, and npx never repairs it",
+      "symptom": "an npx server - or a bridge server, whose mcp-remote runs through npx - fails at every start with ENOENT reading <npm cache>/_npx/<hash>/package.json: two first installs of one package at once - a session started while the fetch runs - left npx's cache folder without it, and npx never repairs it",
       "detect": "npxCacheEntryDetect",
       "fix": "npxCacheEntryFix",
       "verifiedOn": "this build: npm 11.6.1 on macOS - an _npx folder without its package.json failed every later start with ENOENT (exit 254), and its name is libnpmexec's sha512 of the package spec; npm 10.9.2 and 11.6.1 refuse npm config get cache, and npm config ls -l names the cache in force; end to end on a throwaway cache: found, removed, fetched, then the start printed its answer (2026-11-10); tests/fix.test.js npx-cache-entry",
@@ -280,10 +280,10 @@
         "win32"
       ],
       "kind": "machine",
-      "symptom": "a hosted server names an mcp-headers.js that is not there (a fresh clone, a root moved by hand), so it connects without its key",
+      "symptom": "a hosted server names an mcp-headers.js that is not there (a fresh clone, a root moved by hand), so it connects without its key; or a bridge server's mcp-bridge.js, or the mcp-headers.js beside it, is not there, so it does not start",
       "detect": "helperMissingDetect",
       "fix": "helperMissingFix",
-      "verifiedOn": "this build: tests/fix.test.js helper-missing (2026-11-10)",
+      "verifiedOn": "this build: tests/fix.test.js helper-missing (2026-11-10), with a bridge (2026-11-12)",
       "source": "docs/build-prompt.md D7; docs/sources.md 'Claude Code - headersHelper'"
     },
     {
@@ -301,10 +301,10 @@
         "win32"
       ],
       "kind": "machine",
-      "symptom": "the mcp-headers.js a hosted server names is an older copy than this plugin's, or was changed by hand; a newer one is left and named, so the plugin is updated instead",
+      "symptom": "the mcp-headers.js a hosted server names, or a bridge server's mcp-bridge.js or the helper beside it, is an older copy than this plugin's, or was changed by hand; a newer one is left and named, so the plugin is updated instead",
       "detect": "helperStaleDetect",
       "fix": "helperStaleFix",
-      "verifiedOn": "this build: tests/fix.test.js helper-stale (2026-11-10)",
+      "verifiedOn": "this build: tests/fix.test.js helper-stale (2026-11-10), with a bridge (2026-11-12)",
       "source": "docs/build-prompt.md D7; docs/sources.md 'Claude Code - headersHelper'"
     },
     {

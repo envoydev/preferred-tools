@@ -1403,3 +1403,77 @@ test('fix prints the reconnect line for each hosted keyed registration it rewrot
     }
     finally { w.clean(); }
 });
+
+// ---- the bridge (0.4.0): its file and the helper beside it, and its mcp-remote cache folder -------------------------
+
+const BV = require('../scripts/mcp-bridge.js').BRIDGE_VERSION;
+const BRIDGE = (root, pin = '0.16.0') => ({ command: 'node', args: [path.join(root, 'mcp-bridge.js'), 'https://mcp.sentry.dev/mcp/{SENTRY_ORG}/{SENTRY_PROJECT?}', SK, 'Sentry-Bearer', `mcp-remote@${pin}`], env: { npm_config_before: '2026-11-11T23:59:59Z' } });
+const bridgeAt = (root, number, extra = '') => put(path.join(root, 'mcp-bridge.js'), rootsLib.shippedSource('bridge').replace(/^\/\/ preferred-tools mcp-bridge \d+/, `// preferred-tools mcp-bridge ${number}`) + extra);
+
+test('helper-missing finds both files of a bridge registration and writes both', () =>
+{
+    const w = world();
+    try
+    {
+        seed(w, 'sentry', 'local', BRIDGE(ptRoot(w)));
+        const helper = path.join(ptRoot(w), 'mcp-headers.js');
+        const bridge = path.join(ptRoot(w), 'mcp-bridge.js');
+        const found = detect(ctxOf(w)).found.filter((x) => x.id === 'helper-missing');
+        assert.deepStrictEqual(found.map((x) => x.name).sort(), [bridge, helper].sort());
+        assert.ok(found.some((x) => x.found === 'mcp-bridge.js is missing - sentry (local) does not start'), found.map((x) => x.found).join('\n'));
+        const l = logged();
+        assert.strictEqual(fix.applyFixes(ctxOf(w), ['helper-missing'], { log: l.log }).failed, null, l.text());
+        assert.strictEqual(fsx.readFileSync(helper, 'utf8'), rootsLib.helperSource());
+        assert.strictEqual(fsx.readFileSync(bridge, 'utf8'), rootsLib.shippedSource('bridge'));
+        assert.strictEqual(fsx.readFileSync(path.join(ptRoot(w), 'package.json'), 'utf8'), '{"type":"commonjs"}\n', 'the root says CommonJS');
+        assert.deepStrictEqual(detect(ctxOf(w)).found.filter((x) => /^helper-/.test(x.id)), []);
+    }
+    finally { w.clean(); }
+});
+
+test('helper-stale finds helper 3 beside a bridge, and a hand-edited bridge, and leaves a newer one blocked', () =>
+{
+    const w = world();
+    try
+    {
+        seed(w, 'sentry', 'local', BRIDGE(ptRoot(w)));
+        const bridge = path.join(ptRoot(w), 'mcp-bridge.js');
+        helperAt(ptRoot(w), 3);
+        bridgeAt(ptRoot(w), BV);
+        const [lower] = detect(ctxOf(w)).found.filter((x) => x.id === 'helper-stale');
+        assert.match(lower.found, new RegExp(`^mcp-headers\\.js is helper 3 - this plugin's is ${HV}`));
+        fix.applyFixes(ctxOf(w), ['helper-stale'], { log: () => {} });
+        assert.strictEqual(fsx.readFileSync(path.join(ptRoot(w), 'mcp-headers.js'), 'utf8'), rootsLib.helperSource());
+
+        bridgeAt(ptRoot(w), BV, '// mine\n');
+        const [edited] = detect(ctxOf(w)).found.filter((x) => x.id === 'helper-stale');
+        assert.strictEqual(edited.name, bridge);
+        assert.match(edited.found, /^mcp-bridge\.js changed since preferred-tools wrote it/);
+        fix.applyFixes(ctxOf(w), ['helper-stale'], { log: () => {} });
+        assert.strictEqual(fsx.readFileSync(bridge, 'utf8'), rootsLib.shippedSource('bridge'));
+
+        bridgeAt(ptRoot(w), BV + 1);
+        const [higher] = detect(ctxOf(w)).found.filter((x) => x.id === 'helper-stale');
+        assert.strictEqual(higher.blocked, `mcp-bridge.js in ${ptRoot(w)} is newer than this plugin - update preferred-tools`);
+        fix.applyFixes(ctxOf(w), ['helper-stale'], { log: () => {} });
+        assert.match(fsx.readFileSync(bridge, 'utf8'), new RegExp(`^// preferred-tools mcp-bridge ${BV + 1}`), 'never rewritten');
+    }
+    finally { w.clean(); }
+});
+
+test("npx-cache-entry finds a bridge registration's mcp-remote folder without package.json", () =>
+{
+    const w = world();
+    try
+    {
+        const cache = path.join(w.home, '.npm');
+        const folder = npxFolder(cache, 'mcp-remote@0.16.0');
+        const b = reg('sentry', BRIDGE(path.join(w.project, '.preferred-tools')), { scope: 'local' });
+        const found = () => F.npxCacheEntryDetect(ctxFor({ platform: process.platform, project: w.project, registrations: [b], machine: npmAt(cache) }));
+        assert.deepStrictEqual(found(), []);
+        fsx.mkdirSync(path.join(folder, 'node_modules'), { recursive: true });
+        const [f] = found();
+        assert.deepStrictEqual([f.id, f.name, f.proposal], ['npx-cache-entry', 'sentry', { path: folder, what: 'mcp-remote@0.16.0' }]);
+    }
+    finally { w.clean(); }
+});

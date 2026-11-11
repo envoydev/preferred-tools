@@ -195,7 +195,8 @@ function npxCacheEntryDetect(ctx)
     const out = [];
     for (const reg of ctx.inv.registrations)
     {
-        if (!startsHere(ctx, reg) || C.launcher(reg.entry) !== 'npx') continue;
+        // npx, or a bridge (0.4.0), which runs its pinned mcp-remote through npx
+        if (!startsHere(ctx, reg) || (C.launcher(reg.entry) !== 'npx' && !E.bridgeParts(reg.entry))) continue;
         const step = E.fetchStep(reg.name, reg.entry, reg.rowId);
         if (!step) continue;
         const cache = npmCacheOf(ctx, reg, memo);
