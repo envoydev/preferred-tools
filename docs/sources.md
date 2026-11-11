@@ -73,6 +73,7 @@ unchanged (every newer release is under 7 days old).
 | `ghcr.io/github/github-mcp-server` | v2.0.3 | v2.1.0 (2026-11-03) | - |
 | `mcp-memory-service` | 12.4.0 | 12.4.0 | 12.5.0 and newer (12.7.0 2026-11-07) |
 | `@sentry/mcp-server` | 0.42.0 | 0.42.0 | two releases, 0.49.0 (2026-11-07) the newest |
+| `mcp-remote` (added 2026-11-12 for 0.4.0's bridge route) | - | 0.16.0 (2026-11-02) | 0.16.1 (2026-11-05) to 0.16.6 (2026-11-11) |
 
 - `@upstash/context7-mcp` 4.5.0 - CONFIRMED from the tarball: `--api-key <key>` (`dist/index.js:52`), stdio the
   default, tools `query-docs` and `resolve-library-id` unchanged. New: an unfilled `${CONTEXT7_API_KEY}` placeholder now
@@ -185,6 +186,21 @@ unchanged (every newer release is under 7 days old).
 - The stdio variable - same README, same date: the stdio server now reads `SENTRY_AUTH_TOKEN`; `--access-token` /
   `SENTRY_ACCESS_TOKEN` 'still work but are deprecated'. The catalog's pin 0.42.0 keeps `SENTRY_ACCESS_TOKEN`, the
   server's contract at that version (D9: the server's own variable keeps its name); revisit on a pin bump.
+- Scoping by path (0.4.0's bridge, F1) - read 2026-11-11, https://mcp.sentry.dev/ and https://github.com/getsentry/sentry-mcp
+  (README): the hosted server takes `/mcp/{organizationSlug}` and `/mcp/{organizationSlug}/{projectSlug}`, also under
+  `/sse`; no header names the organization. The key goes in `Authorization: Sentry-Bearer <token>`. The page: 'Scoping
+  to a project is recommended when possible'. So a per-project organization has to be in the URL, which
+  `headersHelper` cannot change.
+- The names (F5) - read 2026-11-11, https://docs.sentry.io/cli/configuration/: sentry-cli's own names for the
+  organization and project are `SENTRY_ORG` and `SENTRY_PROJECT`. The bridge route uses them as its default names.
+- A key at connect (F6) - MEASURED 2026-11-11 and again 2026-11-12 with curl (a JSON-RPC `initialize`, protocol
+  `2025-06-18`, `Accept: application/json, text/event-stream`): with no `Authorization` header, `initialize` gets HTTP
+  401 at `/mcp/sentry` and at an organization that does not exist; with the made-up header `Sentry-Bearer
+  pt-invalid-token-000` both answer 200; a `tools/call` of `whoami` then answers HTTP 200 with `isError: true` and
+  '**Authorization Expired** - Sentry rejected the stored access token for this session. Please re-authorize to
+  continue.' (2026-11-11 also measured `/mcp` and a project that does not exist: the same.) So a wrong key or slug
+  never reaches mcp-remote as a 401 and opens no browser; it shows at the first tool call. The README agrees: 'With
+  `Sentry-Bearer`, the worker does not store, validate, exchange, or refresh the upstream token'.
 
 ## Context7 - upstash/context7
 
@@ -960,6 +976,35 @@ What 0.2.0's `mcp-headers.js` (D4) and the fix rows `key-to-helper`, `helper-mis
   declaring folder (the root trusted), connected without the header and did not run the helper - the same as the
   relative form. So `asks.PARENT_HELPER_IN_CHILD` is `false`: an absolute path does not carry a parent's key into a
   child session.
+
+- `${VAR}` in a registration (0.4.0, F2) - read 2026-11-11, https://code.claude.com/docs/en/mcp: `.mcp.json` expands
+  `${VAR}` and `${VAR:-default}` in `command`, `args`, `env`, `url` and `headers`, from the environment Claude Code
+  starts with - not from a file. `headersHelper` changes headers only. So neither puts a value from `.mcps-secrets`
+  into a hosted server's URL; 0.4.0's bridge does.
+
+## mcp-remote 0.16.0 (read 2026-11-12, never run)
+
+What 0.4.0's `mcp-bridge.js` (F4) rests on. https://www.npmjs.com/package/mcp-remote and
+https://github.com/geelen/mcp-remote; the published tarball of 0.16.0 (`npm pack mcp-remote@0.16.0`), unpacked and read.
+
+- The registry: 0.16.0 published 2026-11-02T05:25:09Z; bin `mcp-remote: dist/proxy.js`, `mcp-remote-client:
+  dist/client.js`. Every newer release (0.16.1 2026-11-05 to 0.16.6 2026-11-11) was under 7 days old on 2026-11-12, so
+  the pin is 0.16.0 with cut-off `2026-11-11T23:59:59Z`.
+- `--header Name:Value` (`parseHeaderLine`, `^([A-Za-z0-9_-]+):\s*(.*)$`) - each value then goes through
+  `substituteEnvVars`, which replaces `${NAME}` from mcp-remote's own environment and logs 'Replacing ${NAME} with
+  environment value in header ...' - the variable's name, never its value. The log line 'Using custom headers:' joins
+  `Object.keys(headers)`: the header names only. So the bridge passes `Authorization:${<variable>}` on the command line
+  and the value in the environment.
+- The README's own advice is the same: `"Authorization:${AUTH_HEADER}"` with `"AUTH_HEADER": "Bearer <auth-token>"` in
+  `env` - 'spaces OK in env vars' - because some Windows clients do not escape spaces in `args`; and it warns that a
+  credential in the process arguments can be read from the process list.
+- `--transport` takes `sse-only`, `http-only`, `sse-first` or `http-first`; the bridge passes `http-only`.
+- A URL that is not HTTPS exits 1 ('Non-HTTPS URLs are only allowed for localhost or when --allow-http flag is
+  provided'): `http:` is allowed only for `localhost` and `127.0.0.1`, or with `--allow-http`, which the bridge never
+  passes.
+- No flag turns its OAuth fallback off: a 401 starts a browser sign-in. The bridge never sends a request with no
+  `Authorization` header - a missing key exits before `npx` starts - and Sentry answers 200 to any `Sentry-Bearer` key
+  at connect (F6, under 'Sentry').
 
 ## Claude Code - a refused key (measured 2026-11-11, Claude Code 2.1.322, macOS arm64)
 
