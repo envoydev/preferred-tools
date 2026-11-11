@@ -120,7 +120,8 @@ was 'No key - lower rate limits' or 'Sign in with OAuth'. Settings 'Keep these s
 'Change or add a setting' asks next for `NAME=value` pairs, written to `"settings": {<id>: {"<NAME>": "<value>"}}`.
 
 A bridge route (sentry's 'Bridge') asks one 'URL name' question per value its URL takes from `.mcps-secrets`, beside the
-key name: which name holds the organization slug, and the project slug. The answer is
+key name: which name holds the organization slug, and the project slug. The catalog's name is recommended, and a filled
+name holding the row's word (`SENTRY`) is offered beside it, never above it. The answer is
 `next.answers.<question id>.<label>`, a name written to `"urlNames": {<id>: {"<VAR>": "<NAME>"}}` at the top of
 `answers.json`, where `<VAR>` ends the question id (`urlname-<id>-<VAR>`); `named` - 'A name you choose' - is asked
 next, checked against `^[A-Za-z_][A-Za-z0-9_]*$` as for the key name. A URL value is a plain name the user writes in `.mcps-secrets`, never a key: the plan

@@ -90,10 +90,11 @@ function keyNameQuestion(row, routeId, scope, ctx, { current = null } = {})
 }
 
 // 0.4.0: which names fill a bridge route's URL, one question per catalog URL variable. Options: the recommended name, the
-// catalog's, one other name found, 'A name you choose' (asked next). Recommended: `current[VAR]` (configure), else a name
-// found, else the catalog's. A name found is filled in the hosted chain, holds the row word (SENTRY for sentry), and is
-// not a credential, the key's name, or a name an earlier question recommends. -> [{ var, question, answers }] ([] for
-// another route)
+// catalog's, one other name found, 'A name you choose' (asked next). Recommended: `current[VAR]` (configure), else the
+// catalog's - never a name found, which is a guess: SENTRY_ENVIRONMENT=production is a valid slug and would connect to
+// the wrong URL with no warning, while an unfilled catalog name stops the bridge with its name (review I2). A name found
+// is filled in the hosted chain, holds the row word (SENTRY for sentry), and is not a credential, the key's name, or a
+// name an earlier question recommends. -> [{ var, question, answers }] ([] for another route)
 function urlNameQuestions(row, routeId, scope, ctx, { current = null, keyName = null } = {})
 {
     const route = row.routes && row.routes[routeId];
@@ -114,7 +115,7 @@ function urlNameQuestions(row, routeId, scope, ctx, { current = null, keyName = 
         for (const n of free) desc.set(n.name, `filled in ${n.file}`);
         const filledHere = ks ? keys.filledNames(ks.files).find((f) => f.names.includes(v.var)) : null;
         desc.set(v.var, filledHere ? `the catalog's name - filled in ${filledHere.file}` : `the catalog's name - add it to ${ks ? ks.files[0] : '.mcps-secrets'}`);
-        const rec = (current && current[v.var]) || (free[0] ? free[0].name : v.var);
+        const rec = (current && current[v.var]) || v.var;
         if (!desc.has(rec)) desc.set(rec, 'the name it uses now');
         taken.add(rec);
         const other = free.map((n) => n.name).find((n) => n !== rec && n !== v.var);

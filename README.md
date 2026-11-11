@@ -166,8 +166,8 @@ then restart.
 1. Run `/preferred-tools:install sentry`, choose 'Set sentry up' and pick the route 'Bridge'. Project scope is
    recommended: the registration holds names only, and a session started in a subfolder uses it too.
 2. Keep the names it offers, or pick yours: the key (`SENTRY_ACCESS_TOKEN`), the organization slug (`SENTRY_ORG`) and
-   the project slug (`SENTRY_PROJECT`) - sentry-cli's own names. A name you already keep holding `SENTRY` is offered
-   first.
+   the project slug (`SENTRY_PROJECT`) - sentry-cli's own names, recommended. A name you already keep holding `SENTRY`
+   is offered beside them.
 3. Fill the project root's `.mcps-secrets` (the plan names the file):
 
    ```text

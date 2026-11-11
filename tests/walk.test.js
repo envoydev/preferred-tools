@@ -249,21 +249,27 @@ const bridgeWalk = (base, { secrets = null } = {}) =>
     return steps;
 };
 
-test('the bridge keys step asks the key name and each URL name, a filled SENTRY_SLUG first for the org', () => {
+test('the bridge keys step asks the key name and each URL name, the catalog name first and a filled SENTRY_SLUG beside it', () => {
     const steps = bridgeWalk(MAC, { secrets: 'SENTRY_SLUG=x\n' });
     const keys = steps.find((s) => s.id === 'sentry:keys');
     assert.deepStrictEqual(keys.call.map((q) => q.id), ['keyname-sentry', 'urlname-sentry-SENTRY_ORG', 'urlname-sentry-SENTRY_PROJECT']);
     const org = keys.call[1];
     assert.strictEqual(org.header, 'URL name');
     assert.strictEqual(org.question, "Which name holds sentry's organization slug in .mcps-secrets?");
-    assert.strictEqual(org.options[0].label, 'SENTRY_SLUG (Recommended)');
-    assert.ok(org.options.some((o) => o.label === 'SENTRY_ORG'), 'the catalog name is offered');
+    assert.strictEqual(org.options[0].label, 'SENTRY_ORG (Recommended)');
+    assert.match(org.options.find((o) => o.label === 'SENTRY_SLUG').description, /^filled in /, 'a filled name is offered beside it');
     assert.ok(!org.options.some((o) => /SENTRY_ACCESS_TOKEN/.test(o.label)), 'never the key');
     assert.strictEqual(org.options[org.options.length - 1].label, 'A name you choose');
-    assert.strictEqual(keys.answers[org.id]['SENTRY_SLUG (Recommended)'], 'SENTRY_SLUG');
+    assert.strictEqual(keys.answers[org.id]['SENTRY_ORG (Recommended)'], 'SENTRY_ORG');
+    assert.strictEqual(keys.answers[org.id].SENTRY_SLUG, 'SENTRY_SLUG');
     assert.strictEqual(keys.answers[org.id]['A name you choose'], 'named');
-    // the project question does not recommend the name the org question already took
     assert.strictEqual(keys.call[2].options[0].label, 'SENTRY_PROJECT (Recommended)');
+    // another SENTRY name filled - a URL, a DSN, an environment - is never recommended over the catalog's (review I2):
+    // SENTRY_ENVIRONMENT=production is a valid slug and would connect to the wrong URL with no warning
+    const other = bridgeWalk(MAC, { secrets: 'SENTRY_URL=https://sentry.io/\nSENTRY_DSN=https://k@o1.ingest.sentry.io/1\nSENTRY_ENVIRONMENT=production\nSENTRY_ORG=acme\n' }).find((s) => s.id === 'sentry:keys');
+    assert.deepStrictEqual(other.call.slice(1).map((q) => q.options[0].label), ['SENTRY_ORG (Recommended)', 'SENTRY_PROJECT (Recommended)']);
+    const unfilled = bridgeWalk(MAC, { secrets: 'SENTRY_ENVIRONMENT=production\n' }).find((s) => s.id === 'sentry:keys');
+    assert.deepStrictEqual(unfilled.call.slice(1).map((q) => q.options[0].label), ['SENTRY_ORG (Recommended)', 'SENTRY_PROJECT (Recommended)']);
     // with nothing filled, the catalog's names are recommended
     const plain = bridgeWalk(MAC).find((s) => s.id === 'sentry:keys');
     assert.strictEqual(plain.call[1].options[0].label, 'SENTRY_ORG (Recommended)');
