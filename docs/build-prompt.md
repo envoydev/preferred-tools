@@ -644,10 +644,14 @@ and the plugin now puts no skill description in every session. It runs `node scr
   approaches of passing data to it.' The fix rows marked `upgrade` in `catalog/fixes.json` - `key-to-helper` (0.2.0),
   `root-ignore` (0.2.0), `project-relative-path` (0.3.0), `mcp-order` (0.3.0) - run in the check, and each finding is
   an offer `upgrade:<fix id>:<name>~<scope>` (`:<path>` for a file or folder) in the same one confirmation, 'All of
-  them' included, under 'New ways to pass data'. The apply runs them last, each through fix's own `applyFixes` on an
-  inventory read again, so a pin the same run moved is the registration the fix starts from; its launches join the run's
-  one fetch file, one step per server. A finding that cannot apply alone (blocked, or needing a folder) is a note naming
-  `/preferred-tools:fix`. Not an upgrade: a route the user picks, such as sentry's Bridge - that stays configure's.
+  them' included, under 'New ways to pass data'. The apply runs them first - a registration's, then a file's or
+  folder's - each through fix's own `applyFixes` on an inventory read again and narrowed to that one registration by its
+  exact name and scope; a pin bump after them starts from the registration as it is then, so both changes stay and no
+  health check starts a pin before fetch.js has it (the review of 2026-11-12). One an earlier step already did (a
+  rewrite puts `.mcp.json` in order) counts as done. Its launches join the run's one fetch file, one step per server and
+  scope, the last written. A finding that cannot apply alone (blocked, or needing a folder) is a note naming
+  `/preferred-tools:fix`, and the last line then says how many wait on the user instead of 'everything current'. Not an
+  upgrade: a route the user picks, such as sentry's Bridge - that stays configure's.
 - Nothing behind: one line, `preferred-tools: everything current`.
 
 `catalog/tools.json`'s own pins move only through a repo script (`npm run refresh-pins`), never during an update.

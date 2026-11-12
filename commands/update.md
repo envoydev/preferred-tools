@@ -24,10 +24,11 @@ the work; you paste what it prints and ask.
 - This command never changes `catalog/tools.json`. Its pins move only through the repo script `npm run refresh-pins`.
 - A rename, a move or a route change is not an update; that is `/preferred-tools:configure`. A change in how this plugin
   passes data to a server it set up is one (the user's ruling, 2026-11-12): the check runs `/preferred-tools:fix`'s rows
-  marked `upgrade` in `catalog/fixes.json` - `key-to-helper` (a key out of an Authorization header into `.mcps-secrets`,
-  read by `mcp-headers.js`), `root-ignore`, `project-relative-path` (absolute project paths, serena's home under the
-  root) and `mcp-order` - offers what they find, and applies it with fix's own code. A finding that needs the user - a
-  key not filled yet, a folder to name - is a note naming `/preferred-tools:fix`, never an offer.
+  marked `upgrade` in `catalog/fixes.json` - `key-to-helper` (a key in an Authorization header, read through
+  `mcp-headers.js` once the user has put it in `.mcps-secrets`), `root-ignore`, `project-relative-path` (absolute
+  project paths; on Windows serena's home under the root) and `mcp-order` - offers what they find, and applies it with
+  fix's own code. A finding that needs the user - a key not filled yet, a folder to name - is a note naming
+  `/preferred-tools:fix`, never an offer.
 
 ## 1. What is behind
 
@@ -44,8 +45,9 @@ folder as `<fix id>: <what it found>`. Below them: plugins whose marketplace lis
 pin; a Docker image tag is not checked; a server on its own), what could not be checked, and the language servers on PATH.
 
 Exit 3 with one line means the `claude` CLI is missing: say so and stop. When the last line is
-`preferred-tools: everything current`, say that and stop. A line under 'Could not check' is a registry that did not
-answer; it is never read as current - say so.
+`preferred-tools: everything current`, say that and stop. When it is `preferred-tools: nothing to update - N wait(s) on
+you first`, nothing can be offered yet: tell the user each note (a key to fill, a key file git would commit) and stop.
+A line under 'Could not check' is a registry that did not answer; it is never read as current - say so.
 
 ## 2. Which
 
@@ -64,12 +66,14 @@ Update what is behind?
 
 When only unchecked plugins remain, the printed `offer` leaves 'All of them' out and recommends 'Pick which'; ask what is
 printed. 'Skip' ends the command. 'Pick which': ask each call in `pick` as printed (up to four multi-select questions of at
-most four options) and collect the options picked. Each option's description is the offer id to pass on.
+most four options) and collect the options picked. Each option's description is the offer id to pass on; a group of one
+offer carries 'None of these' (description `none`), which passes nothing.
 
 ## 3. Apply
 
-State what will change - each `current -> offered` - and, for an MCP server, that its registration is removed and added
-again, so the server is briefly unregistered. Then run, with the ids picked (comma-separated), or `all` for 'All of them':
+State what will change - each `current -> offered`, and each new way to pass data as its line says - and, for an MCP
+server, that its registration is removed and added again, so the server is briefly unregistered. Then run, with the
+ids picked (comma-separated), or `all` for 'All of them':
 
 ```
 node "${CLAUDE_PLUGIN_ROOT}/scripts/update.js" --apply <id,id | all> --data "${CLAUDE_PLUGIN_DATA}"
@@ -79,8 +83,10 @@ Run it with the Bash tool's `timeout: 600000` (10 minutes, the most it allows by
 a language server installs through npm, and the new MCP pins are downloaded after it, not inside it. `all` is every
 offer with a known newer version; an unchecked plugin runs only when its own id is given. Each update is read back: a
 plugin from the plugin list, an MCP pin from the file the CLI wrote, a language server from `--version`, a key helper
-from its first line and digest, a new way to pass data by its detector run again. The new ways run last, each on the
-registration as it is then, so a pin moved in the same run stays moved; their lines are fix's own. A failed MCP
+from its first line and digest, a new way to pass data by its detector run again. The new ways run first - a
+registration's, then a file's - and a pin moved after them starts from what they wrote, so both changes stay and the
+health check never starts a pin not fetched yet; their lines are fix's own, and one an earlier step already did reads
+`already done by an earlier step in this run`. A failed MCP
 rewrite puts the old registration back and prints the line that does it by hand if that fails too (`RESTORE BY HAND`):
 give it to the user as written.
 A key in it shows as `${PREFERRED_TOOLS_KEPT}`, never its value: the user puts their key back there. Paste the output verbatim, then report each result as read back.

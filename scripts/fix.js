@@ -139,17 +139,19 @@ function questions(detected)
 
 // ---- apply ----------------------------------------------------------------------------------------------------------
 
-// `scope` narrows a registration finding to one scope (update applies one registration at a time); `fetchFile: false`
-// writes no fetch file and returns the launches to fetch as `fetch`, for update to hand on in its own (apply.js).
-function applyFixes(ctx, ids, { only, scope, input = {}, tmp, log = console.log, runCli = cli.run, fetchFile } = {})
+// `name` and `scope` narrow the findings to one registration, by its exact name (`only` also matches a row id, so two
+// servers of one row would both match) - update applies one at a time; `fetchFile: false` writes no fetch file and
+// returns the launches to fetch as `fetch`, for update to hand on in its own (apply.js). `gone`: nothing picked is found
+// any more - an earlier step did it.
+function applyFixes(ctx, ids, { only, name, scope, input = {}, tmp, log = console.log, runCli = cli.run, fetchFile } = {})
 {
-    const res = { applied: [], skipped: [], failed: null, remaining: [], steps: 0, fetchFile: null, fetch: null, tmp: tmp || null };
+    const res = { applied: [], skipped: [], failed: null, remaining: [], steps: 0, fetchFile: null, fetch: null, gone: false, tmp: tmp || null };
     const known = new Set(ctx.catalog.fixes.map((f) => f.id));
     const unknown = ids.filter((id) => id !== 'all' && !known.has(id));
     if (unknown.length) { res.failed = `unknown fix id${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}`; log(res.failed); return res; }
     const detected = detectAll(ctx, { only });
-    const picked = detected.found.filter((f) => (ids.includes('all') || ids.includes(f.id)) && (!scope || f.scope === scope));
-    if (!picked.length) { log('Nothing to apply: no picked problem is found any more.'); return res; }
+    const picked = detected.found.filter((f) => (ids.includes('all') || ids.includes(f.id)) && (!name || f.name === name) && (!scope || f.scope === scope));
+    if (!picked.length) { res.gone = true; log('Nothing to apply: no picked problem is found any more.'); return res; }
 
     for (const f of picked.filter((x) => x.blocked || (x.input && !input[x.input.id])))
     {

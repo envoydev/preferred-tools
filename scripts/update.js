@@ -207,10 +207,11 @@ function helperOffers(ctx, out)
 
 // ---- new ways to pass data (the user's ruling, 2026-11-12) ---------------------------------------------------------------
 
-// The fix rows marked `upgrade` carry what an older preferred-tools wrote to the way this version passes data: a key out
-// of an Authorization header into .mcps-secrets and mcp-headers.js (key-to-helper), absolute project paths
-// (project-relative-path), the root's .gitignore (root-ignore), the .mcp.json order (mcp-order). Only those detectors
-// run. A finding that cannot apply alone - blocked, or needing a folder - is a note naming /preferred-tools:fix.
+// The fix rows marked `upgrade` carry what an older preferred-tools wrote to the way this version passes data: a key in
+// an Authorization header read through mcp-headers.js from .mcps-secrets once the user has put it there (key-to-helper),
+// absolute project paths (project-relative-path), the root's .gitignore (root-ignore), the .mcp.json order (mcp-order).
+// Only those detectors run. A finding that cannot apply alone - blocked, or needing a folder - is a note naming
+// /preferred-tools:fix, counted in `waiting`.
 const upgradeCatalog = (catalog) => ({ ...catalog, fixes: catalog.fixes.filter((f) => f.upgrade) });
 const upgradeLabel = (f) => (f.kind === 'machine' ? f.name : `${f.name} (${f.scope})`);
 
@@ -223,7 +224,13 @@ function upgradeOffers(ctx, out)
     for (const f of fixLib.detectAll(fctx).found)
     {
         const label = upgradeLabel(f);
-        if (f.blocked || f.input) { out.notes.push(`${label}: ${f.found} - not applied here: ${f.blocked || `needs a folder from you (${f.input.prompt})`}; run /preferred-tools:fix`); continue; }
+        if (f.blocked || f.input)
+        {
+            const why = f.blocked || `needs a folder from you (${f.input.prompt})`;
+            out.notes.push(`${label}: ${f.found} - not applied here: ${why}${/\/preferred-tools:fix/.test(why) ? '' : '; then run /preferred-tools:fix'}`);
+            out.waiting += 1;
+            continue;
+        }
         const machine = f.kind === 'machine';
         out.offers.push({ kind: 'upgrade', id: `upgrade:${f.id}:${machine ? f.name : `${f.name}~${f.scope}`}`, fix: f.id, name: f.name, scope: machine ? null : f.scope, found: f.found, group: 'upgrade', label });
     }
@@ -243,7 +250,7 @@ function makeCtx({ inv, project, catalog = catalogLib.load(), env = process.env,
 // -> { offers, unchecked, skipped, held, errors, lsp, notes }
 async function check(ctx)
 {
-    const out = { offers: [], unchecked: [], skipped: [], held: [], errors: [], lsp: [], notes: [] };
+    const out = { offers: [], unchecked: [], skipped: [], held: [], errors: [], lsp: [], notes: [], waiting: 0 };
     pluginOffers(ctx, out);
     await mcpOffers(ctx, out);
     await lspOffers(ctx, out);
@@ -283,7 +290,9 @@ function render(out)
     }
     for (const [title, list] of [['Held back', out.held], ['Skipped', out.skipped], ['Language servers on PATH', out.lsp], ['Could not check', out.errors], ['Notes', out.notes]])
         if (list.length) lines.push(`${title}:`, ...list.map((l) => `  ${l}`));
-    if (!behind(out) && !out.errors.length) lines.push('', 'preferred-tools: everything current');
+    // a note that waits on the user is never 'everything current' (a key to fill, a key file git would commit)
+    if (!behind(out) && out.waiting) lines.push('', `preferred-tools: nothing to update - ${out.waiting} wait${out.waiting === 1 ? 's' : ''} on you first (the notes above)`);
+    else if (!behind(out) && !out.errors.length) lines.push('', 'preferred-tools: everything current');
     else if (!behind(out)) lines.push('', 'preferred-tools: nothing behind among what could be checked');
     return lines.join('\n').replace(/^\n/, '');
 }
@@ -303,7 +312,8 @@ function questions(out)
         const list = items.filter((o) => o.group === g);
         asksLib.chunk(list, 4).forEach((part) => qs.push({
             id: `update-${g}`, header: header || title.slice(0, 12), multiSelect: true, question: `${title}: which do you want to update?`,
-            options: part.map((o) => ({ label: o.kind === 'upgrade' ? `${o.label}: ${o.fix}` : `${o.label}: ${o.from || '?'} -> ${o.to || 'latest'}`, description: o.id })),
+            // AskUserQuestion takes 2 to 4 options: a group of one gets 'None of these' beside it
+            options: [...part.map((o) => ({ label: o.kind === 'upgrade' ? `${o.label}: ${o.fix}` : `${o.label}: ${o.from || '?'} -> ${o.to || 'latest'}`, description: o.id })), ...(part.length === 1 ? [{ label: 'None of these', description: 'none' }] : [])],
         }));
     }
     const offer = { ...asksLib.STATIC.updateOffer };
@@ -356,6 +366,15 @@ function hudAfterUpdate(ctx, offer, log)
 
 function updateMcp(ctx, offer, tmp, log)
 {
+    // a new way to pass data rewrote it earlier in this run: the pin moves on the registration as it is now - a change
+    // starts from what is installed
+    if (ctx.touched && ctx.touched.has(`${offer.name}~${offer.scope}`))
+    {
+        const now = inventory.buildInventory({ project: ctx.project, env: ctx.env, run: ctx.runCli, data: ctx.data, catalog: ctx.catalog }).registrations.find((r) => r.name === offer.name && r.scope === offer.scope);
+        const entry = now ? bumpEntry(now.entry, offer.package, offer.to, offer.cutoff) : null;
+        if (!entry) { log(`CHECK  ${offer.label}: rewritten earlier in this run and no longer pins ${offer.package} - left`); return false; }
+        offer = { ...offer, old: now.entry, entry };
+    }
     // the new pin is not in the cache yet: fetch it right after the rewrite (entries.js fetchStep)
     const fetch = E.fetchStep(offer.name, offer.entry, offer.row, offer.old);
     const plan = { project: ctx.project, alfredCodeEnabled: Boolean(ctx.inv && ctx.inv.alfredCodeEnabled), steps: mcpOrder.withOrderStep([{ op: 'mcp-replace', name: offer.name, scope: offer.scope, old: offer.old, entry: offer.entry, row: offer.row, route: offer.route, why: `${offer.package} ${offer.from} -> ${offer.to}` }, ...(fetch ? [fetch] : [])], ctx.project, mcpOrder.ownProjectNames(ctx.inv || {})), expect: [{ kind: 'mcp', name: offer.name, scope: offer.scope, route: offer.route }] };
@@ -384,18 +403,20 @@ function updateHelper(offer, log)
     return ok;
 }
 
-// A new way to pass data, applied with fix's own code to the registration as it is now - after every pin this run moved,
-// so neither change undoes the other - and read back by its detector. Its launches join this run's fetch file.
+// A new way to pass data, applied with fix's own code to the registration as it is now, and read back by its detector.
+// It runs before the pins: its health check then reads a launch already in the cache, and a pin moved after it starts
+// from what it wrote. One an earlier step already did (a rewrite puts .mcp.json in order) is done. Its launches join
+// this run's fetch file.
 function updateUpgrade(ctx, offer, dir, log)
 {
     const fixLib = require('./fix.js');
     const inv = inventory.buildInventory({ project: ctx.project, env: ctx.env, run: ctx.runCli, data: ctx.data, catalog: ctx.catalog });
     const fctx = fixLib.makeCtx({ inv, catalog: upgradeCatalog(ctx.catalog), env: ctx.env, machine: ctx.machine, data: ctx.data });
-    const r = fixLib.applyFixes(fctx, [offer.fix], { only: offer.name, scope: offer.scope || undefined, tmp: dir, log, runCli: ctx.runCli, fetchFile: false });
+    const r = fixLib.applyFixes(fctx, [offer.fix], { only: offer.name, name: offer.name, scope: offer.scope || undefined, tmp: dir, log, runCli: ctx.runCli, fetchFile: false });
     if (r.fetch && r.fetch.fetch.length) ctx.fetches.push(r.fetch);
-    if (r.applied.some((f) => f.kind === 'registration')) ctx.restart = true;
-    const ok = !r.failed && r.applied.length > 0 && !r.remaining.length;
-    log(`${ok ? 'ok    ' : 'CHECK '} ${offer.label}: ${offer.fix} (read back by its detector)`);
+    for (const f of r.applied.filter((x) => x.kind === 'registration')) { ctx.restart = true; ctx.touched.add(`${f.name}~${f.scope}`); }
+    const ok = !r.failed && !r.remaining.length && (r.applied.length > 0 || r.gone);
+    log(`${ok ? 'ok    ' : 'CHECK '} ${offer.label}: ${offer.fix} (${r.gone ? 'already done by an earlier step in this run' : 'read back by its detector'})`);
     return ok;
 }
 
@@ -405,13 +426,14 @@ function applyUpdates(ctx, ids, out, { tmp, log = console.log } = {})
     const res = { applied: [], failed: [], unknown: [], fetchFile: null, dir: null };
     const known = [...out.offers, ...out.unchecked];
     const picked = ids.includes('all') ? [...out.offers, ...ids.filter((i) => i !== 'all').map((i) => known.find((o) => o.id === i)).filter(Boolean)] : ids.map((i) => known.find((o) => o.id === i) || i);
-    // the new ways to pass data last: each starts from the registration a pin update may just have rewritten
-    const isUpgrade = (c) => typeof c !== 'string' && c.kind === 'upgrade';
-    const chosen = [...picked.filter((c) => !isUpgrade(c)), ...picked.filter(isUpgrade)];
+    // the new ways to pass data first - a registration's, then a file's or folder's - and the pins after them (updateUpgrade)
+    const rank = (c) => (typeof c === 'string' || c.kind !== 'upgrade' ? 2 : c.scope ? 0 : 1);
+    const chosen = [0, 1, 2].flatMap((n) => picked.filter((c) => rank(c) === n));
     const dir = tmp || fs.mkdtempSync(path.join(os.tmpdir(), 'preferred-tools-'));
     res.dir = dir;
     ctx.fetches = [];
     ctx.restart = false;
+    ctx.touched = new Set();
     for (const c of chosen)
     {
         if (typeof c === 'string') { res.unknown.push(c); log(`NOT OFFERED ${c}: nothing is behind under that id`); continue; }
@@ -419,9 +441,9 @@ function applyUpdates(ctx, ids, out, { tmp, log = console.log } = {})
         (ok ? res.applied : res.failed).push(c.id);
     }
     // every rewritten server in one fetch file, for fetch.js in the background (apply.js says why); a server rewritten
-    // twice in this run is fetched once, as it was written last
+    // twice in this run is fetched once at its scope, as it was written last
     const last = new Map();
-    for (const s of ctx.fetches.flatMap((f) => f.fetch)) { last.delete(s.name); last.set(s.name, s); }
+    for (const s of ctx.fetches.flatMap((f) => f.fetch)) { last.delete(`${s.name}~${s.scope}`); last.set(`${s.name}~${s.scope}`, s); }
     const job = fetchLib.job(ctx.project, [...last.values()], [...new Set(ctx.fetches.flatMap((f) => f.check))]);
     if (job.fetch.length)
     {

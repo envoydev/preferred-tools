@@ -473,7 +473,8 @@ test('update offers and rewrites a lower-numbered helper copy; leaves a higher o
         const q = JSON.parse((await run(w, ['--questions', '--no-refresh'])).text);
         const group = q.pick.flat().find((x) => x.id === 'update-helper');
         assert.strictEqual(group.header, 'Key helpers');
-        assert.deepStrictEqual(group.options.map((o) => o.description), [`helper:${lower}`]);
+        // a group of one is asked with 'None of these' beside it: AskUserQuestion takes 2 to 4 options
+        assert.deepStrictEqual(group.options.map((o) => o.description), [`helper:${lower}`, 'none']);
         const a = await run(w, ['--apply', `helper:${lower}`]);
         assert.strictEqual(a.code, 0, a.text);
         assert.strictEqual(fs.readFileSync(lower, 'utf8'), roots.helperSource());
@@ -604,9 +605,94 @@ test('an upgrade that cannot apply on its own - a key not filled - is a note nam
         const c = await run(w, ['--check', '--no-refresh']);
         assert.strictEqual(c.code, 0, c.text);
         assert.doesNotMatch(c.text, /New ways to pass data/);
-        assert.match(c.text, /Notes:\n(.*\n)* {2}github \(local\): .* - not applied here: put GITHUB_PERSONAL_ACCESS_TOKEN's value in .*; run \/preferred-tools:fix/);
+        assert.match(c.text, /Notes:\n(.*\n)* {2}github \(local\): .* - not applied here: put GITHUB_PERSONAL_ACCESS_TOKEN's value in .*, then run \/preferred-tools:fix\n/);
+        assert.strictEqual((c.text.match(/\/preferred-tools:fix/g) || []).length, 1, 'the note names fix once');
+        // never 'everything current' while a note waits on the user (review)
+        assert.strictEqual(c.text.trim().split('\n').pop(), 'preferred-tools: nothing to update - 1 waits on you first (the notes above)');
         const q = JSON.parse((await run(w, ['--questions', '--no-refresh'])).text);
         assert.ok(!q.pick.flat().some((x) => x.id === 'update-upgrade'));
     }
     finally { w.clean(); }
+});
+
+// ---- the upgrade review (2026-11-12): the 0.2.0 path, one registration per pick, one fetch step per server and scope ---------
+
+const PW = (pin) => ({ command: 'npx', args: ['-y', `@playwright/mcp@${pin}`, '--browser', 'chrome', '--user-data-dir', '.preferred-tools/playwright-chrome', '--output-dir', '.preferred-tools/playwright-chrome/output', '--viewport-size', '1280x720'] });
+const MEM = (pin = '12.1.1') => ({ command: 'uvx', args: ['--python', '3.13', '--from', `mcp-memory-service[sqlite]==${pin}`, 'memory', 'server'], env: { MCP_MEMORY_SQLITE_PATH: '.preferred-tools/memory/memory.db' } });
+
+test("'All of them' on a 0.2.0 .mcp.json - relative paths, out of order, a pin behind - ends in order with no CHECK, the new pin never health-checked before its fetch", async () =>
+{
+    const w = world();
+    try
+    {
+        // as 0.2.0 wrote it: playwright-chrome before memory, both relative
+        for (const [name, entry] of [['playwright-chrome', PW('0.0.83')], ['memory', MEM()]])
+            assert.strictEqual(cli.run(['mcp', 'add-json', name, JSON.stringify(entry), '-s', 'project'], { cwd: w.project, env: w.env }).status, 0);
+        const registry = fakeRegistry({ 'npm:@playwright/mcp': [{ version: '0.0.83', time: ago(60) }, { version: '0.0.90', time: ago(10) }], 'pypi:mcp-memory-service': [{ version: '12.1.1', time: ago(40) }] });
+        const c = await run(w, ['--check', '--no-refresh'], { registry });
+        assert.match(c.text, /\n {2}\S*\.mcp\.json +mcp-order: /, c.text);
+        const tmp = fs.mkdtempSync(path.join(w.dir, 'preferred-tools-'));
+        const before = w.calls().length;
+        const a = await run(w, ['--apply', 'all', '--tmp', tmp], { registry });
+        assert.strictEqual(a.code, 0, a.text);
+        assert.doesNotMatch(a.text, /^(CHECK|FAILED)/m, a.text);
+        const doc = readJson(path.join(w.project, '.mcp.json'));
+        assert.deepStrictEqual(Object.keys(doc.mcpServers), ['memory', 'playwright-chrome'], 'in the catalog order');
+        const pw = doc.mcpServers['playwright-chrome'];
+        assert.ok(pw.args.includes('@playwright/mcp@0.0.90'), JSON.stringify(pw));
+        assert.strictEqual(pw.args[pw.args.indexOf('--user-data-dir') + 1], path.join(w.project, '.preferred-tools', 'playwright-chrome'));
+        assert.strictEqual(doc.mcpServers.memory.env.MCP_MEMORY_SQLITE_PATH, path.join(w.project, '.preferred-tools', 'memory', 'memory.db'));
+        // no `claude mcp get` of the new pin before fetch.js has downloaded it (fetch.js says why)
+        const calls = w.calls().slice(before);
+        const newPin = calls.findIndex((x) => x[1] === 'add-json' && x[2] === 'playwright-chrome' && x[3].includes('@playwright/mcp@0.0.90'));
+        assert.ok(newPin >= 0, JSON.stringify(calls));
+        assert.ok(!calls.slice(newPin).some((x) => x[1] === 'get' && x[2] === 'playwright-chrome'), JSON.stringify(calls.slice(newPin)));
+        const job = readJson(path.join(tmp, 'fetch.json'));
+        assert.ok(job.fetch.find((s) => s.name === 'playwright-chrome').argv.join(' ').includes('@playwright/mcp@0.0.90'));
+        const after = await run(w, ['--check', '--no-refresh'], { registry });
+        assert.doesNotMatch(after.text, /New ways to pass data/, after.text);
+    }
+    finally { w.clean(); }
+});
+
+test('an upgrade picked for one registration never rewrites another of the same row', async () =>
+{
+    const w = world();
+    try
+    {
+        for (const name of ['memory', 'memory-work']) assert.strictEqual(cli.run(['mcp', 'add-json', name, JSON.stringify(MEM()), '-s', 'project'], { cwd: w.project, env: w.env }).status, 0);
+        const registry = fakeRegistry({ 'pypi:mcp-memory-service': [{ version: '12.1.1', time: ago(40) }] });
+        const a = await run(w, ['--apply', 'upgrade:project-relative-path:memory~project'], { registry });
+        assert.strictEqual(a.code, 0, a.text);
+        const doc = readJson(path.join(w.project, '.mcp.json'));
+        assert.strictEqual(doc.mcpServers.memory.env.MCP_MEMORY_SQLITE_PATH, path.join(w.project, '.preferred-tools', 'memory', 'memory.db'));
+        assert.strictEqual(doc.mcpServers['memory-work'].env.MCP_MEMORY_SQLITE_PATH, '.preferred-tools/memory/memory.db', 'not picked: left');
+        const all = await run(w, ['--apply', 'all'], { registry });
+        assert.strictEqual(all.code, 0, all.text);
+        assert.doesNotMatch(all.text, /^CHECK/m, all.text);
+    }
+    finally { w.clean(); }
+});
+
+test('one server pin-bumped at two scopes keeps a fetch step for each', async () =>
+{
+    const w = world();
+    try
+    {
+        const m = { command: 'uvx', args: ['--python', '3.13', '--from', 'mcp-memory-service[sqlite]==12.1.1', 'memory', 'server'], env: { MCP_MEMORY_SQLITE_PATH: path.join(w.home, 'mem.db') } };
+        for (const scope of ['user', 'local']) assert.strictEqual(cli.run(['mcp', 'add-json', 'memory', JSON.stringify(m), '-s', scope], { cwd: w.project, env: w.env }).status, 0);
+        const registry = fakeRegistry({ 'pypi:mcp-memory-service': [{ version: '12.1.1', time: ago(40) }, { version: '12.5.0', time: ago(20) }] });
+        const tmp = fs.mkdtempSync(path.join(w.dir, 'preferred-tools-'));
+        const a = await run(w, ['--apply', 'all', '--tmp', tmp], { registry });
+        assert.strictEqual(a.code, 0, a.text);
+        assert.deepStrictEqual(readJson(path.join(tmp, 'fetch.json')).fetch.map((s) => `${s.name}~${s.scope}`).sort(), ['memory~local', 'memory~user']);
+    }
+    finally { w.clean(); }
+});
+
+test('a group with one offer is asked with two options: the offer and None of these', () =>
+{
+    const out = { offers: [{ kind: 'upgrade', id: 'upgrade:mcp-order:/p/.mcp.json', fix: 'mcp-order', name: '/p/.mcp.json', scope: null, group: 'upgrade', label: '/p/.mcp.json' }], unchecked: [], skipped: [], held: [], errors: [], lsp: [], notes: [] };
+    const [q] = update.questions(out).pick.flat();
+    assert.deepStrictEqual(q.options, [{ label: '/p/.mcp.json: mcp-order', description: 'upgrade:mcp-order:/p/.mcp.json' }, { label: 'None of these', description: 'none' }]);
 });

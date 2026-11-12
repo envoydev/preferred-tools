@@ -79,8 +79,8 @@ to skip a tool whose prerequisite is missing.
   `/preferred-tools:update` runs the checks that move what an older version wrote.
 - **`/preferred-tools:update`** brings installed plugins, pinned servers, language servers, the key helper and the URL
   bridge up to date when they are behind, offering only releases at least 7 days old. It also moves the servers an
-  older version of this plugin set up to the way it passes data now: a key out of the registration into `.mcps-secrets`,
-  absolute paths, the root's `.gitignore` and the `.mcp.json` order.
+  older version of this plugin set up to the way it passes data now: a key read from `.mcps-secrets` instead of the
+  registration, absolute paths, the root's `.gitignore` and the `.mcp.json` order.
 
 Each one shows a plan and changes nothing before you confirm it. Pass a tool id to go straight to it, for example
 `/preferred-tools:configure sentry`.
@@ -220,15 +220,16 @@ only what you pick, in one confirmation:
 
 - **Versions** - plugins, pinned MCP servers and language servers, to releases at least 7 days old; the newer key
   helper (`mcp-headers.js`, helper 4) and URL bridge for each root under 'Key helpers'.
-- **New ways to pass data** - what an older version of this plugin wrote, moved to the way 0.4.0 does it: a key still
-  in an Authorization header goes to `.mcps-secrets` and the key helper, a relative or `${HOME}` path at Project scope
-  becomes absolute (serena's home moves under the root folder), the root folder's `.gitignore` gains the lines it
-  lacks, and `.mcp.json` is put in order. These run after the version moves, so both changes stay.
+- **New ways to pass data** - what an older version of this plugin wrote, moved to the way 0.4.0 does it: a server
+  that still carries its key in an Authorization header reads it through the key helper instead, once you have put the
+  key in `.mcps-secrets`; a relative or `${HOME}` path at Project scope becomes absolute (on Windows, serena's home
+  moves under the root folder); the root folder's `.gitignore` gains the lines it lacks; and `.mcp.json` is put in
+  order. These run before the version moves, so both changes stay.
 
-Something it cannot do alone - a key whose value is not in `.mcps-secrets` yet, a folder only you can name - is listed
-as a note: fill it in, then run `/preferred-tools:fix`. A copy a 0.2.0 session left in a subfolder is kept out of git
-by `/preferred-tools:fix` run in that subfolder. Your old `preferred-tools.json` answers to 'manage' are removed by the
-next install's plan; the ones 'on its own' stay.
+Something it cannot do alone - a key whose value is not in `.mcps-secrets` yet - is listed as a note, and the last line
+says how many wait on you: put the key in, then run `/preferred-tools:fix`. A copy a 0.2.0 session left in a subfolder
+is kept out of git by `/preferred-tools:fix` run in that subfolder. Your old `preferred-tools.json` answers to 'manage'
+are removed by the next install's plan; the ones 'on its own' stay.
 
 ## When something is wrong
 
